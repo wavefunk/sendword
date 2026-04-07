@@ -3,7 +3,7 @@ use figment::{
     Figment,
 };
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 // --- Error type ---
@@ -92,8 +92,105 @@ impl AppConfig {
     }
 
     fn validate(&self) -> Result<(), ConfigError> {
-        Ok(())
+        let mut errors = Vec::new();
+
+        if self.server.port == 0 {
+            errors.push("server.port must be non-zero".into());
+        }
+
+        if self.defaults.rate_limit.max_per_minute == 0 {
+            errors.push("defaults.rate_limit.max_per_minute must be greater than 0".into());
+        }
+
+        if self.defaults.timeout == Duration::ZERO {
+            errors.push("defaults.timeout must be greater than 0".into());
+        }
+
+        if self.defaults.retries.initial_delay > self.defaults.retries.max_delay {
+            errors.push(
+                "defaults.retries.initial_delay must not exceed defaults.retries.max_delay".into(),
+            );
+        }
+
+        let mut seen_slugs = HashSet::with_capacity(self.hooks.len());
+
+        for (i, hook) in self.hooks.iter().enumerate() {
+            let prefix = format!("hooks[{i}]");
+
+            if hook.name.is_empty() {
+                errors.push(format!("{prefix}.name must be non-empty"));
+            }
+
+            if !is_valid_slug(&hook.slug) {
+                errors.push(format!(
+                    "{prefix}.slug '{}' is invalid (must be 1-64 lowercase alphanumeric \
+                     chars or hyphens, no leading/trailing/consecutive hyphens)",
+                    hook.slug,
+                ));
+            }
+
+            if !seen_slugs.insert(&hook.slug) {
+                errors.push(format!("{prefix}.slug '{}' is a duplicate", hook.slug));
+            }
+
+            match &hook.executor {
+                ExecutorConfig::Shell { command } if command.is_empty() => {
+                    errors.push(format!("{prefix}.executor.command must be non-empty"));
+                }
+                _ => {}
+            }
+
+            if let Some(retries) = &hook.retries {
+                if retries.initial_delay > retries.max_delay {
+                    errors.push(format!(
+                        "{prefix}.retries.initial_delay must not exceed {prefix}.retries.max_delay",
+                    ));
+                }
+            }
+
+            if let Some(rl) = &hook.rate_limit {
+                if rl.max_per_minute == 0 {
+                    errors.push(format!(
+                        "{prefix}.rate_limit.max_per_minute must be greater than 0",
+                    ));
+                }
+            }
+        }
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(ConfigError::Validation(errors.join("\n")))
+        }
     }
+}
+
+fn is_valid_slug(s: &str) -> bool {
+    let len = s.len();
+    if len == 0 || len > 64 {
+        return false;
+    }
+
+    let bytes = s.as_bytes();
+    if bytes[0] == b'-' || bytes[len - 1] == b'-' {
+        return false;
+    }
+
+    let mut prev_hyphen = false;
+    for &b in bytes {
+        match b {
+            b'a'..=b'z' | b'0'..=b'9' => prev_hyphen = false,
+            b'-' => {
+                if prev_hyphen {
+                    return false;
+                }
+                prev_hyphen = true;
+            }
+            _ => return false,
+        }
+    }
+
+    true
 }
 
 impl Default for AppConfig {
@@ -502,5 +599,167 @@ mod tests {
             assert_eq!(config.defaults.retries.max_delay, Duration::from_secs(7200));
             Ok(())
         });
+    }
+
+    // --- Validation tests ---
+
+    fn make_hook(name: &str, slug: &str, command: &str) -> HookConfig {
+        HookConfig {
+            name: name.into(),
+            slug: slug.into(),
+            description: String::new(),
+            enabled: true,
+            executor: ExecutorConfig::Shell {
+                command: command.into(),
+            },
+            env: HashMap::new(),
+            cwd: None,
+            timeout: None,
+            retries: None,
+            rate_limit: None,
+        }
+    }
+
+    fn valid_config_with_hooks(hooks: Vec<HookConfig>) -> AppConfig {
+        AppConfig {
+            hooks,
+            ..AppConfig::default()
+        }
+    }
+
+    #[test]
+    fn is_valid_slug_accepts_valid() {
+        assert!(is_valid_slug("deploy"));
+        assert!(is_valid_slug("my-hook"));
+        assert!(is_valid_slug("a"));
+        assert!(is_valid_slug("a1"));
+        assert!(is_valid_slug("deploy-app-v2"));
+    }
+
+    #[test]
+    fn is_valid_slug_rejects_invalid() {
+        assert!(!is_valid_slug(""));
+        assert!(!is_valid_slug("-deploy"));
+        assert!(!is_valid_slug("deploy-"));
+        assert!(!is_valid_slug("DEPLOY"));
+        assert!(!is_valid_slug("deploy app"));
+        assert!(!is_valid_slug("deploy--app"));
+        assert!(!is_valid_slug(&"a".repeat(65)));
+    }
+
+    #[test]
+    fn validation_catches_duplicate_slugs() {
+        let config = valid_config_with_hooks(vec![
+            make_hook("Hook A", "deploy", "echo a"),
+            make_hook("Hook B", "deploy", "echo b"),
+        ]);
+        let err = config.validate().unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("deploy"), "error should name the duplicate slug: {msg}");
+        assert!(msg.contains("duplicate"), "error should mention duplicate: {msg}");
+    }
+
+    #[test]
+    fn validation_catches_empty_hook_name() {
+        let config = valid_config_with_hooks(vec![make_hook("", "valid-slug", "echo ok")]);
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("name must be non-empty"));
+    }
+
+    #[test]
+    fn validation_catches_empty_shell_command() {
+        let config = valid_config_with_hooks(vec![make_hook("Deploy", "deploy", "")]);
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("command must be non-empty"));
+    }
+
+    #[test]
+    fn validation_catches_invalid_slug_format() {
+        let config = valid_config_with_hooks(vec![make_hook("Deploy", "INVALID", "echo ok")]);
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("slug 'INVALID' is invalid"));
+    }
+
+    #[test]
+    fn validation_catches_zero_port() {
+        let mut config = AppConfig::default();
+        config.server.port = 0;
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("port must be non-zero"));
+    }
+
+    #[test]
+    fn validation_catches_zero_rate_limit() {
+        let mut config = AppConfig::default();
+        config.defaults.rate_limit.max_per_minute = 0;
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("max_per_minute must be greater than 0"));
+    }
+
+    #[test]
+    fn validation_catches_zero_timeout() {
+        let mut config = AppConfig::default();
+        config.defaults.timeout = Duration::ZERO;
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("timeout must be greater than 0"));
+    }
+
+    #[test]
+    fn validation_catches_initial_delay_exceeds_max_delay() {
+        let mut config = AppConfig::default();
+        config.defaults.retries.initial_delay = Duration::from_secs(120);
+        config.defaults.retries.max_delay = Duration::from_secs(60);
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("initial_delay must not exceed"));
+    }
+
+    #[test]
+    fn validation_catches_hook_retry_initial_exceeds_max() {
+        let mut hook = make_hook("Deploy", "deploy", "echo ok");
+        hook.retries = Some(RetryConfig {
+            count: 3,
+            backoff: BackoffStrategy::Linear,
+            initial_delay: Duration::from_secs(60),
+            max_delay: Duration::from_secs(10),
+        });
+        let config = valid_config_with_hooks(vec![hook]);
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("hooks[0].retries.initial_delay must not exceed"));
+    }
+
+    #[test]
+    fn validation_catches_hook_zero_rate_limit() {
+        let mut hook = make_hook("Deploy", "deploy", "echo ok");
+        hook.rate_limit = Some(RateLimitConfig { max_per_minute: 0 });
+        let config = valid_config_with_hooks(vec![hook]);
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("hooks[0].rate_limit.max_per_minute must be greater than 0"));
+    }
+
+    #[test]
+    fn validation_reports_multiple_errors_at_once() {
+        let mut config = AppConfig::default();
+        config.server.port = 0;
+        config.defaults.rate_limit.max_per_minute = 0;
+        config.defaults.timeout = Duration::ZERO;
+        let err = config.validate().unwrap_err();
+        let msg = err.to_string();
+        // Should contain at least 3 distinct error lines
+        let error_lines: Vec<&str> = msg.lines().filter(|l| !l.is_empty()).collect();
+        assert!(
+            error_lines.len() >= 3,
+            "expected at least 3 errors, got {}:\n{msg}",
+            error_lines.len()
+        );
+    }
+
+    #[test]
+    fn validation_passes_for_valid_config_with_multiple_hooks() {
+        let config = valid_config_with_hooks(vec![
+            make_hook("Deploy App", "deploy-app", "make deploy"),
+            make_hook("Run Tests", "run-tests", "make test"),
+            make_hook("Backup DB", "backup-db", "pg_dump > backup.sql"),
+        ]);
+        assert!(config.validate().is_ok());
     }
 }
