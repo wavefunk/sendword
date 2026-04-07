@@ -214,8 +214,9 @@ async fn execution_list(
 
 /// Raw form data from the hook create/edit form.
 ///
-/// Environment variables arrive as parallel arrays (`env_keys` and `env_values`)
-/// because HTML forms cannot natively express maps.
+/// Environment variables arrive as a single textarea (`env_text`) with one
+/// `KEY=value` pair per line, since `serde_urlencoded` does not support
+/// repeated keys deserialised into `Vec`.
 #[derive(Deserialize)]
 struct HookForm {
     name: String,
@@ -230,10 +231,9 @@ struct HookForm {
     cwd: String,
     #[serde(default)]
     timeout: String,
+    /// One `KEY=value` pair per line.
     #[serde(default)]
-    env_keys: Vec<String>,
-    #[serde(default)]
-    env_values: Vec<String>,
+    env_text: String,
     #[serde(default)]
     retry_count: Option<String>,
     #[serde(default)]
@@ -260,12 +260,18 @@ fn parse_duration_field(s: &str) -> Result<Option<Duration>, String> {
 fn parse_hook_form(form: &HookForm) -> Result<HookFormData, String> {
     let timeout = parse_duration_field(&form.timeout)?;
 
-    // Build env map from parallel arrays, skipping rows with empty keys
+    // Build env map from textarea lines (KEY=value format)
     let mut env = HashMap::new();
-    for (key, value) in form.env_keys.iter().zip(form.env_values.iter()) {
-        let key = key.trim();
-        if !key.is_empty() {
-            env.insert(key.to_owned(), value.clone());
+    for line in form.env_text.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if let Some((key, value)) = line.split_once('=') {
+            let key = key.trim();
+            if !key.is_empty() {
+                env.insert(key.to_owned(), value.to_owned());
+            }
         }
     }
 
@@ -354,7 +360,7 @@ async fn new_hook_form(
             form_command => "",
             form_cwd => "",
             form_timeout => "",
-            form_env => Vec::<()>::new(),
+            form_env_text => "",
             form_retry_count => 0,
             form_retry_backoff => "exponential",
             form_retry_initial_delay => "",
@@ -426,13 +432,14 @@ async fn edit_hook_form(
         .map(config_writer::format_duration)
         .unwrap_or_default();
 
-    let env_rows: Vec<_> = {
+    let env_text = {
         let mut pairs: Vec<_> = hook.env.iter().collect();
         pairs.sort_by_key(|(k, _)| k.as_str());
         pairs
-            .into_iter()
-            .map(|(k, v)| context! { key => k, value => v })
-            .collect()
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>()
+            .join("\n")
     };
 
     let (retry_count, retry_backoff, retry_initial_delay, retry_max_delay) =
@@ -459,7 +466,7 @@ async fn edit_hook_form(
             form_command => command,
             form_cwd => hook.cwd.as_deref().unwrap_or(""),
             form_timeout => timeout_str,
-            form_env => env_rows,
+            form_env_text => env_text,
             form_retry_count => retry_count,
             form_retry_backoff => retry_backoff,
             form_retry_initial_delay => retry_initial_delay,
@@ -585,5 +592,459 @@ fn compute_duration(started_at: &Option<String>, completed_at: &Option<String>) 
         Some(format!("{}m {}s", secs / 60, secs % 60))
     } else {
         Some(format!("{}h {}m", secs / 3600, (secs % 3600) / 60))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::AppConfig;
+    use crate::db::Db;
+    use crate::models::user;
+    use crate::templates::Templates;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    /// Create a test AppState backed by a temporary directory for the TOML config.
+    /// Returns (state, temp_dir) -- the temp_dir must be kept alive for the test duration.
+    async fn test_state_with_config(
+        toml_content: &str,
+    ) -> (Arc<AppState>, tempfile::TempDir) {
+        let dir = tempfile::TempDir::new().expect("tmp dir");
+        let config_path = dir.path().join("sendword.toml");
+        std::fs::write(&config_path, toml_content).expect("write config");
+
+        let config =
+            AppConfig::load_from(config_path.to_str().unwrap_or(""), "nonexistent.json")
+                .expect("load config");
+
+        let db = Db::new_in_memory().await.expect("in-memory db");
+        db.migrate().await.expect("migration");
+        let templates = Templates::new(Templates::default_dir());
+        let state = AppState::new(config, &config_path, db, templates);
+        (state, dir)
+    }
+
+    /// Create a test user and return a session cookie value.
+    async fn create_test_session(state: &Arc<AppState>) -> String {
+        let pool = state.db.pool();
+        let u = user::create(pool, "admin", "password123").await.unwrap();
+        let session_lifetime = state.config.load().auth.session_lifetime;
+        let sess = crate::models::session::create(pool, &u.id, session_lifetime)
+            .await
+            .unwrap();
+        format!("sendword_session={}", sess.id)
+    }
+
+    fn app(state: Arc<AppState>) -> Router {
+        crate::server::router(state)
+    }
+
+    // --- New hook form ---
+
+    #[tokio::test]
+    async fn new_hook_form_requires_auth() {
+        let (state, _dir) = test_state_with_config("[server]\nport = 8080\n").await;
+        let resp = app(state)
+            .oneshot(
+                Request::builder()
+                    .uri("/hooks/new")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    }
+
+    #[tokio::test]
+    async fn new_hook_form_renders() {
+        let (state, _dir) = test_state_with_config("[server]\nport = 8080\n").await;
+        let cookie = create_test_session(&state).await;
+
+        let resp = app(state)
+            .oneshot(
+                Request::builder()
+                    .uri("/hooks/new")
+                    .header("Cookie", &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let html = String::from_utf8(body.to_vec()).unwrap();
+        assert!(html.contains("New hook"));
+        assert!(html.contains("Create hook"));
+    }
+
+    // --- Create hook ---
+
+    #[tokio::test]
+    async fn create_hook_redirects_to_detail() {
+        let (state, _dir) = test_state_with_config("[server]\nport = 8080\n").await;
+        let cookie = create_test_session(&state).await;
+
+        let resp = app(state.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/hooks/new")
+                    .header("Cookie", &cookie)
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    .body(Body::from(
+                        "name=Deploy&slug=deploy&command=echo+deploy&enabled=true",
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+        let location = resp.headers().get("location").unwrap().to_str().unwrap();
+        assert_eq!(location, "/hooks/deploy");
+
+        // Verify config was hot-reloaded
+        let config = state.config.load();
+        assert_eq!(config.hooks.len(), 1);
+        assert_eq!(config.hooks[0].slug, "deploy");
+        assert_eq!(config.hooks[0].name, "Deploy");
+    }
+
+    #[tokio::test]
+    async fn create_hook_with_all_fields() {
+        let (state, _dir) = test_state_with_config("[server]\nport = 8080\n").await;
+        let cookie = create_test_session(&state).await;
+
+        let body = "name=Full+Hook&slug=full-hook&description=A+full+hook\
+            &enabled=true&command=make+deploy&cwd=%2Fopt%2Fapp\
+            &timeout=2m&env_text=APP_ENV%3Dproduction%0ADEBUG%3Dfalse\
+            &retry_count=3&retry_backoff=exponential\
+            &retry_initial_delay=2s&retry_max_delay=30s";
+
+        let resp = app(state.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/hooks/new")
+                    .header("Cookie", &cookie)
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+
+        let config = state.config.load();
+        let hook = &config.hooks[0];
+        assert_eq!(hook.name, "Full Hook");
+        assert_eq!(hook.description, "A full hook");
+        assert!(hook.enabled);
+        assert_eq!(hook.cwd.as_deref(), Some("/opt/app"));
+        assert_eq!(hook.timeout, Some(Duration::from_secs(120)));
+        assert_eq!(hook.env.get("APP_ENV").map(String::as_str), Some("production"));
+        assert_eq!(hook.env.get("DEBUG").map(String::as_str), Some("false"));
+        let retries = hook.retries.as_ref().expect("retries should be set");
+        assert_eq!(retries.count, 3);
+        assert_eq!(retries.backoff, BackoffStrategy::Exponential);
+    }
+
+    #[tokio::test]
+    async fn create_hook_duplicate_slug_shows_error() {
+        let toml = r#"[server]
+port = 8080
+
+[[hooks]]
+name = "Existing"
+slug = "deploy"
+[hooks.executor]
+type = "shell"
+command = "echo existing"
+"#;
+        let (state, _dir) = test_state_with_config(toml).await;
+        let cookie = create_test_session(&state).await;
+
+        let resp = app(state)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/hooks/new")
+                    .header("Cookie", &cookie)
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    .body(Body::from(
+                        "name=Another&slug=deploy&command=echo+deploy&enabled=true",
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+        let location = resp.headers().get("location").unwrap().to_str().unwrap();
+        assert!(location.starts_with("/hooks/new?error="));
+        assert!(location.contains("already+exists") || location.contains("already%20exists"));
+    }
+
+    // --- Edit hook form ---
+
+    #[tokio::test]
+    async fn edit_hook_form_renders_with_existing_data() {
+        let toml = r#"[server]
+port = 8080
+
+[[hooks]]
+name = "Deploy"
+slug = "deploy"
+description = "Deploy the app"
+enabled = true
+cwd = "/opt/app"
+timeout = "2m"
+[hooks.executor]
+type = "shell"
+command = "make deploy"
+[hooks.env]
+APP_ENV = "production"
+[hooks.retries]
+count = 3
+backoff = "exponential"
+initial_delay = "2s"
+max_delay = "30s"
+"#;
+        let (state, _dir) = test_state_with_config(toml).await;
+        let cookie = create_test_session(&state).await;
+
+        let resp = app(state)
+            .oneshot(
+                Request::builder()
+                    .uri("/hooks/deploy/edit")
+                    .header("Cookie", &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let html = String::from_utf8(body.to_vec()).unwrap();
+        assert!(html.contains("Edit hook"));
+        assert!(html.contains("Deploy"));
+        assert!(html.contains("make deploy"));
+        assert!(html.contains("/opt/app"));
+        assert!(html.contains("APP_ENV"));
+        assert!(html.contains("production"));
+    }
+
+    #[tokio::test]
+    async fn edit_hook_form_not_found() {
+        let (state, _dir) = test_state_with_config("[server]\nport = 8080\n").await;
+        let cookie = create_test_session(&state).await;
+
+        let resp = app(state)
+            .oneshot(
+                Request::builder()
+                    .uri("/hooks/nonexistent/edit")
+                    .header("Cookie", &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    // --- Update hook ---
+
+    #[tokio::test]
+    async fn update_hook_changes_config() {
+        let toml = r#"[server]
+port = 8080
+
+[[hooks]]
+name = "Old Name"
+slug = "my-hook"
+[hooks.executor]
+type = "shell"
+command = "echo old"
+"#;
+        let (state, _dir) = test_state_with_config(toml).await;
+        let cookie = create_test_session(&state).await;
+
+        let resp = app(state.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/hooks/my-hook/edit")
+                    .header("Cookie", &cookie)
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    .body(Body::from(
+                        "name=New+Name&slug=my-hook&command=echo+new&enabled=true&description=updated",
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+        let location = resp.headers().get("location").unwrap().to_str().unwrap();
+        assert_eq!(location, "/hooks/my-hook");
+
+        // Verify config was updated and reloaded
+        let config = state.config.load();
+        assert_eq!(config.hooks[0].name, "New Name");
+        assert_eq!(config.hooks[0].description, "updated");
+        let ExecutorConfig::Shell { command } = &config.hooks[0].executor;
+        assert_eq!(command, "echo new");
+    }
+
+    #[tokio::test]
+    async fn update_nonexistent_hook_shows_error() {
+        let (state, _dir) = test_state_with_config("[server]\nport = 8080\n").await;
+        let cookie = create_test_session(&state).await;
+
+        let resp = app(state)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/hooks/nonexistent/edit")
+                    .header("Cookie", &cookie)
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    .body(Body::from(
+                        "name=Test&slug=nonexistent&command=echo+test&enabled=true",
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+        let location = resp.headers().get("location").unwrap().to_str().unwrap();
+        assert!(location.contains("error="));
+        assert!(location.contains("not+found") || location.contains("not%20found"));
+    }
+
+    // --- Delete hook ---
+
+    #[tokio::test]
+    async fn delete_hook_removes_from_config() {
+        let toml = r#"[server]
+port = 8080
+
+[[hooks]]
+name = "To Delete"
+slug = "delete-me"
+[hooks.executor]
+type = "shell"
+command = "echo delete"
+"#;
+        let (state, _dir) = test_state_with_config(toml).await;
+        let cookie = create_test_session(&state).await;
+
+        // Verify hook exists before deletion
+        assert_eq!(state.config.load().hooks.len(), 1);
+
+        let resp = app(state.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/hooks/delete-me/delete")
+                    .header("Cookie", &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+        let location = resp.headers().get("location").unwrap().to_str().unwrap();
+        assert_eq!(location, "/");
+
+        // Verify config was updated
+        assert!(state.config.load().hooks.is_empty());
+    }
+
+    #[tokio::test]
+    async fn delete_nonexistent_hook_shows_error() {
+        let (state, _dir) = test_state_with_config("[server]\nport = 8080\n").await;
+        let cookie = create_test_session(&state).await;
+
+        let resp = app(state)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/hooks/nonexistent/delete")
+                    .header("Cookie", &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+        let location = resp.headers().get("location").unwrap().to_str().unwrap();
+        assert!(location.contains("error="));
+    }
+
+    // --- Checkbox behavior ---
+
+    #[tokio::test]
+    async fn create_hook_without_enabled_checkbox_creates_disabled() {
+        let (state, _dir) = test_state_with_config("[server]\nport = 8080\n").await;
+        let cookie = create_test_session(&state).await;
+
+        // Note: no "enabled" field in the form body — checkbox unchecked
+        let resp = app(state.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/hooks/new")
+                    .header("Cookie", &cookie)
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    .body(Body::from("name=Disabled+Hook&slug=disabled&command=echo+off"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+        let config = state.config.load();
+        assert!(!config.hooks[0].enabled);
+    }
+
+    // --- Duration parsing ---
+
+    #[tokio::test]
+    async fn create_hook_with_invalid_timeout_shows_error() {
+        let (state, _dir) = test_state_with_config("[server]\nport = 8080\n").await;
+        let cookie = create_test_session(&state).await;
+
+        let resp = app(state)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/hooks/new")
+                    .header("Cookie", &cookie)
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    .body(Body::from(
+                        "name=Bad&slug=bad&command=echo+bad&timeout=notaduration",
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+        let location = resp.headers().get("location").unwrap().to_str().unwrap();
+        assert!(location.contains("error="));
     }
 }

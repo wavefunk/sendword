@@ -133,40 +133,18 @@
     {# --- Environment variables --- #}
     <div class="border rounded-lg p-4">
       <h2 class="text-lg font-semibold mb-4">Environment variables</h2>
-      <div id="env-rows" class="space-y-2">
-        {% for env in form_env %}
-        <div class="flex items-center gap-2 env-row">
-          <input
-            type="text"
-            name="env_keys"
-            value="{{ env.key }}"
-            placeholder="KEY"
-            class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-          >
-          <span class="text-gray-400">=</span>
-          <input
-            type="text"
-            name="env_values"
-            value="{{ env.value }}"
-            placeholder="value"
-            class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-          >
-          <button
-            type="button"
-            onclick="this.closest('.env-row').remove()"
-            class="px-2 py-2 text-sm text-red-600 hover:bg-red-50 rounded"
-            title="Remove"
-          >&times;</button>
-        </div>
-        {% endfor %}
+      <div>
+        <label for="env_text" class="block text-sm font-medium text-gray-700 mb-1">Variables</label>
+        <textarea
+          id="env_text"
+          name="env_text"
+          rows="4"
+          placeholder="KEY=value&#10;ANOTHER_KEY=another value"
+          class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono leading-relaxed focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+          spellcheck="false"
+        >{{ form_env_text }}</textarea>
+        <p class="mt-1 text-xs text-gray-400">One variable per line, in KEY=value format. Blank lines are ignored.</p>
       </div>
-      <button
-        type="button"
-        id="add-env-btn"
-        class="mt-3 px-3 py-1.5 text-sm font-medium text-gray-700 bg-gray-100 rounded hover:bg-gray-200"
-      >
-        + Add variable
-      </button>
     </div>
 
     {# --- Retry configuration --- #}
@@ -238,41 +216,4 @@
     </div>
   </form>
 </main>
-
-<script>
-document.getElementById('add-env-btn').addEventListener('click', function() {
-  var container = document.getElementById('env-rows');
-  var row = document.createElement('div');
-  row.className = 'flex items-center gap-2 env-row';
-
-  var keyInput = document.createElement('input');
-  keyInput.type = 'text';
-  keyInput.name = 'env_keys';
-  keyInput.placeholder = 'KEY';
-  keyInput.className = 'flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500';
-
-  var sep = document.createElement('span');
-  sep.className = 'text-gray-400';
-  sep.textContent = '=';
-
-  var valInput = document.createElement('input');
-  valInput.type = 'text';
-  valInput.name = 'env_values';
-  valInput.placeholder = 'value';
-  valInput.className = 'flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500';
-
-  var removeBtn = document.createElement('button');
-  removeBtn.type = 'button';
-  removeBtn.className = 'px-2 py-2 text-sm text-red-600 hover:bg-red-50 rounded';
-  removeBtn.title = 'Remove';
-  removeBtn.textContent = '\u00d7';
-  removeBtn.addEventListener('click', function() { row.remove(); });
-
-  row.appendChild(keyInput);
-  row.appendChild(sep);
-  row.appendChild(valInput);
-  row.appendChild(removeBtn);
-  container.appendChild(row);
-});
-</script>
 {% endblock %}
