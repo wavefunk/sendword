@@ -229,6 +229,10 @@ pub async fn run(pool: &SqlitePool, ctx: ExecutionContext) -> ExecutionResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::Db;
+    use sqlx::SqlitePool;
+
+    // --- Unit tests ---
 
     #[tokio::test]
     async fn prepare_log_files_creates_directory_and_files() {
@@ -269,7 +273,6 @@ mod tests {
     #[tokio::test]
     async fn prepare_log_files_creates_nested_parents() {
         let tmp = tempfile::TempDir::new().expect("temp dir");
-        // logs_dir itself does not exist yet
         let nested = tmp.path().join("a").join("b").join("logs");
         let logs_dir = nested.to_str().expect("utf-8 path");
         let exec_id = "test-exec-002";
@@ -281,5 +284,253 @@ mod tests {
         assert!(log_dir.exists());
         assert!(log_dir.join("stdout.log").exists());
         assert!(log_dir.join("stderr.log").exists());
+    }
+
+    // --- Integration test helpers ---
+
+    async fn test_pool() -> SqlitePool {
+        let db = Db::new_in_memory().await.expect("in-memory db");
+        db.migrate().await.expect("migration");
+        db.pool().clone()
+    }
+
+    /// Create a pending execution record and return a matching ExecutionContext.
+    async fn setup_execution(
+        pool: &SqlitePool,
+        logs_dir: &str,
+        command: &str,
+    ) -> ExecutionContext {
+        let exec = execution::create(
+            pool,
+            &execution::NewExecution {
+                hook_slug: "test-hook",
+                log_path: logs_dir,
+                trigger_source: "127.0.0.1",
+                request_payload: "{}",
+                retry_of: None,
+            },
+        )
+        .await
+        .expect("create execution");
+
+        ExecutionContext {
+            execution_id: exec.id,
+            hook_slug: "test-hook".into(),
+            command: command.into(),
+            env: HashMap::new(),
+            cwd: None,
+            timeout: Duration::from_secs(10),
+            logs_dir: logs_dir.into(),
+        }
+    }
+
+    /// Read a log file to a string.
+    async fn read_log(logs_dir: &str, exec_id: &str, file: &str) -> String {
+        let path = Path::new(logs_dir).join(exec_id).join(file);
+        tokio::fs::read_to_string(path)
+            .await
+            .unwrap_or_default()
+    }
+
+    // --- Integration tests ---
+
+    #[tokio::test]
+    async fn successful_command_returns_success() {
+        let tmp = tempfile::TempDir::new().expect("temp dir");
+        let logs_dir = tmp.path().to_str().expect("utf-8 path");
+        let pool = test_pool().await;
+
+        let ctx = setup_execution(&pool, logs_dir, "echo hello").await;
+        let exec_id = ctx.execution_id.clone();
+
+        let result = run(&pool, ctx).await;
+
+        assert_eq!(result.status, ExecutionStatus::Success);
+        assert_eq!(result.exit_code, Some(0));
+
+        // Verify stdout.log
+        let stdout = read_log(logs_dir, &exec_id, "stdout.log").await;
+        assert_eq!(stdout.trim(), "hello");
+
+        // Verify stderr.log is empty
+        let stderr = read_log(logs_dir, &exec_id, "stderr.log").await;
+        assert!(stderr.is_empty());
+
+        // Verify DB record
+        let exec = execution::get_by_id(&pool, &exec_id).await.expect("get");
+        assert_eq!(exec.status, ExecutionStatus::Success);
+        assert!(exec.started_at.is_some());
+        assert!(exec.completed_at.is_some());
+        assert_eq!(exec.exit_code, Some(0));
+    }
+
+    #[tokio::test]
+    async fn failing_command_returns_failed_with_exit_code() {
+        let tmp = tempfile::TempDir::new().expect("temp dir");
+        let logs_dir = tmp.path().to_str().expect("utf-8 path");
+        let pool = test_pool().await;
+
+        let ctx = setup_execution(&pool, logs_dir, "exit 42").await;
+        let exec_id = ctx.execution_id.clone();
+
+        let result = run(&pool, ctx).await;
+
+        assert_eq!(result.status, ExecutionStatus::Failed);
+        assert_eq!(result.exit_code, Some(42));
+
+        let exec = execution::get_by_id(&pool, &exec_id).await.expect("get");
+        assert_eq!(exec.status, ExecutionStatus::Failed);
+        assert_eq!(exec.exit_code, Some(42));
+    }
+
+    #[tokio::test]
+    async fn stderr_output_is_captured() {
+        let tmp = tempfile::TempDir::new().expect("temp dir");
+        let logs_dir = tmp.path().to_str().expect("utf-8 path");
+        let pool = test_pool().await;
+
+        let ctx = setup_execution(&pool, logs_dir, "echo error >&2").await;
+        let exec_id = ctx.execution_id.clone();
+
+        let _result = run(&pool, ctx).await;
+
+        let stderr = read_log(logs_dir, &exec_id, "stderr.log").await;
+        assert_eq!(stderr.trim(), "error");
+    }
+
+    #[tokio::test]
+    async fn timeout_kills_long_running_command() {
+        let tmp = tempfile::TempDir::new().expect("temp dir");
+        let logs_dir = tmp.path().to_str().expect("utf-8 path");
+        let pool = test_pool().await;
+
+        let mut ctx = setup_execution(&pool, logs_dir, "sleep 60").await;
+        ctx.timeout = Duration::from_secs(1);
+        let exec_id = ctx.execution_id.clone();
+
+        let start = std::time::Instant::now();
+        let result = run(&pool, ctx).await;
+        let elapsed = start.elapsed();
+
+        assert_eq!(result.status, ExecutionStatus::TimedOut);
+        assert!(result.exit_code.is_none());
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "timeout test should complete quickly, took {elapsed:?}"
+        );
+
+        let exec = execution::get_by_id(&pool, &exec_id).await.expect("get");
+        assert_eq!(exec.status, ExecutionStatus::TimedOut);
+    }
+
+    #[tokio::test]
+    async fn hook_env_vars_are_passed_to_command() {
+        let tmp = tempfile::TempDir::new().expect("temp dir");
+        let logs_dir = tmp.path().to_str().expect("utf-8 path");
+        let pool = test_pool().await;
+
+        let mut ctx = setup_execution(&pool, logs_dir, "echo $MY_VAR").await;
+        ctx.env.insert("MY_VAR".into(), "hello".into());
+        let exec_id = ctx.execution_id.clone();
+
+        let _result = run(&pool, ctx).await;
+
+        let stdout = read_log(logs_dir, &exec_id, "stdout.log").await;
+        assert_eq!(stdout.trim(), "hello");
+    }
+
+    #[tokio::test]
+    async fn sendword_env_vars_are_set() {
+        let tmp = tempfile::TempDir::new().expect("temp dir");
+        let logs_dir = tmp.path().to_str().expect("utf-8 path");
+        let pool = test_pool().await;
+
+        let ctx = setup_execution(
+            &pool,
+            logs_dir,
+            "echo $SENDWORD_EXECUTION_ID $SENDWORD_HOOK_SLUG",
+        )
+        .await;
+        let exec_id = ctx.execution_id.clone();
+
+        let _result = run(&pool, ctx).await;
+
+        let stdout = read_log(logs_dir, &exec_id, "stdout.log").await;
+        let parts: Vec<&str> = stdout.trim().split_whitespace().collect();
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0], exec_id);
+        assert_eq!(parts[1], "test-hook");
+    }
+
+    #[tokio::test]
+    async fn working_directory_is_respected() {
+        let tmp = tempfile::TempDir::new().expect("temp dir");
+        let logs_dir = tmp.path().to_str().expect("utf-8 path");
+        let pool = test_pool().await;
+
+        let work_dir = tempfile::TempDir::new().expect("work dir");
+        let work_path = work_dir.path().canonicalize().expect("canonical path");
+
+        let mut ctx = setup_execution(&pool, logs_dir, "pwd").await;
+        ctx.cwd = Some(work_path.to_str().expect("utf-8").into());
+        let exec_id = ctx.execution_id.clone();
+
+        let _result = run(&pool, ctx).await;
+
+        let stdout = read_log(logs_dir, &exec_id, "stdout.log").await;
+        assert_eq!(
+            stdout.trim(),
+            work_path.to_str().expect("utf-8")
+        );
+    }
+
+    #[tokio::test]
+    async fn invalid_cwd_results_in_failed() {
+        let tmp = tempfile::TempDir::new().expect("temp dir");
+        let logs_dir = tmp.path().to_str().expect("utf-8 path");
+        let pool = test_pool().await;
+
+        let mut ctx = setup_execution(&pool, logs_dir, "echo should-not-run").await;
+        ctx.cwd = Some("/nonexistent/path/that/does/not/exist".into());
+        let exec_id = ctx.execution_id.clone();
+
+        let result = run(&pool, ctx).await;
+
+        assert_eq!(result.status, ExecutionStatus::Failed);
+
+        let stderr = read_log(logs_dir, &exec_id, "stderr.log").await;
+        assert!(
+            !stderr.is_empty(),
+            "stderr.log should contain spawn error message"
+        );
+    }
+
+    #[tokio::test]
+    async fn environment_is_clean_no_inherited_server_vars() {
+        let tmp = tempfile::TempDir::new().expect("temp dir");
+        let logs_dir = tmp.path().to_str().expect("utf-8 path");
+        let pool = test_pool().await;
+
+        // Safety: test-only env var, unique name avoids collisions
+        unsafe { std::env::set_var("SENDWORD_TEST_UNIQUE_VAR_12345", "leaked") };
+
+        let ctx = setup_execution(
+            &pool,
+            logs_dir,
+            "echo ${SENDWORD_TEST_UNIQUE_VAR_12345:-clean}",
+        )
+        .await;
+        let exec_id = ctx.execution_id.clone();
+
+        let _result = run(&pool, ctx).await;
+
+        unsafe { std::env::remove_var("SENDWORD_TEST_UNIQUE_VAR_12345") };
+
+        let stdout = read_log(logs_dir, &exec_id, "stdout.log").await;
+        assert_eq!(
+            stdout.trim(),
+            "clean",
+            "server env vars should not leak to child process"
+        );
     }
 }
