@@ -7,6 +7,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
+use crate::auth::AuthUser;
 use crate::config::ExecutorConfig;
 use crate::error::AppError;
 use crate::models::execution;
@@ -104,6 +105,7 @@ struct PaginationParams {
 }
 
 async fn hook_detail(
+    _auth: AuthUser,
     State(state): State<Arc<AppState>>,
     Path(slug): Path<String>,
 ) -> Result<Html<String>, AppError> {
@@ -159,6 +161,7 @@ async fn hook_detail(
 }
 
 async fn execution_list(
+    _auth: AuthUser,
     State(state): State<Arc<AppState>>,
     Path(slug): Path<String>,
     Query(params): Query<PaginationParams>,

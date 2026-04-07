@@ -7,6 +7,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Serialize;
 
+use crate::auth::AuthUser;
 use crate::config::ExecutorConfig;
 use crate::error::AppError;
 use crate::models::execution;
@@ -54,6 +55,7 @@ fn compute_duration(started_at: &Option<String>, completed_at: &Option<String>) 
 }
 
 async fn execution_detail(
+    _auth: AuthUser,
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Html<String>, AppError> {
@@ -105,6 +107,7 @@ struct ReplayResponse {
 /// Looks up the original execution, clones its payload, creates a new execution
 /// record linked via `retry_of`, and spawns the executor in a detached task.
 async fn replay_execution(
+    _auth: AuthUser,
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<ReplayResponse>, AppError> {

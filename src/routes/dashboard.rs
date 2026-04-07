@@ -5,6 +5,7 @@ use axum::response::Html;
 use axum::routing::get;
 use axum::Router;
 
+use crate::auth::AuthUser;
 use crate::error::AppError;
 use crate::models::execution;
 use crate::server::AppState;
@@ -14,7 +15,10 @@ pub fn router() -> Router<Arc<AppState>> {
     Router::new().route("/", get(dashboard))
 }
 
-async fn dashboard(State(state): State<Arc<AppState>>) -> Result<Html<String>, AppError> {
+async fn dashboard(
+    _auth: AuthUser,
+    State(state): State<Arc<AppState>>,
+) -> Result<Html<String>, AppError> {
     let config = state.config.load();
     let pool = state.db.pool();
 
