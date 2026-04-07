@@ -11,6 +11,7 @@ use axum::{Form, Json, Router};
 use serde::{Deserialize, Serialize};
 
 use crate::auth::AuthUser;
+use crate::payload::{FieldType, PayloadField, PayloadSchema};
 use crate::config::{BackoffStrategy, ExecutorConfig, HmacAlgorithm, HookAuthConfig};
 use crate::webhook_auth;
 use crate::config_writer::{self, HookFormData, RetryFormData, WriteError};
@@ -214,6 +215,25 @@ async fn hook_detail(
 
     let execution_rows = build_execution_rows(&executions);
 
+    let payload_fields: Vec<serde_json::Value> = hook
+        .payload
+        .as_ref()
+        .map(|schema| {
+            schema
+                .fields
+                .iter()
+                .map(|f| {
+                    serde_json::json!({
+                        "name": f.name,
+                        "field_type": f.field_type.to_string(),
+                        "type": f.field_type.to_string(),
+                        "required": f.required,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
     let (auth_mode, auth_header, auth_algorithm) = match &hook.auth {
         Some(HookAuthConfig::Bearer { .. }) => ("bearer", "", ""),
         Some(HookAuthConfig::Hmac { header, algorithm, .. }) => {
@@ -241,6 +261,7 @@ async fn hook_detail(
             auth_mode => auth_mode,
             auth_header => auth_header,
             auth_algorithm => auth_algorithm,
+            payload_fields => payload_fields,
             executions => execution_rows,
             total => total,
             page => 1,
@@ -341,6 +362,9 @@ struct HookForm {
     auth_algorithm: Option<String>,
     #[serde(default)]
     auth_secret: Option<String>,
+    /// One field per line: name:type[:required]
+    #[serde(default)]
+    payload_text: String,
 }
 
 /// Parse a human-readable duration string (e.g., "30s", "5m", "2h") into a `Duration`.
@@ -353,6 +377,77 @@ fn parse_duration_field(s: &str) -> Result<Option<Duration>, String> {
     humantime::parse_duration(s)
         .map(Some)
         .map_err(|e| format!("invalid duration '{s}': {e}"))
+}
+
+/// Parse payload field definitions from textarea.
+///
+/// Each non-empty line is `name:type` or `name:type:required`.
+/// The `:required` suffix marks the field as required; otherwise optional.
+/// Returns `None` if the text is empty (no schema defined).
+fn parse_payload_text(text: &str) -> Result<Option<PayloadSchema>, String> {
+    let mut fields = Vec::new();
+
+    for (i, line) in text.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        let parts: Vec<&str> = line.splitn(3, ':').collect();
+        if parts.len() < 2 {
+            return Err(format!(
+                "payload line {}: expected 'name:type' or 'name:type:required', got '{line}'",
+                i + 1,
+            ));
+        }
+
+        let name = parts[0].trim();
+        if name.is_empty() {
+            return Err(format!("payload line {}: field name cannot be empty", i + 1));
+        }
+
+        let type_str = parts[1].trim();
+        let field_type = match type_str {
+            "string" => FieldType::String,
+            "number" => FieldType::Number,
+            "boolean" => FieldType::Boolean,
+            "object" => FieldType::Object,
+            "array" => FieldType::Array,
+            other => {
+                return Err(format!(
+                    "payload line {}: unknown type '{other}' (expected string, number, boolean, object, or array)",
+                    i + 1,
+                ));
+            }
+        };
+
+        let required = if parts.len() == 3 {
+            match parts[2].trim() {
+                "required" => true,
+                "optional" | "" => false,
+                other => {
+                    return Err(format!(
+                        "payload line {}: expected 'required' or 'optional', got '{other}'",
+                        i + 1,
+                    ));
+                }
+            }
+        } else {
+            false
+        };
+
+        fields.push(PayloadField {
+            name: name.to_owned(),
+            field_type,
+            required,
+        });
+    }
+
+    if fields.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(PayloadSchema { fields }))
+    }
 }
 
 /// Convert raw form data into `HookFormData` used by ConfigWriter.
@@ -442,6 +537,8 @@ fn parse_hook_form(form: &HookForm) -> Result<HookFormData, String> {
         _ => None,
     };
 
+    let payload = parse_payload_text(&form.payload_text)?;
+
     Ok(HookFormData {
         name: form.name.trim().to_owned(),
         slug: form.slug.trim().to_owned(),
@@ -453,7 +550,7 @@ fn parse_hook_form(form: &HookForm) -> Result<HookFormData, String> {
         timeout,
         retries,
         auth,
-        payload: None,
+        payload,
     })
 }
 
@@ -497,6 +594,7 @@ async fn new_hook_form(
             form_auth_header => "X-Hub-Signature-256",
             form_auth_algorithm => "sha256",
             form_auth_secret => "",
+            form_payload_text => "",
             success => flash.success,
             error => flash.error,
             username => auth.username,
@@ -601,6 +699,25 @@ async fn edit_hook_form(
         Some(HookAuthConfig::None) | None => ("none", "", "", "sha256", ""),
     };
 
+    let payload_text = hook
+        .payload
+        .as_ref()
+        .map(|schema| {
+            schema
+                .fields
+                .iter()
+                .map(|f| {
+                    if f.required {
+                        format!("{}:{}:required", f.name, f.field_type)
+                    } else {
+                        format!("{}:{}", f.name, f.field_type)
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_default();
+
     let html = state.templates.render(
         "hook_form.html",
         context! {
@@ -623,6 +740,7 @@ async fn edit_hook_form(
             form_auth_header => auth_header,
             form_auth_algorithm => auth_algorithm,
             form_auth_secret => auth_secret,
+            form_payload_text => payload_text,
             success => flash.success,
             error => flash.error,
             username => auth.username,
@@ -1459,6 +1577,63 @@ command = "echo ok"
         let stored: serde_json::Value =
             serde_json::from_str(&exec.request_payload).unwrap();
         assert_eq!(stored["key"], "value");
+    }
+
+
+    // --- parse_payload_text ---
+
+    #[test]
+    fn parse_payload_text_valid_lines() {
+        let text = "action:string:required\ntag:string\ncount:number:required";
+        let schema = parse_payload_text(text).unwrap().unwrap();
+        assert_eq!(schema.fields.len(), 3);
+        assert_eq!(schema.fields[0].name, "action");
+        assert!(schema.fields[0].required);
+        assert_eq!(schema.fields[1].name, "tag");
+        assert!(!schema.fields[1].required);
+        assert_eq!(schema.fields[2].name, "count");
+        assert!(schema.fields[2].required);
+    }
+
+    #[test]
+    fn parse_payload_text_empty_returns_none() {
+        assert!(parse_payload_text("").unwrap().is_none());
+        assert!(parse_payload_text("  \n  \n  ").unwrap().is_none());
+    }
+
+    #[test]
+    fn parse_payload_text_invalid_type() {
+        let result = parse_payload_text("action:integer:required");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("unknown type"));
+    }
+
+    #[test]
+    fn parse_payload_text_missing_type() {
+        let result = parse_payload_text("action");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("expected"));
+    }
+
+    #[test]
+    fn parse_payload_text_blank_lines_skipped() {
+        let text = "action:string:required\n\n\ntag:string";
+        let schema = parse_payload_text(text).unwrap().unwrap();
+        assert_eq!(schema.fields.len(), 2);
+    }
+
+    #[test]
+    fn parse_payload_text_explicit_optional() {
+        let text = "tag:string:optional";
+        let schema = parse_payload_text(text).unwrap().unwrap();
+        assert!(!schema.fields[0].required);
+    }
+
+    #[test]
+    fn parse_payload_text_invalid_required_flag() {
+        let result = parse_payload_text("action:string:mandatory");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("expected 'required' or 'optional'"));
     }
 
 }
