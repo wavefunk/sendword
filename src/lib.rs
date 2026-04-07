@@ -2,6 +2,7 @@ pub mod config;
 pub mod db;
 pub mod error;
 pub mod id;
+pub mod models;
 pub mod routes;
 pub mod server;
 pub mod templates;
