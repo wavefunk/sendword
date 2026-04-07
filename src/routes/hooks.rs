@@ -8,6 +8,7 @@ use serde::Serialize;
 
 use crate::config::ExecutorConfig;
 use crate::models::execution;
+use crate::retry;
 use crate::server::AppState;
 
 pub fn router() -> Router<Arc<AppState>> {
@@ -72,9 +73,11 @@ async fn trigger_hook(
         logs_dir,
     };
 
+    let retry_config = retry::resolve_retry_config(hook, &state.config.defaults.retries);
+
     let pool = pool.clone();
     tokio::spawn(async move {
-        let result = crate::executor::run(&pool, ctx).await;
+        let result = retry::run_with_retries(&pool, ctx, &retry_config).await;
         tracing::info!(
             log_dir = %result.log_dir,
             status = %result.status,
