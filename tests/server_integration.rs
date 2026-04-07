@@ -1331,3 +1331,249 @@ async fn webhook_trigger_still_works_without_session_cookie() {
         .unwrap();
     assert_eq!(resp.status(), 404);
 }
+
+// --- Script editor tests ---
+
+#[tokio::test]
+async fn scripts_new_requires_auth() {
+    let url = spawn_test_server().await;
+    let client = client_no_redirect();
+    let resp = client
+        .get(format!("{url}/scripts/new"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 303);
+    let location = resp.headers().get("location").unwrap().to_str().unwrap();
+    assert_eq!(location, "/login");
+}
+
+#[tokio::test]
+async fn scripts_new_renders_editor() {
+    let (url, token) = spawn_authed_server(AppConfig::default()).await;
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("{url}/scripts/new"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("New script"));
+    assert!(body.contains("textarea"));
+    assert!(body.contains("Create"));
+}
+
+#[tokio::test]
+async fn scripts_create_and_edit_flow() {
+    let tmp = tempfile::tempdir().unwrap();
+    let scripts_dir = tmp.path().join("scripts");
+    std::fs::create_dir_all(&scripts_dir).unwrap();
+
+    let config = AppConfig {
+        scripts: sendword::config::ScriptsConfig {
+            dir: scripts_dir.to_str().unwrap().into(),
+        },
+        ..AppConfig::default()
+    };
+
+    let (url, token) = spawn_authed_server(config).await;
+    let client = client_no_redirect();
+
+    // Create a new script
+    let resp = client
+        .post(format!("{url}/scripts/new"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body("filename=deploy.sh&content=%23!%2Fbin%2Fbash%0Aecho+hello")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 303);
+    let location = resp.headers().get("location").unwrap().to_str().unwrap();
+    assert!(
+        location.contains("/scripts/deploy.sh"),
+        "should redirect to script editor: {location}"
+    );
+
+    // Verify file was written
+    let file_path = scripts_dir.join("deploy.sh");
+    assert!(file_path.exists(), "script file should exist");
+    let content = std::fs::read_to_string(&file_path).unwrap();
+    assert!(content.contains("echo hello"));
+
+    // Verify executable bit
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&file_path).unwrap().permissions().mode();
+        assert!(mode & 0o111 != 0, "file should be executable, mode: {mode:o}");
+    }
+
+    // Edit the script (GET)
+    let client_follow = reqwest::Client::new();
+    let resp = client_follow
+        .get(format!("{url}/scripts/deploy.sh"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("deploy.sh"));
+    assert!(body.contains("echo hello"));
+    assert!(body.contains("Save"));
+    assert!(body.contains("Delete"));
+
+    // Save the script (POST)
+    let resp = client
+        .post(format!("{url}/scripts/deploy.sh"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body("content=%23!%2Fbin%2Fbash%0Aecho+updated")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 303);
+
+    let content = std::fs::read_to_string(&file_path).unwrap();
+    assert!(content.contains("echo updated"));
+}
+
+#[tokio::test]
+async fn scripts_create_rejects_invalid_filename() {
+    let tmp = tempfile::tempdir().unwrap();
+    let scripts_dir = tmp.path().join("scripts");
+    std::fs::create_dir_all(&scripts_dir).unwrap();
+
+    let config = AppConfig {
+        scripts: sendword::config::ScriptsConfig {
+            dir: scripts_dir.to_str().unwrap().into(),
+        },
+        ..AppConfig::default()
+    };
+
+    let (url, token) = spawn_authed_server(config).await;
+    let client = client_no_redirect();
+
+    // Leading dot
+    let resp = client
+        .post(format!("{url}/scripts/new"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body("filename=.hidden&content=bad")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 303);
+    let location = resp.headers().get("location").unwrap().to_str().unwrap();
+    assert!(location.contains("error="), "should redirect with error: {location}");
+
+    // Path traversal
+    let resp = client
+        .post(format!("{url}/scripts/new"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body("filename=..%2Fetc%2Fpasswd&content=bad")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 303);
+    let location = resp.headers().get("location").unwrap().to_str().unwrap();
+    assert!(location.contains("error="), "should redirect with error: {location}");
+}
+
+#[tokio::test]
+async fn scripts_create_rejects_duplicate() {
+    let tmp = tempfile::tempdir().unwrap();
+    let scripts_dir = tmp.path().join("scripts");
+    std::fs::create_dir_all(&scripts_dir).unwrap();
+
+    // Pre-create a file
+    std::fs::write(scripts_dir.join("existing.sh"), "#!/bin/bash").unwrap();
+
+    let config = AppConfig {
+        scripts: sendword::config::ScriptsConfig {
+            dir: scripts_dir.to_str().unwrap().into(),
+        },
+        ..AppConfig::default()
+    };
+
+    let (url, token) = spawn_authed_server(config).await;
+    let client = client_no_redirect();
+
+    let resp = client
+        .post(format!("{url}/scripts/new"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body("filename=existing.sh&content=overwrite+attempt")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 303);
+    let location = resp.headers().get("location").unwrap().to_str().unwrap();
+    assert!(location.contains("error="), "should redirect with error: {location}");
+
+    // Original content should be untouched
+    let content = std::fs::read_to_string(scripts_dir.join("existing.sh")).unwrap();
+    assert_eq!(content, "#!/bin/bash");
+}
+
+#[tokio::test]
+async fn scripts_delete_removes_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    let scripts_dir = tmp.path().join("scripts");
+    std::fs::create_dir_all(&scripts_dir).unwrap();
+
+    let file_path = scripts_dir.join("doomed.sh");
+    std::fs::write(&file_path, "#!/bin/bash\necho goodbye").unwrap();
+
+    let config = AppConfig {
+        scripts: sendword::config::ScriptsConfig {
+            dir: scripts_dir.to_str().unwrap().into(),
+        },
+        ..AppConfig::default()
+    };
+
+    let (url, token) = spawn_authed_server(config).await;
+    let client = client_no_redirect();
+
+    let resp = client
+        .post(format!("{url}/scripts/doomed.sh/delete"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 303);
+    let location = resp.headers().get("location").unwrap().to_str().unwrap();
+    assert!(location.contains("/scripts"), "should redirect to scripts list: {location}");
+    assert!(location.contains("success="), "should have success flash: {location}");
+
+    assert!(!file_path.exists(), "file should be deleted");
+}
+
+#[tokio::test]
+async fn scripts_edit_returns_404_for_nonexistent() {
+    let tmp = tempfile::tempdir().unwrap();
+    let scripts_dir = tmp.path().join("scripts");
+    std::fs::create_dir_all(&scripts_dir).unwrap();
+
+    let config = AppConfig {
+        scripts: sendword::config::ScriptsConfig {
+            dir: scripts_dir.to_str().unwrap().into(),
+        },
+        ..AppConfig::default()
+    };
+
+    let (url, token) = spawn_authed_server(config).await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .get(format!("{url}/scripts/nonexistent.sh"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+}
