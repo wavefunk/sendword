@@ -151,7 +151,7 @@ struct FlashParams {
 // --- Handlers ---
 
 async fn list_scripts(
-    _auth: AuthUser,
+    auth: AuthUser,
     State(state): State<Arc<AppState>>,
 ) -> Result<Html<String>, AppError> {
     let scripts_dir = ensure_scripts_dir(&state).await;
@@ -160,9 +160,14 @@ async fn list_scripts(
     let mut read_dir = match tokio::fs::read_dir(&scripts_dir).await {
         Ok(rd) => rd,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            let html = state
-                .templates
-                .render("scripts.html", context! { scripts => Vec::<()>::new() })?;
+            let html = state.templates.render(
+                "scripts.html",
+                context! {
+                    scripts => Vec::<()>::new(),
+                    username => auth.username,
+                    nav_active => "scripts",
+                },
+            )?;
             return Ok(Html(html));
         }
         Err(e) => return Err(e.into()),
@@ -205,16 +210,21 @@ async fn list_scripts(
         })
         .collect();
 
-    let html = state
-        .templates
-        .render("scripts.html", context! { scripts => scripts })?;
+    let html = state.templates.render(
+        "scripts.html",
+        context! {
+            scripts => scripts,
+            username => auth.username,
+            nav_active => "scripts",
+        },
+    )?;
     Ok(Html(html))
 }
 
 // --- GET /scripts/new ---
 
 async fn new_script(
-    _auth: AuthUser,
+    auth: AuthUser,
     State(state): State<Arc<AppState>>,
     Query(flash): Query<FlashParams>,
 ) -> Result<Html<String>, AppError> {
@@ -226,6 +236,8 @@ async fn new_script(
             content => "",
             success => flash.success,
             error => flash.error,
+            username => auth.username,
+            nav_active => "scripts",
         },
     )?;
     Ok(Html(html))
@@ -286,7 +298,7 @@ async fn create_script(
 // --- GET /scripts/:filename ---
 
 async fn edit_script(
-    _auth: AuthUser,
+    auth: AuthUser,
     State(state): State<Arc<AppState>>,
     AxumPath(filename): AxumPath<String>,
     Query(flash): Query<FlashParams>,
@@ -310,6 +322,8 @@ async fn edit_script(
             content => content,
             success => flash.success,
             error => flash.error,
+            username => auth.username,
+            nav_active => "scripts",
         },
     )?;
     Ok(Html(html))

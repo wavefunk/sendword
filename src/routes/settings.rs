@@ -56,6 +56,8 @@ async fn list_users(
             users => user_rows,
             success => flash.success,
             error => flash.error,
+            username => auth.username,
+            nav_active => "settings",
         },
     )?;
     Ok(Html(html))
@@ -129,7 +131,7 @@ async fn delete_user(
 // --- GET /settings/password ---
 
 async fn password_page(
-    _auth: AuthUser,
+    auth: AuthUser,
     State(state): State<Arc<AppState>>,
     Query(flash): Query<FlashParams>,
 ) -> Result<Html<String>, AppError> {
@@ -138,6 +140,8 @@ async fn password_page(
         context! {
             success => flash.success,
             error => flash.error,
+            username => auth.username,
+            nav_active => "settings",
         },
     )?;
     Ok(Html(html))

@@ -55,7 +55,7 @@ fn compute_duration(started_at: &Option<String>, completed_at: &Option<String>) 
 }
 
 async fn execution_detail(
-    _auth: AuthUser,
+    auth: AuthUser,
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Html<String>, AppError> {
@@ -91,6 +91,8 @@ async fn execution_detail(
             retry_of => exec.retry_of,
             stdout => stdout,
             stderr => stderr,
+            username => auth.username,
+            nav_active => "hooks",
         },
     )?;
 

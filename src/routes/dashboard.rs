@@ -16,7 +16,7 @@ pub fn router() -> Router<Arc<AppState>> {
 }
 
 async fn dashboard(
-    _auth: AuthUser,
+    auth: AuthUser,
     State(state): State<Arc<AppState>>,
 ) -> Result<Html<String>, AppError> {
     let config = state.config.load();
@@ -43,8 +43,13 @@ async fn dashboard(
         });
     }
 
-    let html = state
-        .templates
-        .render("dashboard.html", context! { hooks => hooks })?;
+    let html = state.templates.render(
+        "dashboard.html",
+        context! {
+            hooks => hooks,
+            username => auth.username,
+            nav_active => "dashboard",
+        },
+    )?;
     Ok(Html(html))
 }

@@ -44,7 +44,12 @@
       <dd class="font-mono">{{ executor_type }}</dd>
 
       <dt class="text-gray-500">Command</dt>
-      <dd class="font-mono bg-gray-50 px-2 py-1 rounded">{{ executor_command }}</dd>
+      <dd class="font-mono bg-gray-50 px-2 py-1 rounded">
+        {{ executor_command }}
+        {% if script_edit_url %}
+        <a href="{{ script_edit_url }}" class="ml-2 text-xs text-blue-600 hover:underline">Edit script</a>
+        {% endif %}
+      </dd>
 
       {% if cwd %}
       <dt class="text-gray-500">Working directory</dt>

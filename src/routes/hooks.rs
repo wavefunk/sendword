@@ -111,7 +111,7 @@ struct PaginationParams {
 }
 
 async fn hook_detail(
-    _auth: AuthUser,
+    auth: AuthUser,
     State(state): State<Arc<AppState>>,
     Path(slug): Path<String>,
 ) -> Result<Html<String>, AppError> {
@@ -134,6 +134,22 @@ async fn hook_detail(
         ExecutorConfig::Shell { command } => (command.as_str(), "shell"),
     };
 
+    // Check if the command references a script in the managed scripts directory.
+    // If so, provide a link to the script editor.
+    let script_edit_url = {
+        let scripts_dir = &config.scripts.dir;
+        let cmd_path = std::path::Path::new(executor_command);
+        // Match commands like "data/scripts/deploy.sh" against the scripts dir
+        if let Ok(stripped) = cmd_path.strip_prefix(scripts_dir) {
+            stripped
+                .to_str()
+                .filter(|name| !name.contains('/') && !name.is_empty())
+                .map(|name| format!("/scripts/{name}"))
+        } else {
+            None
+        }
+    };
+
     let timeout_display = hook
         .timeout
         .unwrap_or(config.defaults.timeout)
@@ -152,6 +168,7 @@ async fn hook_detail(
             enabled => hook.enabled,
             executor_type => executor_type,
             executor_command => executor_command,
+            script_edit_url => script_edit_url,
             cwd => hook.cwd,
             timeout_secs => timeout_display,
             env_vars => env_vars,
@@ -160,6 +177,8 @@ async fn hook_detail(
             page => 1,
             total_pages => total_pages,
             has_more => has_more,
+            username => auth.username,
+            nav_active => "hooks",
         },
     )?;
 
@@ -345,7 +364,7 @@ struct FlashParams {
 // ---------------------------------------------------------------------------
 
 async fn new_hook_form(
-    _auth: AuthUser,
+    auth: AuthUser,
     State(state): State<Arc<AppState>>,
     Query(flash): Query<FlashParams>,
 ) -> Result<Html<String>, AppError> {
@@ -367,6 +386,8 @@ async fn new_hook_form(
             form_retry_max_delay => "",
             success => flash.success,
             error => flash.error,
+            username => auth.username,
+            nav_active => "hooks",
         },
     )?;
     Ok(Html(html))
@@ -410,7 +431,7 @@ async fn create_hook(
 // ---------------------------------------------------------------------------
 
 async fn edit_hook_form(
-    _auth: AuthUser,
+    auth: AuthUser,
     State(state): State<Arc<AppState>>,
     Path(slug): Path<String>,
     Query(flash): Query<FlashParams>,
@@ -473,6 +494,8 @@ async fn edit_hook_form(
             form_retry_max_delay => retry_max_delay,
             success => flash.success,
             error => flash.error,
+            username => auth.username,
+            nav_active => "hooks",
         },
     )?;
     Ok(Html(html))
