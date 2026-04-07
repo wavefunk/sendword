@@ -63,7 +63,7 @@ pub struct FieldValidationError {
 
 /// Walk a JSON value by dot-separated path (e.g., "repo.name").
 /// Returns None if any intermediate segment is missing or not an object.
-fn resolve_field<'a>(root: &'a serde_json::Value, path: &str) -> Option<&'a serde_json::Value> {
+pub fn resolve_field<'a>(root: &'a serde_json::Value, path: &str) -> Option<&'a serde_json::Value> {
     let mut current = root;
     for segment in path.split('.') {
         current = current.get(segment)?;
