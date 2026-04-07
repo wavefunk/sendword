@@ -31,6 +31,8 @@ chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v7", "serde"] }
 argon2 = "0.5"
 rand_core = { version = "0.6", features = ["getrandom"] }
+toml_edit = { version = "0.22", features = ["serde"] }
+arc-swap = "1"
 
 [build-dependencies]
 minijinja-embed = "2"
