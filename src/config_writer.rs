@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use toml_edit::{DocumentMut, Formatted, Item, Table, Value};
 
-use crate::config::{AppConfig, BackoffStrategy, ConfigError};
+use crate::config::{AppConfig, BackoffStrategy, ConfigError, HmacAlgorithm, HookAuthConfig};
 
 // ---------------------------------------------------------------------------
 // Error
@@ -50,6 +50,7 @@ pub struct HookFormData {
     pub env: HashMap<String, String>,
     pub timeout: Option<Duration>,
     pub retries: Option<RetryFormData>,
+    pub auth: Option<HookAuthConfig>,
 }
 
 #[derive(Debug, Clone)]
@@ -272,6 +273,30 @@ fn apply_hook_fields(table: &mut Table, data: &HookFormData) {
             table.remove("retries");
         }
     }
+
+    // auth sub-table or remove
+    match &data.auth {
+        Some(HookAuthConfig::Bearer { token }) => {
+            let mut auth_table = Table::new();
+            auth_table.insert("mode", toml_string("bearer"));
+            auth_table.insert("token", toml_string(token));
+            table.insert("auth", Item::Table(auth_table));
+        }
+        Some(HookAuthConfig::Hmac { header, algorithm, secret }) => {
+            let mut auth_table = Table::new();
+            auth_table.insert("mode", toml_string("hmac"));
+            auth_table.insert("header", toml_string(header));
+            let algo_str = match algorithm {
+                HmacAlgorithm::Sha256 => "sha256",
+            };
+            auth_table.insert("algorithm", toml_string(algo_str));
+            auth_table.insert("secret", toml_string(secret));
+            table.insert("auth", Item::Table(auth_table));
+        }
+        Some(HookAuthConfig::None) | None => {
+            table.remove("auth");
+        }
+    }
 }
 
 fn toml_string(s: &str) -> Item {
@@ -366,6 +391,7 @@ mod tests {
             env: HashMap::new(),
             timeout: None,
             retries: None,
+            auth: None,
         }
     }
 
@@ -449,6 +475,7 @@ command = "echo old"
             env: HashMap::from([("KEY".into(), "val".into())]),
             timeout: Some(Duration::from_secs(60)),
             retries: None,
+            auth: None,
         };
 
         writer.update_hook("my-hook", &data).expect("update hook");

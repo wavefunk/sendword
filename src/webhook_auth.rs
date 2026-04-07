@@ -30,7 +30,23 @@ fn resolve_env_ref(value: &str) -> Option<String> {
     }
 }
 
+/// Constant-time byte slice equality comparison.
+///
+/// Returns true only if both slices have equal length and content.
+/// Uses XOR accumulation to avoid early-exit timing differences.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut acc: u8 = 0;
+    for (x, y) in a.iter().zip(b.iter()) {
+        acc |= x ^ y;
+    }
+    acc == 0
+}
+
 /// Encode bytes as lowercase hex string.
+#[cfg(test)]
 fn hex_encode(bytes: &[u8]) -> String {
     let mut s = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
@@ -113,10 +129,7 @@ fn verify_bearer(token_config: &str, headers: &HeaderMap) -> AuthResult {
     };
 
     // Constant-time comparison to prevent timing attacks
-    if ring::constant_time::verify_slices_are_equal(
-        expected.as_bytes(),
-        provided.as_bytes(),
-    ).is_ok() {
+    if constant_time_eq(expected.as_bytes(), provided.as_bytes()) {
         AuthResult::Ok
     } else {
         AuthResult::Denied("bearer token mismatch".into())

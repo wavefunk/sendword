@@ -85,6 +85,9 @@
           {%- endif %}">
           {{ auth_mode }}
         </span>
+        {% if auth_mode == "hmac" %}
+        <span class="text-xs text-gray-500 ml-1">{{ auth_algorithm }} via {{ auth_header }}</span>
+        {% endif %}
       </dd>
     </dl>
   </div>

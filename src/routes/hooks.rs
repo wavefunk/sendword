@@ -11,7 +11,7 @@ use axum::{Form, Json, Router};
 use serde::{Deserialize, Serialize};
 
 use crate::auth::AuthUser;
-use crate::config::{BackoffStrategy, ExecutorConfig};
+use crate::config::{BackoffStrategy, ExecutorConfig, HmacAlgorithm, HookAuthConfig};
 use crate::webhook_auth;
 use crate::config_writer::{self, HookFormData, RetryFormData, WriteError};
 use crate::error::AppError;
@@ -172,6 +172,17 @@ async fn hook_detail(
 
     let execution_rows = build_execution_rows(&executions);
 
+    let (auth_mode, auth_header, auth_algorithm) = match &hook.auth {
+        Some(HookAuthConfig::Bearer { .. }) => ("bearer", "", ""),
+        Some(HookAuthConfig::Hmac { header, algorithm, .. }) => {
+            let algo = match algorithm {
+                HmacAlgorithm::Sha256 => "sha256",
+            };
+            ("hmac", header.as_str(), algo)
+        }
+        _ => ("none", "", ""),
+    };
+
     let html = state.templates.render(
         "hook_detail.html",
         context! {
@@ -185,6 +196,9 @@ async fn hook_detail(
             cwd => hook.cwd,
             timeout_secs => timeout_display,
             env_vars => env_vars,
+            auth_mode => auth_mode,
+            auth_header => auth_header,
+            auth_algorithm => auth_algorithm,
             executions => execution_rows,
             total => total,
             page => 1,
@@ -274,6 +288,17 @@ struct HookForm {
     retry_initial_delay: Option<String>,
     #[serde(default)]
     retry_max_delay: Option<String>,
+    // Auth fields
+    #[serde(default)]
+    auth_mode: Option<String>,
+    #[serde(default)]
+    auth_token: Option<String>,
+    #[serde(default)]
+    auth_header: Option<String>,
+    #[serde(default)]
+    auth_algorithm: Option<String>,
+    #[serde(default)]
+    auth_secret: Option<String>,
 }
 
 /// Parse a human-readable duration string (e.g., "30s", "5m", "2h") into a `Duration`.
@@ -349,6 +374,32 @@ fn parse_hook_form(form: &HookForm) -> Result<HookFormData, String> {
         Some(form.cwd.trim().to_owned())
     };
 
+    let auth = match form.auth_mode.as_deref().unwrap_or("none") {
+        "bearer" => {
+            let token = form.auth_token.as_deref().unwrap_or("").trim().to_owned();
+            if token.is_empty() {
+                return Err("auth token must be non-empty for bearer mode".into());
+            }
+            Some(HookAuthConfig::Bearer { token })
+        }
+        "hmac" => {
+            let header = form.auth_header.as_deref().unwrap_or("").trim().to_owned();
+            let secret = form.auth_secret.as_deref().unwrap_or("").trim().to_owned();
+            if header.is_empty() {
+                return Err("auth header must be non-empty for HMAC mode".into());
+            }
+            if secret.is_empty() {
+                return Err("auth secret must be non-empty for HMAC mode".into());
+            }
+            let algorithm = match form.auth_algorithm.as_deref().unwrap_or("sha256") {
+                "sha256" => HmacAlgorithm::Sha256,
+                other => return Err(format!("unsupported HMAC algorithm: {other}")),
+            };
+            Some(HookAuthConfig::Hmac { header, algorithm, secret })
+        }
+        _ => None,
+    };
+
     Ok(HookFormData {
         name: form.name.trim().to_owned(),
         slug: form.slug.trim().to_owned(),
@@ -359,6 +410,7 @@ fn parse_hook_form(form: &HookForm) -> Result<HookFormData, String> {
         env,
         timeout,
         retries,
+        auth,
     })
 }
 
@@ -397,6 +449,11 @@ async fn new_hook_form(
             form_retry_backoff => "exponential",
             form_retry_initial_delay => "",
             form_retry_max_delay => "",
+            form_auth_mode => "none",
+            form_auth_token => "",
+            form_auth_header => "X-Hub-Signature-256",
+            form_auth_algorithm => "sha256",
+            form_auth_secret => "",
             success => flash.success,
             error => flash.error,
             username => auth.username,
@@ -488,6 +545,19 @@ async fn edit_hook_form(
             (0, "exponential", String::new(), String::new())
         };
 
+    let (auth_mode, auth_token, auth_header, auth_algorithm, auth_secret) = match &hook.auth {
+        Some(HookAuthConfig::Bearer { token }) => {
+            ("bearer", token.as_str(), "", "", "")
+        }
+        Some(HookAuthConfig::Hmac { header, algorithm, secret }) => {
+            let algo = match algorithm {
+                HmacAlgorithm::Sha256 => "sha256",
+            };
+            ("hmac", "", header.as_str(), algo, secret.as_str())
+        }
+        Some(HookAuthConfig::None) | None => ("none", "", "", "sha256", ""),
+    };
+
     let html = state.templates.render(
         "hook_form.html",
         context! {
@@ -505,6 +575,11 @@ async fn edit_hook_form(
             form_retry_backoff => retry_backoff,
             form_retry_initial_delay => retry_initial_delay,
             form_retry_max_delay => retry_max_delay,
+            form_auth_mode => auth_mode,
+            form_auth_token => auth_token,
+            form_auth_header => auth_header,
+            form_auth_algorithm => auth_algorithm,
+            form_auth_secret => auth_secret,
             success => flash.success,
             error => flash.error,
             username => auth.username,

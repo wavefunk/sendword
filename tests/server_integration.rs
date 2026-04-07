@@ -438,12 +438,12 @@ async fn hook_detail_renders_hook_config() {
     // Back to dashboard link
     assert!(body.contains("Back to dashboard"), "should have back link");
 
-    // Auth and payload sections are guarded by `is defined` and should be absent
-    // when the handler doesn't pass auth_mode / payload_fields in the context.
-    assert!(
-        !body.contains("Authentication"),
-        "should not show auth section when auth_mode is not in context"
-    );
+    // Auth section is now always shown (with "none" for public hooks)
+    assert!(body.contains("Authentication"), "should show auth section");
+    assert!(body.contains("none"), "should show none auth mode for public hook");
+
+    // Payload section is guarded by `is defined` and should be absent
+    // when the handler doesn't pass payload_fields in the context.
     assert!(
         !body.contains("Payload Schema"),
         "should not show payload section when payload_fields is not in context"
