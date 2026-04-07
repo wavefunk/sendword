@@ -46,7 +46,7 @@ pub fn verify_password(password: &str, hash: &str) -> bool {
 /// Validates a username: 3-32 characters, alphanumeric + hyphens, no leading/trailing hyphens.
 pub fn validate_username(username: &str) -> Result<(), &'static str> {
     let len = username.len();
-    if len < 3 || len > 32 {
+    if !(3..=32).contains(&len) {
         return Err("username must be 3-32 characters");
     }
 

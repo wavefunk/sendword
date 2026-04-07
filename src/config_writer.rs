@@ -307,11 +307,11 @@ fn format_duration(d: Duration) -> String {
         return format!("{secs}s");
     }
 
-    if secs < 3600 && secs % 60 == 0 {
+    if secs < 3600 && secs.is_multiple_of(60) {
         return format!("{}m", secs / 60);
     }
 
-    if secs % 3600 == 0 {
+    if secs.is_multiple_of(3600) {
         return format!("{}h", secs / 3600);
     }
 
