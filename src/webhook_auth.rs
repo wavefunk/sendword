@@ -454,4 +454,72 @@ mod tests {
         let result = resolve_env_ref("${MISSING_VAR_RESOLVE_XYZ}");
         assert_eq!(result, None);
     }
+
+    #[test]
+    fn constant_time_eq_equal_slices() {
+        assert!(constant_time_eq(b"hello", b"hello"));
+    }
+
+    #[test]
+    fn constant_time_eq_different_slices() {
+        assert!(!constant_time_eq(b"hello", b"world"));
+    }
+
+    #[test]
+    fn constant_time_eq_different_lengths() {
+        assert!(!constant_time_eq(b"short", b"longer"));
+    }
+
+    #[test]
+    fn constant_time_eq_empty_slices() {
+        assert!(constant_time_eq(b"", b""));
+    }
+
+    #[test]
+    fn hex_decode_valid_hex() {
+        assert_eq!(hex_decode("aabb"), Some(vec![0xaa, 0xbb]));
+    }
+
+    #[test]
+    fn hex_decode_odd_length_returns_none() {
+        assert_eq!(hex_decode("abc"), None);
+    }
+
+    #[test]
+    fn hex_decode_invalid_chars_returns_none() {
+        assert_eq!(hex_decode("zzzz"), None);
+    }
+
+    #[test]
+    fn hex_decode_empty_string_returns_empty_vec() {
+        assert_eq!(hex_decode(""), Some(vec![]));
+    }
+
+    #[test]
+    fn hex_decode_uppercase_is_accepted() {
+        assert_eq!(hex_decode("AABB"), Some(vec![0xaa, 0xbb]));
+    }
+
+    #[test]
+    fn hmac_empty_body_verifies_correctly() {
+        let secret = "empty-body-secret";
+        let body = b"";
+
+        let key = hmac::Key::new(hmac::HMAC_SHA256, secret.as_bytes());
+        let tag = hmac::sign(&key, body);
+        let hex_sig = hex_encode(tag.as_ref());
+
+        let auth = HookAuthConfig::Hmac {
+            header: "X-Sig".to_owned(),
+            algorithm: HmacAlgorithm::Sha256,
+            secret: secret.to_owned(),
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_static("x-sig"),
+            HeaderValue::from_str(&format!("sha256={hex_sig}")).unwrap(),
+        );
+        let result = verify(Some(&auth), &headers, body);
+        assert!(matches!(result, AuthResult::Ok));
+    }
 }

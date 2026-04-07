@@ -1940,3 +1940,117 @@ command = "echo ok"
     assert!(toml_content.contains("mode = \"bearer\""), "TOML should contain bearer mode");
     assert!(toml_content.contains("my-secret"), "TOML should contain token");
 }
+
+#[tokio::test]
+async fn trigger_explicit_none_auth_hook_succeeds() {
+    let mut hook = shell_hook("explicit-none");
+    hook.auth = Some(HookAuthConfig::None);
+    let url = {
+        let state = test_state(config_with_hook(hook)).await;
+        spawn_server(state).await
+    };
+    let resp = reqwest::Client::new()
+        .post(format!("{url}/hook/explicit-none"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+}
+
+#[tokio::test]
+async fn trigger_hmac_hook_raw_hex_without_prefix_succeeds() {
+    use ring::hmac;
+
+    let secret = "raw-hex-secret";
+    let body = b"raw-hex-body";
+
+    let key = hmac::Key::new(hmac::HMAC_SHA256, secret.as_bytes());
+    let tag = hmac::sign(&key, body);
+    let hex_sig: String = tag.as_ref().iter().map(|b| format!("{b:02x}")).collect();
+
+    let mut hook = shell_hook("hmac-raw");
+    hook.auth = Some(HookAuthConfig::Hmac {
+        header: "X-Signature".to_owned(),
+        algorithm: HmacAlgorithm::Sha256,
+        secret: secret.to_owned(),
+    });
+    let url = {
+        let state = test_state(config_with_hook(hook)).await;
+        spawn_server(state).await
+    };
+    // Send raw hex without the "sha256=" prefix
+    let resp = reqwest::Client::new()
+        .post(format!("{url}/hook/hmac-raw"))
+        .header("X-Signature", &hex_sig)
+        .body(body.to_vec())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+}
+
+#[tokio::test]
+async fn trigger_hmac_hook_with_env_var_secret_succeeds() {
+    use ring::hmac;
+
+    let secret = "env-hmac-secret-value";
+    // SAFETY: test-only, setting env for auth verification
+    unsafe { std::env::set_var("TEST_HMAC_SECRET_INTEG", secret) };
+
+    let body = b"hmac-env-body";
+    let key = hmac::Key::new(hmac::HMAC_SHA256, secret.as_bytes());
+    let tag = hmac::sign(&key, body);
+    let hex_sig: String = tag.as_ref().iter().map(|b| format!("{b:02x}")).collect();
+
+    let mut hook = shell_hook("hmac-env");
+    hook.auth = Some(HookAuthConfig::Hmac {
+        header: "X-Hub-Signature-256".to_owned(),
+        algorithm: HmacAlgorithm::Sha256,
+        secret: "${TEST_HMAC_SECRET_INTEG}".to_owned(),
+    });
+    let url = {
+        let state = test_state(config_with_hook(hook)).await;
+        spawn_server(state).await
+    };
+    let resp = reqwest::Client::new()
+        .post(format!("{url}/hook/hmac-env"))
+        .header("X-Hub-Signature-256", format!("sha256={hex_sig}"))
+        .body(body.to_vec())
+        .send()
+        .await
+        .unwrap();
+    // SAFETY: test-only cleanup
+    unsafe { std::env::remove_var("TEST_HMAC_SECRET_INTEG") };
+    assert_eq!(resp.status(), 200);
+}
+
+#[tokio::test]
+async fn trigger_bearer_hook_returns_execution_id() {
+    let mut hook = shell_hook("bearer-exec");
+    hook.auth = Some(HookAuthConfig::Bearer {
+        token: "exec-token".to_owned(),
+    });
+    let state = test_state(config_with_hook(hook)).await;
+    let pool = state.db.pool().clone();
+    let url = spawn_server(state).await;
+
+    let resp = reqwest::Client::new()
+        .post(format!("{url}/hook/bearer-exec"))
+        .header("Authorization", "Bearer exec-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let exec_id = body["execution_id"]
+        .as_str()
+        .expect("response should contain execution_id");
+    assert!(!exec_id.is_empty(), "execution_id should be non-empty");
+
+    // Verify the execution record exists in the database
+    let exec = sendword::models::execution::get_by_id(&pool, exec_id)
+        .await
+        .unwrap();
+    assert_eq!(exec.hook_slug, "bearer-exec");
+}
