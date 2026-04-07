@@ -1,6 +1,9 @@
 default:
     @just --list
 
+run:
+    cargo run
+
 check:
     cargo check
 
