@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+
+{% block title %}sendword - Dashboard{% endblock %}
+
+{% block content %}
+<main class="max-w-4xl mx-auto px-4 py-8">
+  <h1 class="text-2xl font-bold mb-6">Hooks</h1>
+
+  {% if hooks %}
+  <div class="space-y-4">
+    {% for hook in hooks %}
+    <div class="border rounded-lg p-4">
+      <div class="flex items-center justify-between">
+        <div>
+          <h2 class="text-lg font-semibold">{{ hook.name }}</h2>
+          {% if hook.description %}
+          <p class="text-sm text-gray-600">{{ hook.description }}</p>
+          {% endif %}
+        </div>
+        <span class="text-xs px-2 py-1 rounded {{ 'bg-green-100 text-green-800' if hook.enabled else 'bg-gray-100 text-gray-500' }}">
+          {{ "enabled" if hook.enabled else "disabled" }}
+        </span>
+      </div>
+      <p class="text-sm text-gray-400 mt-1 font-mono">/hook/{{ hook.slug }}</p>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="text-gray-500">No hooks configured. Add hooks to sendword.toml to get started.</p>
+  {% endif %}
+</main>
+{% endblock %}
