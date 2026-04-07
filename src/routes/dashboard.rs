@@ -6,6 +6,7 @@ use axum::routing::get;
 use axum::Router;
 
 use crate::error::AppError;
+use crate::models::execution;
 use crate::server::AppState;
 use crate::templates::context;
 
@@ -14,19 +15,28 @@ pub fn router() -> Router<Arc<AppState>> {
 }
 
 async fn dashboard(State(state): State<Arc<AppState>>) -> Result<Html<String>, AppError> {
-    let hooks: Vec<_> = state
-        .config
-        .hooks
-        .iter()
-        .map(|h| {
-            context! {
-                name => h.name,
-                slug => h.slug,
-                description => h.description,
-                enabled => h.enabled,
+    let pool = state.db.pool();
+
+    let mut hooks = Vec::with_capacity(state.config.hooks.len());
+    for h in &state.config.hooks {
+        let last = match execution::get_latest_by_hook(pool, &h.slug).await {
+            Ok(exec) => exec,
+            Err(e) => {
+                tracing::warn!(hook = %h.slug, error = %e, "failed to fetch last execution");
+                None
             }
-        })
-        .collect();
+        };
+
+        hooks.push(context! {
+            name => h.name,
+            slug => h.slug,
+            description => h.description,
+            enabled => h.enabled,
+            last_status => last.as_ref().map(|e| e.status.to_string()),
+            last_triggered_at => last.as_ref().map(|e| &e.triggered_at),
+            last_execution_id => last.as_ref().map(|e| &e.id),
+        });
+    }
 
     let html = state
         .templates
