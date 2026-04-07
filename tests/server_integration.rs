@@ -77,8 +77,9 @@ async fn stub_routes_return_not_implemented() {
     let url = spawn_test_server().await;
     let client = reqwest::Client::new();
 
+    // trigger_hook returns 404 for non-existent/disabled hooks
     let resp = client.post(format!("{url}/hook/test-hook")).send().await.unwrap();
-    assert_eq!(resp.status(), 501);
+    assert_eq!(resp.status(), 404);
 
     let resp = client.get(format!("{url}/hooks/test-hook")).send().await.unwrap();
     assert_eq!(resp.status(), 501);
@@ -225,6 +226,7 @@ async fn dashboard_shows_last_execution_status() {
     let exec = execution::create(
         state.db.pool(),
         &NewExecution {
+            id: None,
             hook_slug: "test-hook",
             log_path: "data/logs/test",
             trigger_source: "127.0.0.1",

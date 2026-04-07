@@ -70,6 +70,8 @@ pub struct Execution {
 
 /// Parameters for creating a new execution.
 pub struct NewExecution<'a> {
+    /// Pre-generated ID. If None, a new UUIDv7 is generated.
+    pub id: Option<&'a str>,
     pub hook_slug: &'a str,
     pub log_path: &'a str,
     pub trigger_source: &'a str,
@@ -81,7 +83,7 @@ pub struct NewExecution<'a> {
 
 /// Insert a new execution with `pending` status. Returns the created record.
 pub async fn create(pool: &SqlitePool, new: &NewExecution<'_>) -> DbResult<Execution> {
-    let id = id::new_id();
+    let id = new.id.map(String::from).unwrap_or_else(id::new_id);
     let triggered_at = timestamp::now_utc();
     let status = ExecutionStatus::Pending.to_string();
 
@@ -255,6 +257,7 @@ mod tests {
 
     fn test_new_execution() -> NewExecution<'static> {
         NewExecution {
+            id: None,
             hook_slug: "deploy-app",
             log_path: "data/logs/test-id",
             trigger_source: "127.0.0.1",
@@ -438,6 +441,7 @@ mod tests {
         create(
             &pool,
             &NewExecution {
+                id: None,
                 hook_slug: "other-hook",
                 log_path: "data/logs/other",
                 trigger_source: "127.0.0.1",
@@ -461,6 +465,7 @@ mod tests {
         create(
             &pool,
             &NewExecution {
+                id: None,
                 hook_slug: "other-hook",
                 log_path: "data/logs/other",
                 trigger_source: "10.0.0.1",
@@ -504,6 +509,7 @@ mod tests {
         let replay = create(
             &pool,
             &NewExecution {
+                id: None,
                 hook_slug: "deploy-app",
                 log_path: "data/logs/replay",
                 trigger_source: "127.0.0.1",
@@ -533,6 +539,7 @@ mod tests {
         create(
             &pool,
             &NewExecution {
+                id: None,
                 hook_slug: "other-hook",
                 log_path: "data/logs/other",
                 trigger_source: "127.0.0.1",

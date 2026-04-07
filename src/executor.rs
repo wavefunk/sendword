@@ -303,6 +303,7 @@ mod tests {
         let exec = execution::create(
             pool,
             &execution::NewExecution {
+                id: None,
                 hook_slug: "test-hook",
                 log_path: logs_dir,
                 trigger_source: "127.0.0.1",
