@@ -187,6 +187,7 @@ async fn dashboard_renders_configured_hooks() {
                 slug: "deploy-app".into(),
                 description: "Deploys the application".into(),
                 enabled: true,
+                auth: None,
                 executor: ExecutorConfig::Shell {
                     command: "make deploy".into(),
                 },
@@ -201,6 +202,7 @@ async fn dashboard_renders_configured_hooks() {
                 slug: "run-tests".into(),
                 description: String::new(),
                 enabled: false,
+                auth: None,
                 executor: ExecutorConfig::Shell {
                     command: "make test".into(),
                 },
@@ -257,6 +259,7 @@ async fn dashboard_shows_last_execution_status() {
             slug: "test-hook".into(),
             description: "A test hook".into(),
             enabled: true,
+            auth: None,
             executor: ExecutorConfig::Shell {
                 command: "echo ok".into(),
             },
@@ -323,6 +326,7 @@ async fn dashboard_shows_no_executions_for_new_hook() {
             slug: "fresh-hook".into(),
             description: String::new(),
             enabled: true,
+            auth: None,
             executor: ExecutorConfig::Shell {
                 command: "echo hi".into(),
             },
@@ -362,6 +366,7 @@ fn make_test_hook(name: &str, slug: &str, command: &str) -> sendword::config::Ho
         slug: slug.into(),
         description: "A test hook for integration tests".into(),
         enabled: true,
+        auth: None,
         executor: ExecutorConfig::Shell {
             command: command.into(),
         },
@@ -456,6 +461,7 @@ async fn hook_detail_shows_disabled_hook() {
             slug: "disabled-hook".into(),
             description: String::new(),
             enabled: false,
+            auth: None,
             executor: ExecutorConfig::Shell {
                 command: "echo nope".into(),
             },
@@ -679,6 +685,7 @@ async fn replay_creates_new_execution_linked_to_original() {
             slug: "echo-hook".into(),
             description: String::new(),
             enabled: true,
+            auth: None,
             executor: ExecutorConfig::Shell {
                 command: "echo replayed".into(),
             },
@@ -758,6 +765,7 @@ async fn replay_spawns_executor_and_runs_command() {
             slug: "echo-hook".into(),
             description: String::new(),
             enabled: true,
+            auth: None,
             executor: ExecutorConfig::Shell {
                 command: "echo replayed-output".into(),
             },

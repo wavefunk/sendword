@@ -181,6 +181,31 @@ impl AppConfig {
                     "{prefix}.rate_limit.max_per_minute must be greater than 0",
                 ));
             }
+
+            if let Some(auth) = &hook.auth {
+                match auth {
+                    HookAuthConfig::None => {}
+                    HookAuthConfig::Bearer { token } => {
+                        if token.is_empty() {
+                            errors.push(format!(
+                                "{prefix}.auth.token must be non-empty"
+                            ));
+                        }
+                    }
+                    HookAuthConfig::Hmac { header, algorithm: _, secret } => {
+                        if header.is_empty() {
+                            errors.push(format!(
+                                "{prefix}.auth.header must be non-empty"
+                            ));
+                        }
+                        if secret.is_empty() {
+                            errors.push(format!(
+                                "{prefix}.auth.secret must be non-empty"
+                            ));
+                        }
+                    }
+                }
+            }
         }
 
         if errors.is_empty() {
@@ -369,6 +394,26 @@ pub enum ExecutorConfig {
     Shell { command: String },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HmacAlgorithm {
+    Sha256,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+pub enum HookAuthConfig {
+    None,
+    Bearer {
+        token: String,
+    },
+    Hmac {
+        header: String,
+        algorithm: HmacAlgorithm,
+        secret: String,
+    },
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct HookConfig {
     pub name: String,
@@ -377,6 +422,7 @@ pub struct HookConfig {
     pub description: String,
     #[serde(default = "default_true")]
     pub enabled: bool,
+    pub auth: Option<HookAuthConfig>,
     pub executor: ExecutorConfig,
     #[serde(default)]
     pub env: HashMap<String, String>,
@@ -680,6 +726,7 @@ mod tests {
             slug: slug.into(),
             description: String::new(),
             enabled: true,
+            auth: None,
             executor: ExecutorConfig::Shell {
                 command: command.into(),
             },
@@ -878,5 +925,191 @@ mod tests {
         // Slugs up to 64 chars are valid; this is the upper boundary
         let slug_64 = "a".repeat(64);
         assert!(is_valid_slug(&slug_64));
+    }
+
+    // --- Auth config tests ---
+
+    #[test]
+    fn hook_with_bearer_auth_deserializes() {
+        figment::Jail::expect_with(|jail| {
+            jail.set_env("HOOK_TOKEN", "secret123");
+            let toml = r#"
+                [[hooks]]
+                name = "Authed"
+                slug = "authed"
+                [hooks.executor]
+                type = "shell"
+                command = "echo ok"
+                [hooks.auth]
+                mode = "bearer"
+                token = "${HOOK_TOKEN}"
+            "#;
+            let config: AppConfig = Figment::new()
+                .merge(Data::<Toml>::string(toml))
+                .extract()?;
+            let hook = &config.hooks[0];
+            let auth = hook.auth.as_ref().expect("auth should be present");
+            match auth {
+                HookAuthConfig::Bearer { token } => {
+                    assert_eq!(token, "${HOOK_TOKEN}");
+                }
+                _ => panic!("expected bearer auth"),
+            }
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn hook_with_hmac_auth_deserializes() {
+        figment::Jail::expect_with(|_jail| {
+            let toml = r#"
+                [[hooks]]
+                name = "HMAC"
+                slug = "hmac-hook"
+                [hooks.executor]
+                type = "shell"
+                command = "echo ok"
+                [hooks.auth]
+                mode = "hmac"
+                header = "X-Hub-Signature-256"
+                algorithm = "sha256"
+                secret = "${WEBHOOK_SECRET}"
+            "#;
+            let config: AppConfig = Figment::new()
+                .merge(Data::<Toml>::string(toml))
+                .extract()?;
+            let hook = &config.hooks[0];
+            let auth = hook.auth.as_ref().expect("auth should be present");
+            match auth {
+                HookAuthConfig::Hmac { header, algorithm, secret } => {
+                    assert_eq!(header, "X-Hub-Signature-256");
+                    assert_eq!(*algorithm, HmacAlgorithm::Sha256);
+                    assert_eq!(secret, "${WEBHOOK_SECRET}");
+                }
+                _ => panic!("expected hmac auth"),
+            }
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn hook_with_no_auth_defaults_to_none() {
+        figment::Jail::expect_with(|_jail| {
+            let toml = r#"
+                [[hooks]]
+                name = "Public"
+                slug = "public"
+                [hooks.executor]
+                type = "shell"
+                command = "echo ok"
+            "#;
+            let config: AppConfig = Figment::new()
+                .merge(Data::<Toml>::string(toml))
+                .extract()?;
+            assert!(config.hooks[0].auth.is_none());
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn hook_with_explicit_none_auth_deserializes() {
+        figment::Jail::expect_with(|_jail| {
+            let toml = r#"
+                [[hooks]]
+                name = "Explicit None"
+                slug = "explicit-none"
+                [hooks.executor]
+                type = "shell"
+                command = "echo ok"
+                [hooks.auth]
+                mode = "none"
+            "#;
+            let config: AppConfig = Figment::new()
+                .merge(Data::<Toml>::string(toml))
+                .extract()?;
+            let hook = &config.hooks[0];
+            let auth = hook.auth.as_ref().expect("auth should be present");
+            assert!(matches!(auth, HookAuthConfig::None));
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn bearer_auth_with_empty_token_fails_validation() {
+        figment::Jail::expect_with(|_jail| {
+            let toml = r#"
+                [[hooks]]
+                name = "Bad"
+                slug = "bad"
+                [hooks.executor]
+                type = "shell"
+                command = "echo ok"
+                [hooks.auth]
+                mode = "bearer"
+                token = ""
+            "#;
+            let config: AppConfig = Figment::new()
+                .merge(Data::<Toml>::string(toml))
+                .extract()?;
+            let result = config.validate();
+            assert!(result.is_err());
+            let err = result.unwrap_err().to_string();
+            assert!(err.contains("token"), "error should mention token: {err}");
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn hmac_auth_with_empty_header_fails_validation() {
+        figment::Jail::expect_with(|_jail| {
+            let toml = r#"
+                [[hooks]]
+                name = "Bad"
+                slug = "bad"
+                [hooks.executor]
+                type = "shell"
+                command = "echo ok"
+                [hooks.auth]
+                mode = "hmac"
+                header = ""
+                algorithm = "sha256"
+                secret = "abc"
+            "#;
+            let config: AppConfig = Figment::new()
+                .merge(Data::<Toml>::string(toml))
+                .extract()?;
+            let result = config.validate();
+            assert!(result.is_err());
+            let err = result.unwrap_err().to_string();
+            assert!(err.contains("header"), "error should mention header: {err}");
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn hmac_auth_with_empty_secret_fails_validation() {
+        figment::Jail::expect_with(|_jail| {
+            let toml = r#"
+                [[hooks]]
+                name = "Bad"
+                slug = "bad"
+                [hooks.executor]
+                type = "shell"
+                command = "echo ok"
+                [hooks.auth]
+                mode = "hmac"
+                header = "X-Sig"
+                algorithm = "sha256"
+                secret = ""
+            "#;
+            let config: AppConfig = Figment::new()
+                .merge(Data::<Toml>::string(toml))
+                .extract()?;
+            let result = config.validate();
+            assert!(result.is_err());
+            let err = result.unwrap_err().to_string();
+            assert!(err.contains("secret"), "error should mention secret: {err}");
+            Ok(())
+        });
     }
 }

@@ -316,6 +316,7 @@ mod tests {
             slug: "test".into(),
             description: String::new(),
             enabled: true,
+            auth: None,
             executor: ExecutorConfig::Shell {
                 command: "echo ok".into(),
             },
