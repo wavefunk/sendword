@@ -1,18 +1,18 @@
+use std::sync::Arc;
+
 use sendword::config::AppConfig;
 use sendword::db::Db;
 use sendword::server::AppState;
 use sendword::templates::Templates;
 
-async fn spawn_test_server() -> String {
-    spawn_test_server_with_config(AppConfig::default()).await
-}
-
-async fn spawn_test_server_with_config(config: AppConfig) -> String {
+async fn test_state(config: AppConfig) -> Arc<AppState> {
     let db = Db::new_in_memory().await.expect("in-memory db");
     db.migrate().await.expect("migration");
     let templates = Templates::new(Templates::default_dir());
-    let state = AppState::new(config, db, templates);
+    AppState::new(config, db, templates)
+}
 
+async fn spawn_server(state: Arc<AppState>) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind");
@@ -26,6 +26,16 @@ async fn spawn_test_server_with_config(config: AppConfig) -> String {
     });
 
     url
+}
+
+async fn spawn_test_server() -> String {
+    let state = test_state(AppConfig::default()).await;
+    spawn_server(state).await
+}
+
+async fn spawn_test_server_with_config(config: AppConfig) -> String {
+    let state = test_state(config).await;
+    spawn_server(state).await
 }
 
 #[tokio::test]
@@ -182,4 +192,96 @@ async fn dashboard_renders_configured_hooks() {
     // Enabled/disabled status should be rendered
     assert!(body.contains("enabled"), "dashboard should show enabled status");
     assert!(body.contains("disabled"), "dashboard should show disabled status");
+}
+
+#[tokio::test]
+async fn dashboard_shows_last_execution_status() {
+    use sendword::config::{ExecutorConfig, HookConfig};
+    use sendword::models::execution::{self, NewExecution};
+    use sendword::models::ExecutionStatus;
+    use std::collections::HashMap;
+
+    let config = AppConfig {
+        hooks: vec![HookConfig {
+            name: "Test Hook".into(),
+            slug: "test-hook".into(),
+            description: "A test hook".into(),
+            enabled: true,
+            executor: ExecutorConfig::Shell {
+                command: "echo ok".into(),
+            },
+            env: HashMap::new(),
+            cwd: None,
+            timeout: None,
+            retries: None,
+            rate_limit: None,
+        }],
+        ..AppConfig::default()
+    };
+
+    let state = test_state(config).await;
+
+    // Create an execution and mark it as success
+    let exec = execution::create(
+        state.db.pool(),
+        &NewExecution {
+            hook_slug: "test-hook",
+            log_path: "data/logs/test",
+            trigger_source: "127.0.0.1",
+            request_payload: "{}",
+            retry_of: None,
+        },
+    )
+    .await
+    .unwrap();
+    execution::mark_running(state.db.pool(), &exec.id)
+        .await
+        .unwrap();
+    execution::mark_completed(state.db.pool(), &exec.id, ExecutionStatus::Success, Some(0))
+        .await
+        .unwrap();
+
+    let url = spawn_server(state).await;
+    let resp = reqwest::get(format!("{url}/")).await.unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+
+    assert!(body.contains("Test Hook"), "should show hook name");
+    assert!(body.contains("success"), "should show last execution status");
+    assert!(
+        body.contains("/hooks/test-hook"),
+        "should link to hook detail"
+    );
+}
+
+#[tokio::test]
+async fn dashboard_shows_no_executions_for_new_hook() {
+    use sendword::config::{ExecutorConfig, HookConfig};
+    use std::collections::HashMap;
+
+    let config = AppConfig {
+        hooks: vec![HookConfig {
+            name: "Fresh Hook".into(),
+            slug: "fresh-hook".into(),
+            description: String::new(),
+            enabled: true,
+            executor: ExecutorConfig::Shell {
+                command: "echo hi".into(),
+            },
+            env: HashMap::new(),
+            cwd: None,
+            timeout: None,
+            retries: None,
+            rate_limit: None,
+        }],
+        ..AppConfig::default()
+    };
+
+    let state = test_state(config).await;
+    let url = spawn_server(state).await;
+    let resp = reqwest::get(format!("{url}/")).await.unwrap();
+    let body = resp.text().await.unwrap();
+
+    assert!(body.contains("Fresh Hook"));
+    assert!(body.contains("No executions yet"));
 }
