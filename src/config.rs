@@ -11,10 +11,16 @@ use std::time::Duration;
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
     #[error("config loading failed: {0}")]
-    Figment(#[from] figment::Error),
+    Figment(Box<figment::Error>),
 
     #[error("config validation failed:\n{0}")]
     Validation(String),
+}
+
+impl From<figment::Error> for ConfigError {
+    fn from(err: figment::Error) -> Self {
+        Self::Figment(Box::new(err))
+    }
 }
 
 // --- Default value functions ---
@@ -61,7 +67,7 @@ fn default_true() -> bool {
 
 // --- Config types ---
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct AppConfig {
     #[serde(default)]
     pub server: ServerConfig,
@@ -140,20 +146,20 @@ impl AppConfig {
                 _ => {}
             }
 
-            if let Some(retries) = &hook.retries {
-                if retries.initial_delay > retries.max_delay {
-                    errors.push(format!(
-                        "{prefix}.retries.initial_delay must not exceed {prefix}.retries.max_delay",
-                    ));
-                }
+            if let Some(retries) = &hook.retries
+                && retries.initial_delay > retries.max_delay
+            {
+                errors.push(format!(
+                    "{prefix}.retries.initial_delay must not exceed {prefix}.retries.max_delay",
+                ));
             }
 
-            if let Some(rl) = &hook.rate_limit {
-                if rl.max_per_minute == 0 {
-                    errors.push(format!(
-                        "{prefix}.rate_limit.max_per_minute must be greater than 0",
-                    ));
-                }
+            if let Some(rl) = &hook.rate_limit
+                && rl.max_per_minute == 0
+            {
+                errors.push(format!(
+                    "{prefix}.rate_limit.max_per_minute must be greater than 0",
+                ));
             }
         }
 
@@ -191,18 +197,6 @@ fn is_valid_slug(s: &str) -> bool {
     }
 
     true
-}
-
-impl Default for AppConfig {
-    fn default() -> Self {
-        Self {
-            server: ServerConfig::default(),
-            database: DatabaseConfig::default(),
-            logs: LogsConfig::default(),
-            defaults: DefaultsConfig::default(),
-            hooks: Vec::new(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
