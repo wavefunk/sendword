@@ -42,23 +42,65 @@ async fn trigger_hook(
     Path(slug): Path<String>,
     headers: HeaderMap,
     body: Bytes,
-) -> Result<Json<TriggerResponse>, StatusCode> {
+) -> Result<Json<TriggerResponse>, Response> {
     let config = state.config.load();
 
     let hook = config
         .hooks
         .iter()
         .find(|h| h.slug == slug && h.enabled)
-        .ok_or(StatusCode::NOT_FOUND)?;
+        .ok_or(StatusCode::NOT_FOUND.into_response())?;
 
     // Auth check
     match webhook_auth::verify(hook.auth.as_ref(), &headers, &body) {
         webhook_auth::AuthResult::Ok => {}
         webhook_auth::AuthResult::Denied(reason) => {
             tracing::debug!(hook_slug = %slug, reason = %reason, "webhook auth denied");
-            return Err(StatusCode::UNAUTHORIZED);
+            return Err(StatusCode::UNAUTHORIZED.into_response());
         }
     }
+
+    // Parse body and validate against payload schema (if defined).
+    // Only enforce JSON parsing when a schema exists. Without a schema,
+    // store the raw body as-is (best-effort JSON, fall back to raw string).
+    let payload_str = if let Some(schema) = &hook.payload {
+        let payload_value: serde_json::Value = if body.is_empty() {
+            serde_json::Value::Object(serde_json::Map::new())
+        } else {
+            serde_json::from_slice(&body).map_err(|e| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
+                        "error": "invalid JSON",
+                        "message": e.to_string(),
+                    })),
+                )
+                    .into_response()
+            })?
+        };
+
+        if let Err(errors) = schema.validate(&payload_value) {
+            return Err((
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(serde_json::json!({
+                    "error": "payload validation failed",
+                    "details": errors,
+                })),
+            )
+                .into_response());
+        }
+
+        serde_json::to_string(&payload_value)
+            .unwrap_or_else(|_| "{}".to_owned())
+    } else if body.is_empty() {
+        "{}".to_owned()
+    } else {
+        // No schema: store body as-is if valid JSON, otherwise store raw string
+        match serde_json::from_slice::<serde_json::Value>(&body) {
+            Ok(v) => serde_json::to_string(&v).unwrap_or_else(|_| "{}".to_owned()),
+            Err(_) => String::from_utf8_lossy(&body).into_owned(),
+        }
+    };
 
     let timeout = hook.timeout.unwrap_or(config.defaults.timeout);
 
@@ -85,12 +127,12 @@ async fn trigger_hook(
             hook_slug: &slug,
             log_path: &log_path,
             trigger_source: "127.0.0.1", // TODO: extract from request
-            request_payload: "{}",        // TODO: extract from request body
+            request_payload: &payload_str,
             retry_of: None,
         },
     )
     .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())?;
 
     let ctx = crate::executor::ExecutionContext {
         execution_id: exec.id.clone(),
@@ -1159,4 +1201,264 @@ command = "echo delete"
         let location = resp.headers().get("location").unwrap().to_str().unwrap();
         assert!(location.contains("error="));
     }
+
+    // --- Trigger hook with payload validation ---
+
+    #[tokio::test]
+    async fn trigger_with_valid_payload_succeeds() {
+        let toml = r#"[server]
+port = 8080
+
+[[hooks]]
+name = "Test"
+slug = "test"
+[hooks.executor]
+type = "shell"
+command = "echo ok"
+[[hooks.payload.fields]]
+name = "action"
+type = "string"
+required = true
+"#;
+        let (state, _dir) = test_state_with_config(toml).await;
+        let resp = app(state)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/hook/test")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(r#"{"action":"deploy"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn trigger_missing_required_field_returns_422() {
+        let toml = r#"[server]
+port = 8080
+
+[[hooks]]
+name = "Test"
+slug = "test"
+[hooks.executor]
+type = "shell"
+command = "echo ok"
+[[hooks.payload.fields]]
+name = "action"
+type = "string"
+required = true
+"#;
+        let (state, _dir) = test_state_with_config(toml).await;
+        let resp = app(state)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/hook/test")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(r#"{}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["error"], "payload validation failed");
+        assert_eq!(json["details"][0]["field"].as_str().unwrap(), "action");
+    }
+
+    #[tokio::test]
+    async fn trigger_type_mismatch_returns_422() {
+        let toml = r#"[server]
+port = 8080
+
+[[hooks]]
+name = "Test"
+slug = "test"
+[hooks.executor]
+type = "shell"
+command = "echo ok"
+[[hooks.payload.fields]]
+name = "count"
+type = "number"
+required = true
+"#;
+        let (state, _dir) = test_state_with_config(toml).await;
+        let resp = app(state)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/hook/test")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(r#"{"count":"not-a-number"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(json["details"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("expected type number"));
+    }
+
+    #[tokio::test]
+    async fn trigger_invalid_json_returns_400() {
+        let toml = r#"[server]
+port = 8080
+
+[[hooks]]
+name = "Test"
+slug = "test"
+[hooks.executor]
+type = "shell"
+command = "echo ok"
+[[hooks.payload.fields]]
+name = "action"
+type = "string"
+required = true
+"#;
+        let (state, _dir) = test_state_with_config(toml).await;
+        let resp = app(state)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/hook/test")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from("not json"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn trigger_no_schema_accepts_any_body() {
+        let toml = r#"[server]
+port = 8080
+
+[[hooks]]
+name = "Test"
+slug = "test"
+[hooks.executor]
+type = "shell"
+command = "echo ok"
+"#;
+        let (state, _dir) = test_state_with_config(toml).await;
+        let resp = app(state)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/hook/test")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(r#"{"anything":"goes"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn trigger_no_schema_accepts_empty_body() {
+        let toml = r#"[server]
+port = 8080
+
+[[hooks]]
+name = "Test"
+slug = "test"
+[hooks.executor]
+type = "shell"
+command = "echo ok"
+"#;
+        let (state, _dir) = test_state_with_config(toml).await;
+        let resp = app(state)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/hook/test")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn trigger_no_schema_accepts_non_json_body() {
+        let toml = r#"[server]
+port = 8080
+
+[[hooks]]
+name = "Test"
+slug = "test"
+[hooks.executor]
+type = "shell"
+command = "echo ok"
+"#;
+        let (state, _dir) = test_state_with_config(toml).await;
+        let resp = app(state)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/hook/test")
+                    .body(Body::from("not json at all"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn trigger_stores_payload_in_execution() {
+        let toml = r#"[server]
+port = 8080
+
+[[hooks]]
+name = "Test"
+slug = "test"
+[hooks.executor]
+type = "shell"
+command = "echo ok"
+"#;
+        let (state, _dir) = test_state_with_config(toml).await;
+        let resp = app(state.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/hook/test")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(r#"{"key":"value"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let exec_id = json["execution_id"].as_str().unwrap();
+
+        let pool = state.db.pool();
+        let exec = crate::models::execution::get_by_id(pool, exec_id)
+            .await
+            .unwrap();
+        let stored: serde_json::Value =
+            serde_json::from_str(&exec.request_payload).unwrap();
+        assert_eq!(stored["key"], "value");
+    }
+
 }
