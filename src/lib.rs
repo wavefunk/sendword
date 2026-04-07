@@ -12,3 +12,4 @@ pub mod server;
 pub mod tasks;
 pub mod templates;
 pub mod timestamp;
+pub mod webhook_auth;
