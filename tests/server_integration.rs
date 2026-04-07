@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use sendword::config::AppConfig;
+use sendword::config::{AppConfig, ExecutorConfig, HookAuthConfig, HmacAlgorithm, HookConfig};
 use sendword::db::Db;
 use sendword::server::AppState;
 use sendword::templates::Templates;
@@ -1595,4 +1595,202 @@ async fn scripts_edit_returns_404_for_nonexistent() {
         .await
         .unwrap();
     assert_eq!(resp.status(), 404);
+}
+
+// --- Webhook auth integration tests ---
+
+fn config_with_hook(hook: HookConfig) -> AppConfig {
+    AppConfig {
+        hooks: vec![hook],
+        ..AppConfig::default()
+    }
+}
+
+fn shell_hook(slug: &str) -> HookConfig {
+    HookConfig {
+        name: slug.to_owned(),
+        slug: slug.to_owned(),
+        description: String::new(),
+        enabled: true,
+        auth: None,
+        executor: ExecutorConfig::Shell {
+            command: "echo ok".to_owned(),
+        },
+        env: Default::default(),
+        cwd: None,
+        timeout: None,
+        retries: None,
+        rate_limit: None,
+    }
+}
+
+#[tokio::test]
+async fn trigger_public_hook_succeeds_without_auth() {
+    let hook = shell_hook("public");
+    let url = {
+        let state = test_state(config_with_hook(hook)).await;
+        spawn_server(state).await
+    };
+    let resp = reqwest::Client::new()
+        .post(format!("{url}/hook/public"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+}
+
+#[tokio::test]
+async fn trigger_bearer_hook_with_valid_token_succeeds() {
+    let mut hook = shell_hook("bearer-test");
+    hook.auth = Some(HookAuthConfig::Bearer {
+        token: "test-token-123".to_owned(),
+    });
+    let url = {
+        let state = test_state(config_with_hook(hook)).await;
+        spawn_server(state).await
+    };
+    let resp = reqwest::Client::new()
+        .post(format!("{url}/hook/bearer-test"))
+        .header("Authorization", "Bearer test-token-123")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+}
+
+#[tokio::test]
+async fn trigger_bearer_hook_without_token_returns_401() {
+    let mut hook = shell_hook("bearer-noauth");
+    hook.auth = Some(HookAuthConfig::Bearer {
+        token: "secret".to_owned(),
+    });
+    let url = {
+        let state = test_state(config_with_hook(hook)).await;
+        spawn_server(state).await
+    };
+    let resp = reqwest::Client::new()
+        .post(format!("{url}/hook/bearer-noauth"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+}
+
+#[tokio::test]
+async fn trigger_bearer_hook_with_wrong_token_returns_401() {
+    let mut hook = shell_hook("bearer-wrong");
+    hook.auth = Some(HookAuthConfig::Bearer {
+        token: "correct-token".to_owned(),
+    });
+    let url = {
+        let state = test_state(config_with_hook(hook)).await;
+        spawn_server(state).await
+    };
+    let resp = reqwest::Client::new()
+        .post(format!("{url}/hook/bearer-wrong"))
+        .header("Authorization", "Bearer wrong-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+}
+
+#[tokio::test]
+async fn trigger_bearer_hook_with_env_var_token_succeeds() {
+    // SAFETY: test-only, setting env for auth verification
+    unsafe { std::env::set_var("TEST_BEARER_TOKEN_INTEG", "env-token-value") };
+    let mut hook = shell_hook("bearer-env");
+    hook.auth = Some(HookAuthConfig::Bearer {
+        token: "${TEST_BEARER_TOKEN_INTEG}".to_owned(),
+    });
+    let url = {
+        let state = test_state(config_with_hook(hook)).await;
+        spawn_server(state).await
+    };
+    let resp = reqwest::Client::new()
+        .post(format!("{url}/hook/bearer-env"))
+        .header("Authorization", "Bearer env-token-value")
+        .send()
+        .await
+        .unwrap();
+    // SAFETY: test-only cleanup
+    unsafe { std::env::remove_var("TEST_BEARER_TOKEN_INTEG") };
+    assert_eq!(resp.status(), 200);
+}
+
+#[tokio::test]
+async fn trigger_hmac_hook_with_valid_signature_succeeds() {
+    use ring::hmac;
+
+    let secret = "test-hmac-secret";
+    let body = b"test-body-content";
+
+    let key = hmac::Key::new(hmac::HMAC_SHA256, secret.as_bytes());
+    let tag = hmac::sign(&key, body);
+    let hex_sig: String = tag.as_ref().iter().map(|b| format!("{b:02x}")).collect();
+
+    let mut hook = shell_hook("hmac-test");
+    hook.auth = Some(HookAuthConfig::Hmac {
+        header: "X-Hub-Signature-256".to_owned(),
+        algorithm: HmacAlgorithm::Sha256,
+        secret: secret.to_owned(),
+    });
+    let url = {
+        let state = test_state(config_with_hook(hook)).await;
+        spawn_server(state).await
+    };
+    let resp = reqwest::Client::new()
+        .post(format!("{url}/hook/hmac-test"))
+        .header("X-Hub-Signature-256", format!("sha256={hex_sig}"))
+        .body(body.to_vec())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+}
+
+#[tokio::test]
+async fn trigger_hmac_hook_with_wrong_signature_returns_401() {
+    let mut hook = shell_hook("hmac-wrong");
+    hook.auth = Some(HookAuthConfig::Hmac {
+        header: "X-Hub-Signature-256".to_owned(),
+        algorithm: HmacAlgorithm::Sha256,
+        secret: "the-real-secret".to_owned(),
+    });
+    let url = {
+        let state = test_state(config_with_hook(hook)).await;
+        spawn_server(state).await
+    };
+    let resp = reqwest::Client::new()
+        .post(format!("{url}/hook/hmac-wrong"))
+        .header(
+            "X-Hub-Signature-256",
+            "sha256=0000000000000000000000000000000000000000000000000000000000000000",
+        )
+        .body("some body")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+}
+
+#[tokio::test]
+async fn trigger_hmac_hook_without_signature_header_returns_401() {
+    let mut hook = shell_hook("hmac-nosig");
+    hook.auth = Some(HookAuthConfig::Hmac {
+        header: "X-Hub-Signature-256".to_owned(),
+        algorithm: HmacAlgorithm::Sha256,
+        secret: "secret".to_owned(),
+    });
+    let url = {
+        let state = test_state(config_with_hook(hook)).await;
+        spawn_server(state).await
+    };
+    let resp = reqwest::Client::new()
+        .post(format!("{url}/hook/hmac-nosig"))
+        .body("some body")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
 }
