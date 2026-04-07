@@ -32,14 +32,15 @@ async fn trigger_hook(
     State(state): State<Arc<AppState>>,
     Path(slug): Path<String>,
 ) -> Result<Json<TriggerResponse>, StatusCode> {
-    let hook = state
-        .config
+    let config = state.config.load();
+
+    let hook = config
         .hooks
         .iter()
         .find(|h| h.slug == slug && h.enabled)
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let timeout = hook.timeout.unwrap_or(state.config.defaults.timeout);
+    let timeout = hook.timeout.unwrap_or(config.defaults.timeout);
 
     let command = match &hook.executor {
         ExecutorConfig::Shell { command } => command.clone(),
@@ -47,7 +48,9 @@ async fn trigger_hook(
 
     let env = hook.env.clone();
     let cwd = hook.cwd.clone();
-    let logs_dir = state.config.logs.dir.clone();
+    let logs_dir = config.logs.dir.clone();
+
+    let retry_config = retry::resolve_retry_config(hook, &config.defaults.retries);
 
     // Pre-generate the execution ID so we can set the correct log_path
     let exec_id = crate::id::new_id();
@@ -79,8 +82,6 @@ async fn trigger_hook(
         logs_dir,
     };
 
-    let retry_config = retry::resolve_retry_config(hook, &state.config.defaults.retries);
-
     let pool = pool.clone();
     tokio::spawn(async move {
         let result = retry::run_with_retries(&pool, ctx, &retry_config).await;
@@ -106,8 +107,9 @@ async fn hook_detail(
     State(state): State<Arc<AppState>>,
     Path(slug): Path<String>,
 ) -> Result<Html<String>, AppError> {
-    let hook = state
-        .config
+    let config = state.config.load();
+
+    let hook = config
         .hooks
         .iter()
         .find(|h| h.slug == slug)
@@ -126,7 +128,7 @@ async fn hook_detail(
 
     let timeout_display = hook
         .timeout
-        .unwrap_or(state.config.defaults.timeout)
+        .unwrap_or(config.defaults.timeout)
         .as_secs();
 
     let env_vars: Vec<_> = hook.env.keys().collect();
@@ -161,9 +163,10 @@ async fn execution_list(
     Path(slug): Path<String>,
     Query(params): Query<PaginationParams>,
 ) -> Result<Html<String>, AppError> {
+    let config = state.config.load();
+
     // Verify hook exists
-    let _hook = state
-        .config
+    let _hook = config
         .hooks
         .iter()
         .find(|h| h.slug == slug)

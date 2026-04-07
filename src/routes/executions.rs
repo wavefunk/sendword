@@ -57,6 +57,7 @@ async fn execution_detail(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Html<String>, AppError> {
+    let config = state.config.load();
     let pool = state.db.pool();
 
     let exec = execution::get_by_id(pool, &id)
@@ -66,7 +67,7 @@ async fn execution_detail(
             other => AppError::from(other),
         })?;
 
-    let logs_dir = &state.config.logs.dir;
+    let logs_dir = &config.logs.dir;
     let stdout = read_log_file(logs_dir, &exec.id, "stdout.log").await;
     let stderr = read_log_file(logs_dir, &exec.id, "stderr.log").await;
 
@@ -107,6 +108,7 @@ async fn replay_execution(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<ReplayResponse>, AppError> {
+    let config = state.config.load();
     let pool = state.db.pool();
 
     // 1. Look up the original execution
@@ -115,21 +117,22 @@ async fn replay_execution(
         .map_err(|_| AppError::not_found("execution"))?;
 
     // 2. Look up the hook config (must still exist)
-    let hook = state
-        .config
+    let hook = config
         .hooks
         .iter()
         .find(|h| h.slug == original.hook_slug)
         .ok_or(AppError::not_found("hook"))?;
 
     // 3. Prepare execution parameters from hook config
-    let timeout = hook.timeout.unwrap_or(state.config.defaults.timeout);
+    let timeout = hook.timeout.unwrap_or(config.defaults.timeout);
     let command = match &hook.executor {
         ExecutorConfig::Shell { command } => command.clone(),
     };
     let env = hook.env.clone();
     let cwd = hook.cwd.clone();
-    let logs_dir = state.config.logs.dir.clone();
+    let logs_dir = config.logs.dir.clone();
+
+    let retry_config = retry::resolve_retry_config(hook, &config.defaults.retries);
 
     // 4. Create a new execution record linked to the original
     let exec_id = crate::id::new_id();
@@ -158,8 +161,6 @@ async fn replay_execution(
         timeout,
         logs_dir,
     };
-
-    let retry_config = retry::resolve_retry_config(hook, &state.config.defaults.retries);
 
     let pool = pool.clone();
     tokio::spawn(async move {

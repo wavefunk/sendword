@@ -1,27 +1,48 @@
 use std::sync::Arc;
 
+use arc_swap::ArcSwap;
 use axum::Router;
 use tokio::net::TcpListener;
 use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 
 use crate::config::AppConfig;
+use crate::config_writer::ConfigWriter;
 use crate::db::Db;
 use crate::templates::Templates;
 
 pub struct AppState {
-    pub config: AppConfig,
+    pub config: ArcSwap<AppConfig>,
+    pub config_writer: ConfigWriter,
     pub db: Db,
     pub templates: Templates,
 }
 
 impl AppState {
-    pub fn new(config: AppConfig, db: Db, templates: Templates) -> Arc<Self> {
+    pub fn new(
+        config: AppConfig,
+        config_path: impl Into<std::path::PathBuf>,
+        db: Db,
+        templates: Templates,
+    ) -> Arc<Self> {
+        let config_path = config_path.into();
         Arc::new(Self {
-            config,
+            config: ArcSwap::from_pointee(config),
+            config_writer: ConfigWriter::new(config_path),
             db,
             templates,
         })
+    }
+
+    /// Reload the config from the TOML file path associated with this state.
+    ///
+    /// Reads and validates the config file, then atomically swaps the live
+    /// config. Returns an error if the file cannot be read or fails validation.
+    pub fn reload_config(&self) -> Result<(), crate::config::ConfigError> {
+        let path_str = self.config_writer.path().to_str().unwrap_or("sendword.toml");
+        let new_config = AppConfig::load_from(path_str, "nonexistent.json")?;
+        self.config.store(Arc::new(new_config));
+        Ok(())
     }
 }
 
@@ -36,7 +57,8 @@ pub fn router(state: Arc<AppState>) -> Router {
 }
 
 pub async fn run(state: Arc<AppState>) -> eyre::Result<()> {
-    let addr = format!("{}:{}", state.config.server.bind, state.config.server.port);
+    let config = state.config.load();
+    let addr = format!("{}:{}", config.server.bind, config.server.port);
     let listener = TcpListener::bind(&addr).await?;
     tracing::info!(addr = %addr, "server listening");
 

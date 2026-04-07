@@ -29,7 +29,7 @@ async fn main() -> eyre::Result<()> {
     );
     tracing::info!("templates loaded");
 
-    let state = sendword::server::AppState::new(config, db, templates);
+    let state = sendword::server::AppState::new(config, "sendword.toml", db, templates);
     sendword::server::run(state).await?;
 
     Ok(())

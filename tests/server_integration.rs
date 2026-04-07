@@ -9,7 +9,7 @@ async fn test_state(config: AppConfig) -> Arc<AppState> {
     let db = Db::new_in_memory().await.expect("in-memory db");
     db.migrate().await.expect("migration");
     let templates = Templates::new(Templates::default_dir());
-    AppState::new(config, db, templates)
+    AppState::new(config, "sendword.toml", db, templates)
 }
 
 async fn spawn_server(state: Arc<AppState>) -> String {

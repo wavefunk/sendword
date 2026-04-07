@@ -15,10 +15,11 @@ pub fn router() -> Router<Arc<AppState>> {
 }
 
 async fn dashboard(State(state): State<Arc<AppState>>) -> Result<Html<String>, AppError> {
+    let config = state.config.load();
     let pool = state.db.pool();
 
-    let mut hooks = Vec::with_capacity(state.config.hooks.len());
-    for h in &state.config.hooks {
+    let mut hooks = Vec::with_capacity(config.hooks.len());
+    for h in &config.hooks {
         let last = match execution::get_latest_by_hook(pool, &h.slug).await {
             Ok(exec) => exec,
             Err(e) => {
