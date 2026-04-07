@@ -31,6 +31,12 @@ backoff = "exponential"
 initial_delay = "1s"
 max_delay = "60s"
 
+# [masking]
+# Redact sensitive values from log output in the web UI.
+# Raw logs on disk are never modified.
+# env_vars = ["DATABASE_URL", "API_KEY", "AWS_SECRET_ACCESS_KEY"]
+# patterns = ["Bearer [A-Za-z0-9._~+/=-]+", "ghp_[A-Za-z0-9]{36}"]
+
 [[hooks]]
 name = "Deploy App"
 slug = "deploy-app"
