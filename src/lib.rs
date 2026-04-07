@@ -5,6 +5,7 @@ pub mod db;
 pub mod error;
 pub mod executor;
 pub mod id;
+pub mod interpolation;
 pub mod masking;
 pub mod models;
 pub mod payload;
