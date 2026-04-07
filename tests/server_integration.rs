@@ -713,3 +713,412 @@ async fn replay_spawns_executor_and_runs_command() {
     let stdout = tokio::fs::read_to_string(&stdout_path).await.unwrap();
     assert_eq!(stdout.trim(), "replayed-output");
 }
+
+// --- Execution detail page tests ---
+
+#[tokio::test]
+async fn execution_detail_returns_404_for_unknown_id() {
+    let url = spawn_test_server().await;
+    let resp = reqwest::get(format!("{url}/executions/nonexistent"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+}
+
+#[tokio::test]
+async fn execution_detail_renders_metadata() {
+    use sendword::models::execution::{self, NewExecution};
+    use sendword::models::ExecutionStatus;
+
+    let config = AppConfig {
+        hooks: vec![make_test_hook("Test Hook", "test-hook", "echo hello")],
+        ..AppConfig::default()
+    };
+
+    let state = test_state(config).await;
+
+    let exec = execution::create(
+        state.db.pool(),
+        &NewExecution {
+            id: None,
+            hook_slug: "test-hook",
+            log_path: "data/logs/test",
+            trigger_source: "10.0.0.5",
+            request_payload: r#"{"key": "value"}"#,
+            retry_of: None,
+        },
+    )
+    .await
+    .unwrap();
+    execution::mark_running(state.db.pool(), &exec.id)
+        .await
+        .unwrap();
+    execution::mark_completed(state.db.pool(), &exec.id, ExecutionStatus::Success, Some(0))
+        .await
+        .unwrap();
+
+    let exec_id = exec.id.clone();
+    let url = spawn_server(state).await;
+
+    let resp = reqwest::get(format!("{url}/executions/{exec_id}"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+
+    // Execution ID
+    assert!(body.contains(&exec_id), "should show full execution ID");
+    assert!(
+        body.contains(&exec_id[..8]),
+        "should show truncated execution ID in title"
+    );
+
+    // Hook link
+    assert!(
+        body.contains("/hooks/test-hook"),
+        "should link to hook detail"
+    );
+    assert!(body.contains("test-hook"), "should show hook slug");
+
+    // Status
+    assert!(body.contains("success"), "should show status");
+
+    // Exit code
+    assert!(body.contains(">0<"), "should show exit code 0");
+
+    // Source IP
+    assert!(body.contains("10.0.0.5"), "should show trigger source");
+
+    // Timing labels
+    assert!(body.contains("Triggered at"), "should show triggered at label");
+    assert!(body.contains("Started at"), "should show started at label");
+    assert!(body.contains("Completed at"), "should show completed at label");
+    assert!(body.contains("Duration"), "should show duration label");
+
+    // Replay button
+    assert!(body.contains("Replay"), "should have replay button");
+    assert!(
+        body.contains(&format!("/executions/{exec_id}/replay")),
+        "replay should target correct URL"
+    );
+}
+
+#[tokio::test]
+async fn execution_detail_shows_failed_status_with_red_badge() {
+    use sendword::models::execution::{self, NewExecution};
+    use sendword::models::ExecutionStatus;
+
+    let config = AppConfig {
+        hooks: vec![make_test_hook("Test Hook", "test-hook", "exit 1")],
+        ..AppConfig::default()
+    };
+
+    let state = test_state(config).await;
+
+    let exec = execution::create(
+        state.db.pool(),
+        &NewExecution {
+            id: None,
+            hook_slug: "test-hook",
+            log_path: "data/logs/test",
+            trigger_source: "127.0.0.1",
+            request_payload: "{}",
+            retry_of: None,
+        },
+    )
+    .await
+    .unwrap();
+    execution::mark_running(state.db.pool(), &exec.id)
+        .await
+        .unwrap();
+    execution::mark_completed(state.db.pool(), &exec.id, ExecutionStatus::Failed, Some(1))
+        .await
+        .unwrap();
+
+    let exec_id = exec.id.clone();
+    let url = spawn_server(state).await;
+
+    let resp = reqwest::get(format!("{url}/executions/{exec_id}"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+
+    assert!(body.contains("failed"), "should show failed status");
+    assert!(body.contains("bg-red-100"), "should use red badge for failed");
+}
+
+#[tokio::test]
+async fn execution_detail_reads_log_files() {
+    use sendword::models::execution::{self, NewExecution};
+    use sendword::models::ExecutionStatus;
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let logs_dir = tmp.path().to_str().unwrap();
+
+    let config = AppConfig {
+        logs: sendword::config::LogsConfig {
+            dir: logs_dir.into(),
+        },
+        hooks: vec![make_test_hook("Test Hook", "test-hook", "echo hello")],
+        ..AppConfig::default()
+    };
+
+    let state = test_state(config).await;
+
+    let exec_id = sendword::id::new_id();
+    let log_path = format!("{logs_dir}/{exec_id}");
+
+    // Create log directory and files before creating the execution
+    tokio::fs::create_dir_all(&log_path).await.unwrap();
+    tokio::fs::write(format!("{log_path}/stdout.log"), "hello from stdout")
+        .await
+        .unwrap();
+    tokio::fs::write(format!("{log_path}/stderr.log"), "warning from stderr")
+        .await
+        .unwrap();
+
+    let exec = execution::create(
+        state.db.pool(),
+        &NewExecution {
+            id: Some(&exec_id),
+            hook_slug: "test-hook",
+            log_path: &log_path,
+            trigger_source: "127.0.0.1",
+            request_payload: "{}",
+            retry_of: None,
+        },
+    )
+    .await
+    .unwrap();
+    execution::mark_running(state.db.pool(), &exec.id)
+        .await
+        .unwrap();
+    execution::mark_completed(state.db.pool(), &exec.id, ExecutionStatus::Success, Some(0))
+        .await
+        .unwrap();
+
+    let url = spawn_server(state).await;
+
+    let resp = reqwest::get(format!("{url}/executions/{exec_id}"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+
+    assert!(
+        body.contains("hello from stdout"),
+        "should display stdout log content"
+    );
+    assert!(
+        body.contains("warning from stderr"),
+        "should display stderr log content"
+    );
+}
+
+#[tokio::test]
+async fn execution_detail_shows_fallback_when_logs_missing() {
+    use sendword::models::execution::{self, NewExecution};
+
+    let config = AppConfig {
+        logs: sendword::config::LogsConfig {
+            dir: "/tmp/nonexistent-sendword-logs-detail".into(),
+        },
+        hooks: vec![make_test_hook("Test Hook", "test-hook", "echo hello")],
+        ..AppConfig::default()
+    };
+
+    let state = test_state(config).await;
+
+    let exec = execution::create(
+        state.db.pool(),
+        &NewExecution {
+            id: None,
+            hook_slug: "test-hook",
+            log_path: "/tmp/nonexistent-sendword-logs-detail/test",
+            trigger_source: "127.0.0.1",
+            request_payload: "{}",
+            retry_of: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let exec_id = exec.id.clone();
+    let url = spawn_server(state).await;
+
+    let resp = reqwest::get(format!("{url}/executions/{exec_id}"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+
+    // The fallback message should appear (at least twice, once for stdout and once for stderr)
+    let count = body.matches("No output captured.").count();
+    assert!(
+        count >= 2,
+        "should show 'No output captured.' for both stdout and stderr, found {count} occurrences"
+    );
+}
+
+#[tokio::test]
+async fn execution_detail_shows_retry_info_when_replay() {
+    use sendword::models::execution::{self, NewExecution};
+    use sendword::models::ExecutionStatus;
+
+    let config = AppConfig {
+        hooks: vec![make_test_hook("Test Hook", "test-hook", "echo hello")],
+        ..AppConfig::default()
+    };
+
+    let state = test_state(config).await;
+
+    // Create original execution
+    let original = execution::create(
+        state.db.pool(),
+        &NewExecution {
+            id: None,
+            hook_slug: "test-hook",
+            log_path: "data/logs/original",
+            trigger_source: "127.0.0.1",
+            request_payload: "{}",
+            retry_of: None,
+        },
+    )
+    .await
+    .unwrap();
+    execution::mark_running(state.db.pool(), &original.id)
+        .await
+        .unwrap();
+    execution::mark_completed(
+        state.db.pool(),
+        &original.id,
+        ExecutionStatus::Failed,
+        Some(1),
+    )
+    .await
+    .unwrap();
+
+    // Create a replay linked to the original
+    let replay = execution::create(
+        state.db.pool(),
+        &NewExecution {
+            id: None,
+            hook_slug: "test-hook",
+            log_path: "data/logs/replay",
+            trigger_source: "replay",
+            request_payload: "{}",
+            retry_of: Some(&original.id),
+        },
+    )
+    .await
+    .unwrap();
+
+    let replay_id = replay.id.clone();
+    let original_id = original.id.clone();
+    let url = spawn_server(state).await;
+
+    let resp = reqwest::get(format!("{url}/executions/{replay_id}"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+
+    assert!(body.contains("Retry Info"), "should show retry info section");
+    assert!(body.contains("Replay of"), "should show 'Replay of' label");
+    assert!(
+        body.contains(&format!("/executions/{original_id}")),
+        "should link to original execution"
+    );
+    assert!(
+        body.contains(&original_id[..8]),
+        "should show truncated original ID"
+    );
+}
+
+#[tokio::test]
+async fn execution_detail_hides_retry_section_when_not_applicable() {
+    use sendword::models::execution::{self, NewExecution};
+
+    let config = AppConfig {
+        hooks: vec![make_test_hook("Test Hook", "test-hook", "echo hello")],
+        ..AppConfig::default()
+    };
+
+    let state = test_state(config).await;
+
+    let exec = execution::create(
+        state.db.pool(),
+        &NewExecution {
+            id: None,
+            hook_slug: "test-hook",
+            log_path: "data/logs/test",
+            trigger_source: "127.0.0.1",
+            request_payload: "{}",
+            retry_of: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let exec_id = exec.id.clone();
+    let url = spawn_server(state).await;
+
+    let resp = reqwest::get(format!("{url}/executions/{exec_id}"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+
+    assert!(
+        !body.contains("Retry Info"),
+        "should not show retry info section when retry_count is 0 and retry_of is None"
+    );
+}
+
+#[tokio::test]
+async fn execution_detail_shows_pending_status_with_yellow_badge() {
+    use sendword::models::execution::{self, NewExecution};
+
+    let config = AppConfig {
+        hooks: vec![make_test_hook("Test Hook", "test-hook", "echo hello")],
+        ..AppConfig::default()
+    };
+
+    let state = test_state(config).await;
+
+    // Execution stays in pending status (not started)
+    let exec = execution::create(
+        state.db.pool(),
+        &NewExecution {
+            id: None,
+            hook_slug: "test-hook",
+            log_path: "data/logs/test",
+            trigger_source: "127.0.0.1",
+            request_payload: "{}",
+            retry_of: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let exec_id = exec.id.clone();
+    let url = spawn_server(state).await;
+
+    let resp = reqwest::get(format!("{url}/executions/{exec_id}"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+
+    assert!(body.contains("pending"), "should show pending status");
+    assert!(
+        body.contains("bg-yellow-100"),
+        "should use yellow badge for pending"
+    );
+    // Started at should show dash when not yet started
+    assert!(
+        body.contains("Started at"),
+        "should show started at label"
+    );
+}
