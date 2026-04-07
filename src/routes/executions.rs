@@ -10,6 +10,7 @@ use serde::Serialize;
 use crate::auth::AuthUser;
 use crate::config::ExecutorConfig;
 use crate::error::AppError;
+use crate::masking::mask_secrets;
 use crate::models::execution;
 use crate::retry;
 use crate::server::AppState;
@@ -72,6 +73,19 @@ async fn execution_detail(
     let logs_dir = &config.logs.dir;
     let stdout = read_log_file(logs_dir, &exec.id, "stdout.log").await;
     let stderr = read_log_file(logs_dir, &exec.id, "stderr.log").await;
+
+    // Apply secret masking to log output before rendering.
+    // If the hook has been removed from config, hook_env is empty and only
+    // system env vars and regex patterns are used for masking.
+    let hook_env = config
+        .hooks
+        .iter()
+        .find(|h| h.slug == exec.hook_slug)
+        .map(|h| &h.env)
+        .cloned()
+        .unwrap_or_default();
+    let stdout = mask_secrets(&stdout, &config.masking, &hook_env);
+    let stderr = mask_secrets(&stderr, &config.masking, &hook_env);
 
     let duration = compute_duration(&exec.started_at, &exec.completed_at);
 
