@@ -2,6 +2,8 @@ use std::sync::Arc;
 
 use sendword::config::{AppConfig, ExecutorConfig, HookAuthConfig, HmacAlgorithm, HookConfig};
 use sendword::db::Db;
+use sendword::models::trigger_attempt::{self, TriggerAttemptStatus};
+use sendword::payload::{FieldType, PayloadField, PayloadSchema};
 use sendword::server::AppState;
 use sendword::templates::Templates;
 
@@ -2062,4 +2064,185 @@ async fn trigger_bearer_hook_returns_execution_id() {
         .await
         .unwrap();
     assert_eq!(exec.hook_slug, "bearer-exec");
+}
+
+// --- Trigger attempt pipeline tests ---
+
+#[tokio::test]
+async fn trigger_creates_fired_attempt_with_execution_id() {
+    let hook = shell_hook("fire-attempt");
+    let state = test_state(config_with_hook(hook)).await;
+    let pool = state.db.pool().clone();
+    let url = spawn_server(state).await;
+
+    let resp = reqwest::Client::new()
+        .post(format!("{url}/hook/fire-attempt"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let exec_id = body["execution_id"].as_str().expect("execution_id in response");
+
+    let attempts = trigger_attempt::list_by_hook(&pool, "fire-attempt", 10, 0)
+        .await
+        .unwrap();
+    assert_eq!(attempts.len(), 1);
+
+    let attempt = &attempts[0];
+    assert_eq!(attempt.hook_slug, "fire-attempt");
+    assert_eq!(attempt.status, TriggerAttemptStatus::Fired);
+    assert_eq!(attempt.execution_id.as_deref(), Some(exec_id));
+    assert!(!attempt.source_ip.is_empty(), "source_ip should be populated");
+}
+
+#[tokio::test]
+async fn trigger_auth_failure_creates_auth_failed_attempt() {
+    let mut hook = shell_hook("auth-fail-attempt");
+    hook.auth = Some(HookAuthConfig::Bearer {
+        token: "correct-token".to_owned(),
+    });
+    let state = test_state(config_with_hook(hook)).await;
+    let pool = state.db.pool().clone();
+    let url = spawn_server(state).await;
+
+    let resp = reqwest::Client::new()
+        .post(format!("{url}/hook/auth-fail-attempt"))
+        .header("Authorization", "Bearer wrong-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+
+    let attempts = trigger_attempt::list_by_hook(&pool, "auth-fail-attempt", 10, 0)
+        .await
+        .unwrap();
+    assert_eq!(attempts.len(), 1);
+
+    let attempt = &attempts[0];
+    assert_eq!(attempt.hook_slug, "auth-fail-attempt");
+    assert_eq!(attempt.status, TriggerAttemptStatus::AuthFailed);
+    assert!(attempt.execution_id.is_none(), "auth_failed should have no execution_id");
+    assert!(!attempt.source_ip.is_empty(), "source_ip should be populated");
+    assert!(!attempt.reason.is_empty(), "reason should describe denial");
+}
+
+#[tokio::test]
+async fn trigger_auth_failure_no_header_creates_auth_failed_attempt() {
+    let mut hook = shell_hook("auth-noheader");
+    hook.auth = Some(HookAuthConfig::Bearer {
+        token: "secret".to_owned(),
+    });
+    let state = test_state(config_with_hook(hook)).await;
+    let pool = state.db.pool().clone();
+    let url = spawn_server(state).await;
+
+    let resp = reqwest::Client::new()
+        .post(format!("{url}/hook/auth-noheader"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+
+    let attempts = trigger_attempt::list_by_hook(&pool, "auth-noheader", 10, 0)
+        .await
+        .unwrap();
+    assert_eq!(attempts.len(), 1);
+    assert_eq!(attempts[0].status, TriggerAttemptStatus::AuthFailed);
+    assert!(attempts[0].execution_id.is_none());
+}
+
+#[tokio::test]
+async fn trigger_invalid_json_creates_validation_failed_attempt() {
+    let mut hook = shell_hook("bad-json");
+    hook.payload = Some(PayloadSchema {
+        fields: vec![PayloadField {
+            name: "repo".to_owned(),
+            field_type: FieldType::String,
+            required: true,
+        }],
+    });
+    let state = test_state(config_with_hook(hook)).await;
+    let pool = state.db.pool().clone();
+    let url = spawn_server(state).await;
+
+    let resp = reqwest::Client::new()
+        .post(format!("{url}/hook/bad-json"))
+        .header("Content-Type", "application/json")
+        .body("not valid json {{{")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+
+    let attempts = trigger_attempt::list_by_hook(&pool, "bad-json", 10, 0)
+        .await
+        .unwrap();
+    assert_eq!(attempts.len(), 1);
+
+    let attempt = &attempts[0];
+    assert_eq!(attempt.status, TriggerAttemptStatus::ValidationFailed);
+    assert!(attempt.execution_id.is_none());
+    assert!(attempt.reason.contains("invalid JSON"), "reason should mention invalid JSON");
+}
+
+#[tokio::test]
+async fn trigger_schema_validation_failure_creates_validation_failed_attempt() {
+    let mut hook = shell_hook("schema-fail");
+    hook.payload = Some(PayloadSchema {
+        fields: vec![PayloadField {
+            name: "version".to_owned(),
+            field_type: FieldType::Number,
+            required: true,
+        }],
+    });
+    let state = test_state(config_with_hook(hook)).await;
+    let pool = state.db.pool().clone();
+    let url = spawn_server(state).await;
+
+    // Send valid JSON, but missing the required "version" field
+    let resp = reqwest::Client::new()
+        .post(format!("{url}/hook/schema-fail"))
+        .header("Content-Type", "application/json")
+        .body(r#"{"other": "value"}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 422);
+
+    let attempts = trigger_attempt::list_by_hook(&pool, "schema-fail", 10, 0)
+        .await
+        .unwrap();
+    assert_eq!(attempts.len(), 1);
+
+    let attempt = &attempts[0];
+    assert_eq!(attempt.status, TriggerAttemptStatus::ValidationFailed);
+    assert!(attempt.execution_id.is_none());
+    assert!(
+        attempt.reason.contains("validation failed"),
+        "reason should describe validation failure"
+    );
+}
+
+#[tokio::test]
+async fn trigger_with_x_forwarded_for_records_forwarded_ip() {
+    let hook = shell_hook("forwarded-ip");
+    let state = test_state(config_with_hook(hook)).await;
+    let pool = state.db.pool().clone();
+    let url = spawn_server(state).await;
+
+    let resp = reqwest::Client::new()
+        .post(format!("{url}/hook/forwarded-ip"))
+        .header("X-Forwarded-For", "203.0.113.50, 10.0.0.1")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let attempts = trigger_attempt::list_by_hook(&pool, "forwarded-ip", 10, 0)
+        .await
+        .unwrap();
+    assert_eq!(attempts.len(), 1);
+    assert_eq!(attempts[0].source_ip, "203.0.113.50");
 }
