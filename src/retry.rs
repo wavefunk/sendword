@@ -417,6 +417,7 @@ mod tests {
             cwd: None,
             timeout: Duration::from_secs(10),
             logs_dir: logs_dir.into(),
+            payload_json: "{}".into(),
         }
     }
 
