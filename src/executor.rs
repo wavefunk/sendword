@@ -1,5 +1,8 @@
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
+
+use tokio::fs;
 
 use crate::models::ExecutionStatus;
 
@@ -29,4 +32,56 @@ pub struct ExecutionResult {
     pub exit_code: Option<i32>,
     /// Path to the log directory (data/logs/{execution_id}).
     pub log_dir: String,
+}
+
+/// Create the log directory and open stdout/stderr files for writing.
+/// Returns (log_dir_path, stdout_file, stderr_file).
+async fn prepare_log_files(
+    logs_dir: &str,
+    execution_id: &str,
+) -> std::io::Result<(PathBuf, fs::File, fs::File)> {
+    let log_dir = Path::new(logs_dir).join(execution_id);
+    fs::create_dir_all(&log_dir).await?;
+
+    let stdout_file = fs::File::create(log_dir.join("stdout.log")).await?;
+    let stderr_file = fs::File::create(log_dir.join("stderr.log")).await?;
+
+    Ok((log_dir, stdout_file, stderr_file))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn prepare_log_files_creates_directory_and_files() {
+        let tmp = tempfile::TempDir::new().expect("temp dir");
+        let logs_dir = tmp.path().to_str().expect("utf-8 path");
+        let exec_id = "test-exec-001";
+
+        let (log_dir, _stdout, _stderr) = prepare_log_files(logs_dir, exec_id)
+            .await
+            .expect("prepare_log_files");
+
+        assert!(log_dir.exists());
+        assert!(log_dir.join("stdout.log").exists());
+        assert!(log_dir.join("stderr.log").exists());
+    }
+
+    #[tokio::test]
+    async fn prepare_log_files_creates_nested_parents() {
+        let tmp = tempfile::TempDir::new().expect("temp dir");
+        // logs_dir itself does not exist yet
+        let nested = tmp.path().join("a").join("b").join("logs");
+        let logs_dir = nested.to_str().expect("utf-8 path");
+        let exec_id = "test-exec-002";
+
+        let (log_dir, _stdout, _stderr) = prepare_log_files(logs_dir, exec_id)
+            .await
+            .expect("prepare_log_files");
+
+        assert!(log_dir.exists());
+        assert!(log_dir.join("stdout.log").exists());
+        assert!(log_dir.join("stderr.log").exists());
+    }
 }
