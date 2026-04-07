@@ -8,9 +8,10 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use toml_edit::{DocumentMut, Formatted, Item, Table, Value};
+use toml_edit::{Array, DocumentMut, Formatted, InlineTable, Item, Table, Value};
 
 use crate::config::{AppConfig, BackoffStrategy, ConfigError, HmacAlgorithm, HookAuthConfig};
+use crate::payload::{FieldType, PayloadSchema};
 
 // ---------------------------------------------------------------------------
 // Error
@@ -51,6 +52,7 @@ pub struct HookFormData {
     pub timeout: Option<Duration>,
     pub retries: Option<RetryFormData>,
     pub auth: Option<HookAuthConfig>,
+    pub payload: Option<PayloadSchema>,
 }
 
 #[derive(Debug, Clone)]
@@ -297,6 +299,29 @@ fn apply_hook_fields(table: &mut Table, data: &HookFormData) {
             table.remove("auth");
         }
     }
+
+    // payload schema sub-table or remove
+    match &data.payload {
+        Some(schema) if !schema.fields.is_empty() => {
+            let mut payload_table = Table::new();
+            let mut fields_array = Array::new();
+            for field in &schema.fields {
+                let mut ft = InlineTable::new();
+                ft.insert("name", field.name.as_str().into());
+                ft.insert("type", field_type_str(field.field_type).into());
+                ft.insert("required", field.required.into());
+                fields_array.push(ft);
+            }
+            payload_table.insert(
+                "fields",
+                Item::Value(Value::Array(fields_array)),
+            );
+            table.insert("payload", Item::Table(payload_table));
+        }
+        _ => {
+            table.remove("payload");
+        }
+    }
 }
 
 fn toml_string(s: &str) -> Item {
@@ -309,6 +334,16 @@ fn toml_bool(b: bool) -> Item {
 
 fn toml_int(n: u32) -> Item {
     Item::Value(Value::Integer(Formatted::new(i64::from(n))))
+}
+
+fn field_type_str(ft: FieldType) -> &'static str {
+    match ft {
+        FieldType::String => "string",
+        FieldType::Number => "number",
+        FieldType::Boolean => "boolean",
+        FieldType::Object => "object",
+        FieldType::Array => "array",
+    }
 }
 
 pub fn backoff_str(b: BackoffStrategy) -> &'static str {
@@ -392,6 +427,7 @@ mod tests {
             timeout: None,
             retries: None,
             auth: None,
+            payload: None,
         }
     }
 
@@ -476,6 +512,7 @@ command = "echo old"
             timeout: Some(Duration::from_secs(60)),
             retries: None,
             auth: None,
+            payload: None,
         };
 
         writer.update_hook("my-hook", &data).expect("update hook");
@@ -623,5 +660,72 @@ port = 8080
 
         let content = read_config(&writer);
         assert_eq!(content, original, "original file should be unchanged");
+    }
+
+    #[test]
+    fn add_hook_with_payload_schema() {
+        use crate::payload::{PayloadField, PayloadSchema, FieldType};
+
+        let (_dir, writer) = tmp_config("[server]\nport = 8080\n");
+
+        let mut data = minimal_hook();
+        data.payload = Some(PayloadSchema {
+            fields: vec![
+                PayloadField {
+                    name: "action".into(),
+                    field_type: FieldType::String,
+                    required: true,
+                },
+                PayloadField {
+                    name: "count".into(),
+                    field_type: FieldType::Number,
+                    required: false,
+                },
+            ],
+        });
+
+        writer.add_hook(&data).unwrap();
+
+        // Re-load and verify
+        let config =
+            AppConfig::load_from(writer.path().to_str().unwrap(), "nonexistent.json")
+                .unwrap();
+        let hook = &config.hooks[0];
+        let schema = hook.payload.as_ref().expect("payload should be present");
+        assert_eq!(schema.fields.len(), 2);
+        assert_eq!(schema.fields[0].name, "action");
+        assert!(schema.fields[0].required);
+        assert_eq!(schema.fields[1].name, "count");
+        assert!(!schema.fields[1].required);
+    }
+
+    #[test]
+    fn update_hook_removes_payload_when_none() {
+        let (_dir, writer) = tmp_config(
+            r#"[server]
+port = 8080
+
+[[hooks]]
+name = "Test"
+slug = "test-hook"
+[hooks.executor]
+type = "shell"
+command = "echo hi"
+[[hooks.payload.fields]]
+name = "action"
+type = "string"
+required = true
+"#,
+        );
+
+        let mut data = minimal_hook();
+        data.payload = None;
+
+        writer.update_hook("test-hook", &data).unwrap();
+
+        let config =
+            AppConfig::load_from(writer.path().to_str().unwrap(), "nonexistent.json")
+                .unwrap();
+        assert!(config.hooks[0].payload.is_none());
     }
 }

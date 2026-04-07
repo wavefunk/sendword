@@ -411,6 +411,7 @@ fn parse_hook_form(form: &HookForm) -> Result<HookFormData, String> {
         timeout,
         retries,
         auth,
+        payload: None,
     })
 }
 
