@@ -2,8 +2,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use axum::{Form, Json, Router};
@@ -11,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::auth::AuthUser;
 use crate::config::{BackoffStrategy, ExecutorConfig};
+use crate::webhook_auth;
 use crate::config_writer::{self, HookFormData, RetryFormData, WriteError};
 use crate::error::AppError;
 use crate::models::execution;
@@ -38,6 +40,8 @@ struct TriggerResponse {
 async fn trigger_hook(
     State(state): State<Arc<AppState>>,
     Path(slug): Path<String>,
+    headers: HeaderMap,
+    body: Bytes,
 ) -> Result<Json<TriggerResponse>, StatusCode> {
     let config = state.config.load();
 
@@ -46,6 +50,15 @@ async fn trigger_hook(
         .iter()
         .find(|h| h.slug == slug && h.enabled)
         .ok_or(StatusCode::NOT_FOUND)?;
+
+    // Auth check
+    match webhook_auth::verify(hook.auth.as_ref(), &headers, &body) {
+        webhook_auth::AuthResult::Ok => {}
+        webhook_auth::AuthResult::Denied(reason) => {
+            tracing::debug!(hook_slug = %slug, reason = %reason, "webhook auth denied");
+            return Err(StatusCode::UNAUTHORIZED);
+        }
+    }
 
     let timeout = hook.timeout.unwrap_or(config.defaults.timeout);
 
