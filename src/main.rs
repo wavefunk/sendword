@@ -21,5 +21,13 @@ async fn main() -> eyre::Result<()> {
     db.migrate().await?;
     tracing::info!("database ready");
 
+    let templates = sendword::templates::Templates::new(
+        sendword::templates::Templates::default_dir(),
+    );
+    tracing::info!("templates loaded");
+
+    let state = sendword::server::AppState::new(config, db, templates);
+    sendword::server::run(state).await?;
+
     Ok(())
 }
