@@ -179,6 +179,7 @@ async fn replay_execution(
         cwd,
         timeout,
         logs_dir,
+        payload_json: original.request_payload,
     };
 
     let pool = pool.clone();

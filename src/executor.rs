@@ -27,6 +27,9 @@ pub struct ExecutionContext {
     pub timeout: Duration,
     /// Base directory for log files (e.g., "data/logs").
     pub logs_dir: String,
+    /// Raw JSON payload from the trigger request. Set as SENDWORD_PAYLOAD
+    /// env var and written to payload.json in the log directory.
+    pub payload_json: String,
 }
 
 /// The outcome of an execution attempt.
@@ -47,9 +50,14 @@ pub struct ExecutionResult {
 async fn prepare_log_files(
     logs_dir: &str,
     execution_id: &str,
+    payload_json: &str,
 ) -> std::io::Result<(PathBuf, fs::File, fs::File)> {
     let log_dir = Path::new(logs_dir).join(execution_id);
     fs::create_dir_all(&log_dir).await?;
+
+    // Write payload.json (uses write, not append, so retries overwrite
+    // with identical content rather than duplicating)
+    fs::write(log_dir.join("payload.json"), payload_json.as_bytes()).await?;
 
     let stdout_file = fs::OpenOptions::new()
         .create(true)
@@ -89,7 +97,7 @@ pub async fn run(pool: &SqlitePool, ctx: ExecutionContext) -> ExecutionResult {
 
     // 1. Prepare log files
     let (log_dir, mut stdout_file, mut stderr_file) =
-        match prepare_log_files(&ctx.logs_dir, &ctx.execution_id).await {
+        match prepare_log_files(&ctx.logs_dir, &ctx.execution_id, &ctx.payload_json).await {
             Ok(files) => files,
             Err(e) => {
                 tracing::error!(
@@ -130,6 +138,7 @@ pub async fn run(pool: &SqlitePool, ctx: ExecutionContext) -> ExecutionResult {
     cmd.envs(&ctx.env);
     cmd.env("SENDWORD_EXECUTION_ID", &ctx.execution_id);
     cmd.env("SENDWORD_HOOK_SLUG", &ctx.hook_slug);
+    cmd.env("SENDWORD_PAYLOAD", &ctx.payload_json);
 
     if let Some(cwd) = &ctx.cwd {
         cmd.current_dir(cwd);
@@ -252,7 +261,7 @@ mod tests {
         let logs_dir = tmp.path().to_str().expect("utf-8 path");
         let exec_id = "test-exec-001";
 
-        let (log_dir, _stdout, _stderr) = prepare_log_files(logs_dir, exec_id)
+        let (log_dir, _stdout, _stderr) = prepare_log_files(logs_dir, exec_id, "{}")
             .await
             .expect("prepare_log_files");
 
@@ -289,7 +298,7 @@ mod tests {
         let logs_dir = nested.to_str().expect("utf-8 path");
         let exec_id = "test-exec-002";
 
-        let (log_dir, _stdout, _stderr) = prepare_log_files(logs_dir, exec_id)
+        let (log_dir, _stdout, _stderr) = prepare_log_files(logs_dir, exec_id, "{}")
             .await
             .expect("prepare_log_files");
 
@@ -334,6 +343,7 @@ mod tests {
             cwd: None,
             timeout: Duration::from_secs(10),
             logs_dir: logs_dir.into(),
+            payload_json: "{}".into(),
         }
     }
 
@@ -545,5 +555,58 @@ mod tests {
             "clean",
             "server env vars should not leak to child process"
         );
+    }
+
+    #[tokio::test]
+    async fn prepare_log_files_creates_payload_json() {
+        let tmp = tempfile::TempDir::new().expect("temp dir");
+        let logs_dir = tmp.path().to_str().expect("utf-8 path");
+        let exec_id = "test-exec-payload";
+        let payload = r#"{"test":true}"#;
+
+        let (log_dir, _stdout, _stderr) = prepare_log_files(logs_dir, exec_id, payload)
+            .await
+            .expect("prepare_log_files");
+
+        assert!(log_dir.join("payload.json").exists());
+        let contents = tokio::fs::read_to_string(log_dir.join("payload.json"))
+            .await
+            .expect("read payload.json");
+        assert_eq!(contents, payload);
+    }
+
+    #[tokio::test]
+    async fn payload_json_file_is_written_to_log_dir() {
+        let tmp = tempfile::TempDir::new().expect("temp dir");
+        let logs_dir = tmp.path().to_str().expect("utf-8 path");
+        let pool = test_pool().await;
+
+        let mut ctx = setup_execution(&pool, logs_dir, "echo ok").await;
+        ctx.payload_json = r#"{"action":"deploy","count":3}"#.into();
+        let exec_id = ctx.execution_id.clone();
+
+        let _result = run(&pool, ctx).await;
+
+        let payload_path = Path::new(logs_dir).join(&exec_id).join("payload.json");
+        let contents = tokio::fs::read_to_string(&payload_path)
+            .await
+            .expect("payload.json should exist");
+        assert_eq!(contents, r#"{"action":"deploy","count":3}"#);
+    }
+
+    #[tokio::test]
+    async fn sendword_payload_env_var_is_set() {
+        let tmp = tempfile::TempDir::new().expect("temp dir");
+        let logs_dir = tmp.path().to_str().expect("utf-8 path");
+        let pool = test_pool().await;
+
+        let mut ctx = setup_execution(&pool, logs_dir, "echo $SENDWORD_PAYLOAD").await;
+        ctx.payload_json = r#"{"key":"value"}"#.into();
+        let exec_id = ctx.execution_id.clone();
+
+        let _result = run(&pool, ctx).await;
+
+        let stdout = read_log(logs_dir, &exec_id, "stdout.log").await;
+        assert_eq!(stdout.trim(), r#"{"key":"value"}"#);
     }
 }

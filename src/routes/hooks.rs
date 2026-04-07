@@ -143,6 +143,7 @@ async fn trigger_hook(
         cwd,
         timeout,
         logs_dir,
+        payload_json: payload_str,
     };
 
     let pool = pool.clone();
