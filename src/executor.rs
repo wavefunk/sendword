@@ -609,4 +609,61 @@ mod tests {
         let stdout = read_log(logs_dir, &exec_id, "stdout.log").await;
         assert_eq!(stdout.trim(), r#"{"key":"value"}"#);
     }
+
+    #[tokio::test]
+    async fn empty_payload_json_written_to_log_dir() {
+        let tmp = tempfile::TempDir::new().expect("temp dir");
+        let logs_dir = tmp.path().to_str().expect("utf-8 path");
+        let pool = test_pool().await;
+
+        let ctx = setup_execution(&pool, logs_dir, "echo ok").await;
+        let exec_id = ctx.execution_id.clone();
+
+        let _result = run(&pool, ctx).await;
+
+        let payload_path = Path::new(logs_dir).join(&exec_id).join("payload.json");
+        let contents = tokio::fs::read_to_string(&payload_path)
+            .await
+            .expect("payload.json should exist even for empty payload");
+        assert_eq!(contents, "{}");
+    }
+
+    #[tokio::test]
+    async fn sendword_payload_env_var_set_for_empty_payload() {
+        let tmp = tempfile::TempDir::new().expect("temp dir");
+        let logs_dir = tmp.path().to_str().expect("utf-8 path");
+        let pool = test_pool().await;
+
+        // setup_execution defaults payload_json to "{}"
+        let ctx = setup_execution(&pool, logs_dir, "echo $SENDWORD_PAYLOAD").await;
+        let exec_id = ctx.execution_id.clone();
+
+        let _result = run(&pool, ctx).await;
+
+        let stdout = read_log(logs_dir, &exec_id, "stdout.log").await;
+        assert_eq!(stdout.trim(), "{}");
+    }
+
+    #[tokio::test]
+    async fn payload_json_overwritten_not_appended_on_retry() {
+        let tmp = tempfile::TempDir::new().expect("temp dir");
+        let logs_dir = tmp.path().to_str().expect("utf-8 path");
+        let exec_id = "test-exec-overwrite";
+
+        // Write payload.json twice with different content to simulate retry
+        let payload_v1 = r#"{"version":1}"#;
+        let payload_v2 = r#"{"version":2}"#;
+
+        let _ = prepare_log_files(logs_dir, exec_id, payload_v1)
+            .await
+            .expect("first prepare");
+        let (log_dir, _, _) = prepare_log_files(logs_dir, exec_id, payload_v2)
+            .await
+            .expect("second prepare");
+
+        let contents = tokio::fs::read_to_string(log_dir.join("payload.json"))
+            .await
+            .expect("read payload.json");
+        assert_eq!(contents, payload_v2, "payload.json should be overwritten, not appended");
+    }
 }

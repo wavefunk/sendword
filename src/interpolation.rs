@@ -307,4 +307,122 @@ mod tests {
         let result = interpolate_command(cmd, &payload);
         assert_eq!(result.as_ref(), "echo ''");
     }
+
+    // --- Additional coverage ---
+
+    #[test]
+    fn single_braces_are_not_placeholders() {
+        let cmd = "echo {not_a_placeholder}";
+        let payload = json!({"not_a_placeholder": "value"});
+        let result = interpolate_command(cmd, &payload);
+        assert!(matches!(result, Cow::Borrowed(_)));
+        assert_eq!(result.as_ref(), "echo {not_a_placeholder}");
+    }
+
+    #[test]
+    fn negative_number_field_interpolated() {
+        let cmd = "offset={{delta}}";
+        let payload = json!({"delta": -5});
+        let result = interpolate_command(cmd, &payload);
+        assert_eq!(result.as_ref(), "offset='-5'");
+    }
+
+    #[test]
+    fn injection_via_double_quotes_is_escaped() {
+        let cmd = "echo {{name}}";
+        let payload = json!({"name": "a\"b"});
+        let result = interpolate_command(cmd, &payload);
+        // Double quotes inside single-quoted string are harmless
+        assert_eq!(result.as_ref(), r#"echo 'a"b'"#);
+    }
+
+    #[test]
+    fn injection_via_newline_is_escaped() {
+        let cmd = "echo {{msg}}";
+        let payload = json!({"msg": "line1\nrm -rf /"});
+        let result = interpolate_command(cmd, &payload);
+        assert_eq!(result.as_ref(), "echo 'line1\nrm -rf /'");
+    }
+
+    #[test]
+    fn injection_via_pipe_is_escaped() {
+        let cmd = "echo {{name}}";
+        let payload = json!({"name": "foo | rm -rf /"});
+        let result = interpolate_command(cmd, &payload);
+        assert_eq!(result.as_ref(), "echo 'foo | rm -rf /'");
+    }
+
+    #[test]
+    fn partial_dot_path_unresolved_left_as_is() {
+        let cmd = "echo {{a.b.missing}}";
+        let payload = json!({"a": {"b": {"c": "found"}}});
+        let result = interpolate_command(cmd, &payload);
+        assert_eq!(result.as_ref(), "echo {{a.b.missing}}");
+    }
+
+    #[test]
+    fn dot_path_through_non_object_unresolved() {
+        let cmd = "echo {{a.b}}";
+        let payload = json!({"a": 42});
+        let result = interpolate_command(cmd, &payload);
+        assert_eq!(result.as_ref(), "echo {{a.b}}");
+    }
+
+    #[test]
+    fn template_is_entirely_a_placeholder() {
+        let cmd = "{{cmd}}";
+        let payload = json!({"cmd": "ls -la"});
+        let result = interpolate_command(cmd, &payload);
+        assert_eq!(result.as_ref(), "'ls -la'");
+    }
+
+    #[test]
+    fn adjacent_placeholders_both_interpolated() {
+        let cmd = "{{a}}{{b}}";
+        let payload = json!({"a": "hello", "b": "world"});
+        let result = interpolate_command(cmd, &payload);
+        assert_eq!(result.as_ref(), "'hello''world'");
+    }
+
+    #[test]
+    fn underscore_and_digit_field_names() {
+        let cmd = "echo {{_var1}} {{item_2}}";
+        let payload = json!({"_var1": "alpha", "item_2": "beta"});
+        let result = interpolate_command(cmd, &payload);
+        assert_eq!(result.as_ref(), "echo 'alpha' 'beta'");
+    }
+
+    #[test]
+    fn empty_payload_object_leaves_placeholders() {
+        let cmd = "deploy {{app}} to {{env}}";
+        let payload = json!({});
+        let result = interpolate_command(cmd, &payload);
+        assert_eq!(result.as_ref(), "deploy {{app}} to {{env}}");
+    }
+
+    #[test]
+    fn float_zero_and_integer_zero() {
+        let cmd = "{{a}} {{b}}";
+        let payload = json!({"a": 0, "b": 0.0});
+        let result = interpolate_command(cmd, &payload);
+        assert_eq!(result.as_ref(), "'0' '0.0'");
+    }
+
+    #[test]
+    fn nested_object_field_produces_json() {
+        let cmd = "echo {{config.sub}}";
+        let payload = json!({"config": {"sub": {"key": "val"}}});
+        let result = interpolate_command(cmd, &payload);
+        assert_eq!(result.as_ref(), r#"echo '{"key":"val"}'"#);
+    }
+
+    #[test]
+    fn shell_escape_string_with_backslash() {
+        assert_eq!(shell_escape(r"a\b"), r"'a\b'");
+    }
+
+    #[test]
+    fn shell_escape_multiple_single_quotes() {
+        assert_eq!(shell_escape("a'b'c"), "'a'\\''b'\\''c'");
+    }
 }
