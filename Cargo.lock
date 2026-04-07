@@ -1921,6 +1921,7 @@ version = "0.0.1"
 dependencies = [
  "argon2",
  "axum",
+ "base64",
  "chrono",
  "eyre",
  "figment",
@@ -1929,6 +1930,7 @@ dependencies = [
  "minijinja-autoreload",
  "minijinja-contrib",
  "minijinja-embed",
+ "rand 0.9.2",
  "rand_core 0.6.4",
  "reqwest",
  "serde",
