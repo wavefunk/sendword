@@ -4,6 +4,7 @@ pub mod error;
 pub mod executor;
 pub mod id;
 pub mod models;
+pub mod retry;
 pub mod routes;
 pub mod server;
 pub mod templates;

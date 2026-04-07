@@ -11,6 +11,7 @@ use crate::models::execution;
 use crate::models::ExecutionStatus;
 
 /// Everything the executor needs to run a command.
+#[derive(Clone)]
 pub struct ExecutionContext {
     /// The execution record ID (UUIDv7 string).
     pub execution_id: String,
@@ -40,6 +41,9 @@ pub struct ExecutionResult {
 
 /// Create the log directory and open stdout/stderr files for writing.
 /// Returns (log_dir_path, stdout_file, stderr_file).
+///
+/// Files are opened in append mode so that retry attempts append to
+/// existing log files rather than truncating them.
 async fn prepare_log_files(
     logs_dir: &str,
     execution_id: &str,
@@ -47,8 +51,16 @@ async fn prepare_log_files(
     let log_dir = Path::new(logs_dir).join(execution_id);
     fs::create_dir_all(&log_dir).await?;
 
-    let stdout_file = fs::File::create(log_dir.join("stdout.log")).await?;
-    let stderr_file = fs::File::create(log_dir.join("stderr.log")).await?;
+    let stdout_file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_dir.join("stdout.log"))
+        .await?;
+    let stderr_file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_dir.join("stderr.log"))
+        .await?;
 
     Ok((log_dir, stdout_file, stderr_file))
 }
