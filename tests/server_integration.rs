@@ -2246,3 +2246,242 @@ async fn trigger_with_x_forwarded_for_records_forwarded_ip() {
     assert_eq!(attempts.len(), 1);
     assert_eq!(attempts[0].source_ip, "203.0.113.50");
 }
+
+// --- Trigger attempt list (Web UI) tests ---
+
+#[tokio::test]
+async fn attempt_list_returns_404_for_unknown_hook() {
+    let (url, token) = spawn_authed_server(AppConfig::default()).await;
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("{url}/hooks/nonexistent/attempts"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+}
+
+#[tokio::test]
+async fn attempt_list_empty_shows_no_attempts_message() {
+    let config = AppConfig {
+        hooks: vec![make_test_hook("Fresh", "fresh-hook", "echo hi")],
+        ..AppConfig::default()
+    };
+    let (url, token) = spawn_authed_server(config).await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .get(format!("{url}/hooks/fresh-hook/attempts"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+    assert!(
+        body.contains("No trigger attempts"),
+        "empty list should show 'No trigger attempts' message"
+    );
+}
+
+#[tokio::test]
+async fn attempt_list_shows_fired_after_trigger() {
+    let hook = shell_hook("list-fired");
+    let state = test_state(config_with_hook(hook)).await;
+    let token = create_test_session(&state).await;
+    let url = spawn_server(state).await;
+    let client = reqwest::Client::new();
+
+    // Trigger the hook to create a fired attempt
+    let resp = client
+        .post(format!("{url}/hook/list-fired"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    // Fetch the attempts partial
+    let resp = client
+        .get(format!("{url}/hooks/list-fired/attempts"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+
+    assert!(body.contains("fired"), "should contain fired status");
+    assert!(body.contains("bg-green-100"), "fired badge should use green color");
+    assert!(body.contains("<table"), "should render as HTML table");
+}
+
+#[tokio::test]
+async fn attempt_list_status_filter_shows_only_matching() {
+    let mut hook = shell_hook("filter-test");
+    hook.auth = Some(HookAuthConfig::Bearer {
+        token: "secret".to_owned(),
+    });
+    let state = test_state(config_with_hook(hook)).await;
+    let token = create_test_session(&state).await;
+    let url = spawn_server(state).await;
+    let client = reqwest::Client::new();
+
+    // Create a fired attempt (with correct auth)
+    let resp = client
+        .post(format!("{url}/hook/filter-test"))
+        .header("Authorization", "Bearer secret")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    // Create an auth_failed attempt (wrong token)
+    let resp = client
+        .post(format!("{url}/hook/filter-test"))
+        .header("Authorization", "Bearer wrong")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+
+    // Filter by auth_failed: should show auth_failed but not fired
+    let resp = client
+        .get(format!("{url}/hooks/filter-test/attempts?status=auth_failed"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("auth_failed"), "should show auth_failed attempt");
+    assert!(body.contains("bg-red-100"), "auth_failed badge should use red color");
+    // The fired attempt should not be in the filtered results
+    assert!(
+        !body.contains("bg-green-100"),
+        "filtered list should not contain fired (green) badge"
+    );
+
+    // Filter by fired: should show only fired
+    let resp = client
+        .get(format!("{url}/hooks/filter-test/attempts?status=fired"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("fired"), "should show fired attempt");
+    assert!(
+        !body.contains("auth_failed"),
+        "filtered list should not contain auth_failed"
+    );
+
+    // All (no filter): should show both
+    let resp = client
+        .get(format!("{url}/hooks/filter-test/attempts"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("fired"), "unfiltered should show fired");
+    assert!(body.contains("auth_failed"), "unfiltered should show auth_failed");
+}
+
+#[tokio::test]
+async fn attempt_list_unknown_status_filter_returns_all() {
+    let hook = shell_hook("unknown-filter");
+    let state = test_state(config_with_hook(hook)).await;
+    let token = create_test_session(&state).await;
+    let url = spawn_server(state).await;
+    let client = reqwest::Client::new();
+
+    // Create a fired attempt
+    client
+        .post(format!("{url}/hook/unknown-filter"))
+        .send()
+        .await
+        .unwrap();
+
+    // Unknown status filter falls through to unfiltered (parse returns None)
+    let resp = client
+        .get(format!("{url}/hooks/unknown-filter/attempts?status=bogus"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("fired"), "unknown filter should fall through to showing all");
+}
+
+#[tokio::test]
+async fn hook_detail_contains_trigger_attempts_section() {
+    let config = AppConfig {
+        hooks: vec![make_test_hook("Attempt Hook", "attempt-hook", "echo hi")],
+        ..AppConfig::default()
+    };
+    let (url, token) = spawn_authed_server(config).await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .get(format!("{url}/hooks/attempt-hook"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+
+    assert!(
+        body.contains("Trigger Attempts"),
+        "hook detail should contain Trigger Attempts heading"
+    );
+    assert!(
+        body.contains("attempt-list"),
+        "hook detail should contain attempt-list container"
+    );
+    assert!(
+        body.contains("attempt-filters"),
+        "hook detail should contain filter buttons"
+    );
+    assert!(
+        body.contains("/hooks/attempt-hook/attempts"),
+        "hook detail should contain HTMX URL for attempts"
+    );
+    assert!(
+        body.contains("status=fired"),
+        "hook detail should have fired filter button"
+    );
+    assert!(
+        body.contains("status=auth_failed"),
+        "hook detail should have auth_failed filter button"
+    );
+    assert!(
+        body.contains("status=validation_failed"),
+        "hook detail should have validation_failed filter button"
+    );
+}
+
+#[tokio::test]
+async fn attempt_list_requires_auth() {
+    let config = AppConfig {
+        hooks: vec![shell_hook("auth-required")],
+        ..AppConfig::default()
+    };
+    let state = test_state(config).await;
+    // Enable auth by creating a user (but don't use the session)
+    create_test_session(&state).await;
+    let url = spawn_server(state).await;
+
+    let client = client_no_redirect();
+    let resp = client
+        .get(format!("{url}/hooks/auth-required/attempts"))
+        .send()
+        .await
+        .unwrap();
+    // Should redirect to login (303) when no session cookie
+    assert_eq!(resp.status(), 303);
+}
