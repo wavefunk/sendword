@@ -31,28 +31,27 @@ backoff = "exponential"
 initial_delay = "1s"
 max_delay = "60s"
 
-# Example hook (uncomment to use):
-# [[hooks]]
-# name = "Deploy App"
-# slug = "deploy-app"
-# description = "Triggers app deployment"
-# enabled = true
-#
-# [hooks.executor]
-# type = "shell"
-# command = "echo 'deployed!'"
-#
-# [hooks.env]
-# APP_ENV = "production"
-#
-# cwd = "/opt/app"
-# timeout = "60s"
-#
-# [hooks.retries]
-# count = 2
-# backoff = "exponential"
-# initial_delay = "2s"
-# max_delay = "30s"
-#
-# [hooks.rate_limit]
-# max_per_minute = 5
+[[hooks]]
+name = "Deploy App"
+slug = "deploy-app"
+description = "Triggers app deployment"
+enabled = true
+
+[hooks.executor]
+type = "shell"
+command = "echo 'deployed!'"
+
+[hooks.env]
+APP_ENV = "production"
+
+cwd = "/opt/app"
+timeout = "60s"
+
+[hooks.retries]
+count = 2
+backoff = "exponential"
+initial_delay = "2s"
+max_delay = "30s"
+
+[hooks.rate_limit]
+max_per_minute = 5
