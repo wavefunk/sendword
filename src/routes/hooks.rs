@@ -1636,4 +1636,229 @@ command = "echo ok"
         assert!(result.unwrap_err().contains("expected 'required' or 'optional'"));
     }
 
+
+    // --- Integration tests: payload schema end-to-end ---
+
+    #[tokio::test]
+    async fn create_hook_with_payload_schema_and_trigger() {
+        let (state, _dir) = test_state_with_config("[server]\nport = 8080\n").await;
+        let cookie = create_test_session(&state).await;
+
+        // Create hook with payload schema via form
+        let resp = app(state.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/hooks/new")
+                    .header("Cookie", &cookie)
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    .body(Body::from(
+                        "name=Webhook&slug=webhook&command=echo+ok&enabled=true&payload_text=action%3Astring%3Arequired%0Atag%3Astring",
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+
+        // Verify schema was persisted
+        let config = state.config.load();
+        let hook = config.hooks.iter().find(|h| h.slug == "webhook").unwrap();
+        let schema = hook.payload.as_ref().expect("schema should be set");
+        assert_eq!(schema.fields.len(), 2);
+
+        // Trigger with valid payload
+        let resp = app(state.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/hook/webhook")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(r#"{"action":"deploy","tag":"v1.0"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn create_hook_with_payload_and_trigger_missing_required() {
+        let (state, _dir) = test_state_with_config("[server]\nport = 8080\n").await;
+        let cookie = create_test_session(&state).await;
+
+        // Create hook with required field
+        let resp = app(state.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/hooks/new")
+                    .header("Cookie", &cookie)
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    .body(Body::from(
+                        "name=Webhook&slug=webhook&command=echo+ok&enabled=true&payload_text=action%3Astring%3Arequired",
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+
+        // Trigger without required field
+        let resp = app(state.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/hook/webhook")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(r#"{}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[tokio::test]
+    async fn edit_hook_preserves_payload_schema() {
+        let toml = r#"[server]
+port = 8080
+
+[[hooks]]
+name = "Test"
+slug = "test"
+[hooks.executor]
+type = "shell"
+command = "echo ok"
+[[hooks.payload.fields]]
+name = "action"
+type = "string"
+required = true
+"#;
+        let (state, _dir) = test_state_with_config(toml).await;
+        let cookie = create_test_session(&state).await;
+
+        // Load edit form -- verify it renders without error
+        let resp = app(state.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/hooks/test/edit")
+                    .header("Cookie", &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let html = String::from_utf8(body.to_vec()).unwrap();
+        assert!(html.contains("action:string:required"));
+
+        // Submit edit with modified schema (add a field)
+        let resp = app(state.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/hooks/test/edit")
+                    .header("Cookie", &cookie)
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    .body(Body::from(
+                        "name=Test&slug=test&command=echo+ok&enabled=true&payload_text=action%3Astring%3Arequired%0Atag%3Astring",
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+
+        // Verify updated schema
+        let config = state.config.load();
+        let hook = &config.hooks[0];
+        let schema = hook.payload.as_ref().unwrap();
+        assert_eq!(schema.fields.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn edit_hook_clearing_payload_removes_schema() {
+        let toml = r#"[server]
+port = 8080
+
+[[hooks]]
+name = "Test"
+slug = "test"
+[hooks.executor]
+type = "shell"
+command = "echo ok"
+[[hooks.payload.fields]]
+name = "action"
+type = "string"
+required = true
+"#;
+        let (state, _dir) = test_state_with_config(toml).await;
+        let cookie = create_test_session(&state).await;
+
+        // Submit edit with empty payload text
+        let resp = app(state.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/hooks/test/edit")
+                    .header("Cookie", &cookie)
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    .body(Body::from(
+                        "name=Test&slug=test&command=echo+ok&enabled=true&payload_text=",
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+
+        // Verify schema removed
+        let config = state.config.load();
+        assert!(config.hooks[0].payload.is_none());
+
+        // Trigger now accepts any body
+        let resp = app(state.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/hook/test")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(r#"{"anything":"goes"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn create_hook_with_invalid_payload_text_shows_error() {
+        let (state, _dir) = test_state_with_config("[server]\nport = 8080\n").await;
+        let cookie = create_test_session(&state).await;
+
+        let resp = app(state)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/hooks/new")
+                    .header("Cookie", &cookie)
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    .body(Body::from(
+                        "name=Bad&slug=bad&command=echo+bad&enabled=true&payload_text=action%3Ainteger%3Arequired",
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // Should redirect back with error (existing pattern: flash message)
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+        let location = resp.headers().get("location").unwrap().to_str().unwrap();
+        assert!(location.contains("error="));
+    }
+
 }
