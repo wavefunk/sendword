@@ -49,6 +49,20 @@ async fn prepare_log_files(
     Ok((log_dir, stdout_file, stderr_file))
 }
 
+/// Collect system environment variables that should be passed to child processes.
+/// Returns only the vars that are actually set in the current process.
+fn system_env_vars() -> HashMap<String, String> {
+    const INHERIT_VARS: &[&str] = &["PATH", "HOME", "USER", "LANG"];
+
+    let mut vars = HashMap::with_capacity(INHERIT_VARS.len());
+    for &name in INHERIT_VARS {
+        if let Ok(val) = std::env::var(name) {
+            vars.insert(name.into(), val);
+        }
+    }
+    vars
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -66,6 +80,27 @@ mod tests {
         assert!(log_dir.exists());
         assert!(log_dir.join("stdout.log").exists());
         assert!(log_dir.join("stderr.log").exists());
+    }
+
+    #[test]
+    fn system_env_vars_includes_path() {
+        let vars = system_env_vars();
+        assert!(
+            vars.contains_key("PATH"),
+            "PATH should be present in system env vars"
+        );
+    }
+
+    #[test]
+    fn system_env_vars_excludes_arbitrary_vars() {
+        // Safety: test-only env var, unique name avoids collisions
+        unsafe { std::env::set_var("SENDWORD_TEST_ARBITRARY_XYZ_999", "leaked") };
+        let vars = system_env_vars();
+        assert!(
+            !vars.contains_key("SENDWORD_TEST_ARBITRARY_XYZ_999"),
+            "arbitrary env vars should not be inherited"
+        );
+        unsafe { std::env::remove_var("SENDWORD_TEST_ARBITRARY_XYZ_999") };
     }
 
     #[tokio::test]
