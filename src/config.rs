@@ -756,4 +756,34 @@ mod tests {
         ]);
         assert!(config.validate().is_ok());
     }
+
+    #[test]
+    fn load_from_rejects_config_that_fails_validation() {
+        figment::Jail::expect_with(|jail| {
+            // TOML is valid syntax and deserializes fine, but port=0 fails validation
+            jail.create_file(
+                "test.toml",
+                r#"
+                [server]
+                port = 0
+            "#,
+            )?;
+
+            let result = AppConfig::load_from("test.toml", "nonexistent.json");
+            assert!(result.is_err(), "load_from should reject config with port=0");
+            let msg = result.unwrap_err().to_string();
+            assert!(
+                msg.contains("port must be non-zero"),
+                "error should mention the validation failure: {msg}"
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn is_valid_slug_accepts_max_length() {
+        // Slugs up to 64 chars are valid; this is the upper boundary
+        let slug_64 = "a".repeat(64);
+        assert!(is_valid_slug(&slug_64));
+    }
 }
