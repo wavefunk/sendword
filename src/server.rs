@@ -1,6 +1,8 @@
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
+use axum::extract::connect_info::IntoMakeServiceWithConnectInfo;
 use axum::Router;
 use tokio::net::TcpListener;
 use tower_http::services::ServeDir;
@@ -56,13 +58,21 @@ pub fn router(state: Arc<AppState>) -> Router {
         .with_state(state)
 }
 
+/// Build the router as a service that provides `ConnectInfo<SocketAddr>` to
+/// handlers. Use this when serving via `axum::serve`.
+pub fn into_service(
+    state: Arc<AppState>,
+) -> IntoMakeServiceWithConnectInfo<Router, SocketAddr> {
+    router(state).into_make_service_with_connect_info::<SocketAddr>()
+}
+
 pub async fn run(state: Arc<AppState>) -> eyre::Result<()> {
     let config = state.config.load();
     let addr = format!("{}:{}", config.server.bind, config.server.port);
     let listener = TcpListener::bind(&addr).await?;
     tracing::info!(addr = %addr, "server listening");
 
-    axum::serve(listener, router(state))
+    axum::serve(listener, into_service(state))
         .with_graceful_shutdown(shutdown_signal())
         .await?;
 

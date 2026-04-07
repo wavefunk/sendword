@@ -1,9 +1,10 @@
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
 use axum::body::Bytes;
-use axum::extract::{Path, Query, State};
+use axum::extract::{ConnectInfo, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
@@ -17,7 +18,8 @@ use crate::config::{BackoffStrategy, ExecutorConfig, HmacAlgorithm, HookAuthConf
 use crate::webhook_auth;
 use crate::config_writer::{self, HookFormData, RetryFormData, WriteError};
 use crate::error::AppError;
-use crate::models::execution;
+use crate::models::{execution, trigger_attempt};
+use crate::models::trigger_attempt::{NewTriggerAttempt, TriggerAttemptStatus};
 use crate::retry;
 use crate::server::AppState;
 use crate::templates::context;
@@ -39,12 +41,32 @@ struct TriggerResponse {
     execution_id: String,
 }
 
+/// Extract the client IP address from the request.
+///
+/// Prefers the first address in `X-Forwarded-For` (set by reverse proxies),
+/// falls back to the peer socket address from `ConnectInfo`.
+fn extract_source_ip(headers: &HeaderMap, peer: &SocketAddr) -> String {
+    if let Some(forwarded) = headers.get("x-forwarded-for") {
+        if let Ok(val) = forwarded.to_str() {
+            if let Some(first) = val.split(',').next() {
+                let trimmed = first.trim();
+                if !trimmed.is_empty() {
+                    return trimmed.to_owned();
+                }
+            }
+        }
+    }
+    peer.ip().to_string()
+}
+
 async fn trigger_hook(
     State(state): State<Arc<AppState>>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Path(slug): Path<String>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Json<TriggerResponse>, Response> {
+    let source_ip = extract_source_ip(&headers, &peer);
     let config = state.config.load();
 
     let hook = config
@@ -53,11 +75,24 @@ async fn trigger_hook(
         .find(|h| h.slug == slug && h.enabled)
         .ok_or(StatusCode::NOT_FOUND.into_response())?;
 
+    let pool = state.db.pool();
+
     // Auth check
     match webhook_auth::verify(hook.auth.as_ref(), &headers, &body) {
         webhook_auth::AuthResult::Ok => {}
         webhook_auth::AuthResult::Denied(reason) => {
             tracing::debug!(hook_slug = %slug, reason = %reason, "webhook auth denied");
+            let _ = trigger_attempt::insert(
+                pool,
+                &NewTriggerAttempt {
+                    hook_slug: &slug,
+                    source_ip: &source_ip,
+                    status: TriggerAttemptStatus::AuthFailed,
+                    reason: &reason,
+                    execution_id: None,
+                },
+            )
+            .await;
             return Err(StatusCode::UNAUTHORIZED.into_response());
         }
     }
@@ -69,19 +104,46 @@ async fn trigger_hook(
         let payload_value: serde_json::Value = if body.is_empty() {
             serde_json::Value::Object(serde_json::Map::new())
         } else {
-            serde_json::from_slice(&body).map_err(|e| {
-                (
-                    StatusCode::BAD_REQUEST,
-                    Json(serde_json::json!({
-                        "error": "invalid JSON",
-                        "message": e.to_string(),
-                    })),
-                )
-                    .into_response()
-            })?
+            match serde_json::from_slice(&body) {
+                Ok(v) => v,
+                Err(e) => {
+                    let reason = format!("invalid JSON: {e}");
+                    let _ = trigger_attempt::insert(
+                        pool,
+                        &NewTriggerAttempt {
+                            hook_slug: &slug,
+                            source_ip: &source_ip,
+                            status: TriggerAttemptStatus::ValidationFailed,
+                            reason: &reason,
+                            execution_id: None,
+                        },
+                    )
+                    .await;
+                    return Err((
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({
+                            "error": "invalid JSON",
+                            "message": e.to_string(),
+                        })),
+                    )
+                        .into_response());
+                }
+            }
         };
 
         if let Err(errors) = schema.validate(&payload_value) {
+            let reason = format!("payload validation failed: {errors:?}");
+            let _ = trigger_attempt::insert(
+                pool,
+                &NewTriggerAttempt {
+                    hook_slug: &slug,
+                    source_ip: &source_ip,
+                    status: TriggerAttemptStatus::ValidationFailed,
+                    reason: &reason,
+                    execution_id: None,
+                },
+            )
+            .await;
             return Err((
                 StatusCode::UNPROCESSABLE_ENTITY,
                 Json(serde_json::json!({
@@ -128,21 +190,32 @@ async fn trigger_hook(
     let exec_id = crate::id::new_id();
     let log_path = format!("{logs_dir}/{exec_id}");
 
-    let pool = state.db.pool();
-
     let exec = execution::create(
         pool,
         &execution::NewExecution {
             id: Some(&exec_id),
             hook_slug: &slug,
             log_path: &log_path,
-            trigger_source: "127.0.0.1", // TODO: extract from request
+            trigger_source: &source_ip,
             request_payload: &payload_str,
             retry_of: None,
         },
     )
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())?;
+
+    // Log successful trigger attempt
+    let _ = trigger_attempt::insert(
+        pool,
+        &NewTriggerAttempt {
+            hook_slug: &slug,
+            source_ip: &source_ip,
+            status: TriggerAttemptStatus::Fired,
+            reason: "ok",
+            execution_id: Some(&exec.id),
+        },
+    )
+    .await;
 
     let ctx = crate::executor::ExecutionContext {
         execution_id: exec.id.clone(),
@@ -919,8 +992,18 @@ mod tests {
         format!("sendword_session={}", sess.id)
     }
 
+    /// Build the test app with a ConnectInfo layer so trigger_hook can extract
+    /// the peer address even when using `oneshot()`.
     fn app(state: Arc<AppState>) -> Router {
-        crate::server::router(state)
+        use std::net::{Ipv4Addr, SocketAddr};
+        let peer = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
+        crate::server::router(state).layer(axum::middleware::from_fn(
+            move |mut req: axum::http::Request<Body>, next: axum::middleware::Next| {
+                req.extensions_mut()
+                    .insert(ConnectInfo(peer));
+                async move { next.run(req).await }
+            },
+        ))
     }
 
     // --- New hook form ---
