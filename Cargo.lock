@@ -2065,6 +2065,7 @@ dependencies = [
  "clap",
  "eyre",
  "figment",
+ "humantime",
  "humantime-serde",
  "minijinja",
  "minijinja-autoreload",

@@ -286,7 +286,7 @@ fn toml_int(n: u32) -> Item {
     Item::Value(Value::Integer(Formatted::new(i64::from(n))))
 }
 
-fn backoff_str(b: BackoffStrategy) -> &'static str {
+pub fn backoff_str(b: BackoffStrategy) -> &'static str {
     match b {
         BackoffStrategy::None => "none",
         BackoffStrategy::Linear => "linear",
@@ -295,7 +295,7 @@ fn backoff_str(b: BackoffStrategy) -> &'static str {
 }
 
 /// Format a duration as a human-readable string compatible with `humantime`.
-fn format_duration(d: Duration) -> String {
+pub fn format_duration(d: Duration) -> String {
     let secs = d.as_secs();
     let millis = d.subsec_millis();
 

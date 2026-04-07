@@ -38,6 +38,7 @@ arc-swap = "1"
 clap = { version = "4", features = ["derive"] }
 rpassword = "7"
 urlencoding = "2.1.3"
+humantime = "2.3.0"
 
 [build-dependencies]
 minijinja-embed = "2"
