@@ -1,0 +1,53 @@
+{% if executions %}
+<div class="overflow-x-auto">
+  <table class="w-full text-sm">
+    <thead>
+      <tr class="border-b text-left text-gray-500">
+        <th class="pb-2 pr-4 font-medium">ID</th>
+        <th class="pb-2 pr-4 font-medium">Triggered</th>
+        <th class="pb-2 pr-4 font-medium">Status</th>
+        <th class="pb-2 pr-4 font-medium">Exit Code</th>
+        <th class="pb-2 font-medium">Duration</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for exec in executions %}
+      <tr class="border-b hover:bg-gray-50">
+        <td class="py-2 pr-4">
+          <a href="/executions/{{ exec.id }}" class="font-mono text-blue-600 hover:underline">{{ exec.id[:8] }}</a>
+        </td>
+        <td class="py-2 pr-4 text-gray-600">{{ exec.triggered_at }}</td>
+        <td class="py-2 pr-4">
+          <span class="px-2 py-0.5 rounded text-xs font-medium
+            {%- if exec.status == 'success' %} bg-green-100 text-green-800
+            {%- elif exec.status == 'failed' or exec.status == 'timed_out' %} bg-red-100 text-red-800
+            {%- elif exec.status == 'running' %} bg-blue-100 text-blue-800
+            {%- elif exec.status == 'pending' or exec.status == 'pending_approval' %} bg-yellow-100 text-yellow-800
+            {%- else %} bg-gray-100 text-gray-600
+            {%- endif %}">
+            {{ exec.status }}
+          </span>
+        </td>
+        <td class="py-2 pr-4 font-mono text-gray-600">{{ exec.exit_code if exec.exit_code is defined and exec.exit_code is not none else "-" }}</td>
+        <td class="py-2 font-mono text-gray-600">{{ exec.duration if exec.duration is defined and exec.duration is not none else "-" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if has_more %}
+<div class="mt-4 text-center">
+  <button
+    hx-get="/hooks/{{ slug }}/executions?page={{ page + 1 }}"
+    hx-target="#execution-list"
+    hx-swap="innerHTML"
+    class="text-sm text-blue-600 hover:underline">
+    Load more (page {{ page + 1 }} of {{ total_pages }})
+  </button>
+</div>
+{% endif %}
+
+{% else %}
+<p class="text-gray-500 text-sm">No executions yet.</p>
+{% endif %}

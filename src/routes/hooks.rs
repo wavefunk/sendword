@@ -1,20 +1,26 @@
 use std::sync::Arc;
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
+use axum::response::Html;
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::config::ExecutorConfig;
+use crate::error::AppError;
 use crate::models::execution;
 use crate::retry;
 use crate::server::AppState;
+use crate::templates::context;
+
+const EXECUTIONS_PER_PAGE: i64 = 20;
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/hook/{slug}", post(trigger_hook))
         .route("/hooks/{slug}", get(hook_detail))
+        .route("/hooks/{slug}/executions", get(execution_list))
 }
 
 #[derive(Serialize)]
@@ -91,6 +97,142 @@ async fn trigger_hook(
     }))
 }
 
-async fn hook_detail(Path(_slug): Path<String>) -> StatusCode {
-    StatusCode::NOT_IMPLEMENTED
+#[derive(Deserialize)]
+struct PaginationParams {
+    page: Option<i64>,
+}
+
+async fn hook_detail(
+    State(state): State<Arc<AppState>>,
+    Path(slug): Path<String>,
+) -> Result<Html<String>, AppError> {
+    let hook = state
+        .config
+        .hooks
+        .iter()
+        .find(|h| h.slug == slug)
+        .ok_or(AppError::not_found("hook"))?;
+
+    let pool = state.db.pool();
+    let total = execution::count_by_hook(pool, &slug).await?;
+    let executions = execution::list_by_hook(pool, &slug, EXECUTIONS_PER_PAGE, 0).await?;
+
+    let total_pages = (total + EXECUTIONS_PER_PAGE - 1) / EXECUTIONS_PER_PAGE;
+    let has_more = total_pages > 1;
+
+    let (executor_command, executor_type) = match &hook.executor {
+        ExecutorConfig::Shell { command } => (command.as_str(), "shell"),
+    };
+
+    let timeout_display = hook
+        .timeout
+        .unwrap_or(state.config.defaults.timeout)
+        .as_secs();
+
+    let env_vars: Vec<_> = hook.env.keys().collect();
+
+    let execution_rows = build_execution_rows(&executions);
+
+    let html = state.templates.render(
+        "hook_detail.html",
+        context! {
+            name => hook.name,
+            slug => hook.slug,
+            description => hook.description,
+            enabled => hook.enabled,
+            executor_type => executor_type,
+            executor_command => executor_command,
+            cwd => hook.cwd,
+            timeout_secs => timeout_display,
+            env_vars => env_vars,
+            executions => execution_rows,
+            total => total,
+            page => 1,
+            total_pages => total_pages,
+            has_more => has_more,
+        },
+    )?;
+
+    Ok(Html(html))
+}
+
+async fn execution_list(
+    State(state): State<Arc<AppState>>,
+    Path(slug): Path<String>,
+    Query(params): Query<PaginationParams>,
+) -> Result<Html<String>, AppError> {
+    // Verify hook exists
+    let _hook = state
+        .config
+        .hooks
+        .iter()
+        .find(|h| h.slug == slug)
+        .ok_or(AppError::not_found("hook"))?;
+
+    let page = params.page.unwrap_or(1).max(1);
+    let offset = (page - 1) * EXECUTIONS_PER_PAGE;
+
+    let pool = state.db.pool();
+    let total = execution::count_by_hook(pool, &slug).await?;
+    let executions = execution::list_by_hook(pool, &slug, EXECUTIONS_PER_PAGE, offset).await?;
+
+    let total_pages = (total + EXECUTIONS_PER_PAGE - 1) / EXECUTIONS_PER_PAGE;
+    let has_more = page < total_pages;
+
+    let execution_rows = build_execution_rows(&executions);
+
+    let html = state.templates.render(
+        "partials/execution_list.html",
+        context! {
+            slug => slug,
+            executions => execution_rows,
+            total => total,
+            page => page,
+            total_pages => total_pages,
+            has_more => has_more,
+        },
+    )?;
+
+    Ok(Html(html))
+}
+
+fn build_execution_rows(executions: &[execution::Execution]) -> Vec<minijinja::Value> {
+    executions
+        .iter()
+        .map(|e| {
+            let duration = compute_duration(&e.started_at, &e.completed_at);
+            context! {
+                id => e.id,
+                triggered_at => e.triggered_at,
+                status => e.status.to_string(),
+                exit_code => e.exit_code,
+                duration => duration,
+            }
+        })
+        .collect()
+}
+
+/// Compute duration string from ISO8601 timestamps.
+/// Returns None if either timestamp is missing.
+fn compute_duration(started_at: &Option<String>, completed_at: &Option<String>) -> Option<String> {
+    let started = started_at.as_ref()?;
+    let completed = completed_at.as_ref()?;
+
+    let start = chrono::DateTime::parse_from_rfc3339(started).ok()?;
+    let end = chrono::DateTime::parse_from_rfc3339(completed).ok()?;
+    let dur = end.signed_duration_since(start);
+
+    let secs = dur.num_seconds();
+    if secs < 0 {
+        return None;
+    }
+
+    if secs < 60 {
+        let ms = dur.num_milliseconds() % 1000;
+        Some(format!("{secs}.{ms:03}s"))
+    } else if secs < 3600 {
+        Some(format!("{}m {}s", secs / 60, secs % 60))
+    } else {
+        Some(format!("{}h {}m", secs / 3600, (secs % 3600) / 60))
+    }
 }

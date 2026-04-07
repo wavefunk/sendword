@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+
+{% block title %}sendword - {{ name }}{% endblock %}
+
+{% block content %}
+<main class="max-w-4xl mx-auto px-4 py-8">
+  <div class="mb-6">
+    <a href="/" class="text-sm text-gray-500 hover:text-gray-700">&larr; Back to dashboard</a>
+  </div>
+
+  <div class="flex items-center justify-between mb-2">
+    <h1 class="text-2xl font-bold">{{ name }}</h1>
+    <span class="text-xs px-2 py-1 rounded {{ 'bg-green-100 text-green-800' if enabled else 'bg-gray-100 text-gray-500' }}">
+      {{ "enabled" if enabled else "disabled" }}
+    </span>
+  </div>
+
+  {% if description %}
+  <p class="text-gray-600 mb-4">{{ description }}</p>
+  {% endif %}
+
+  <p class="text-sm text-gray-400 font-mono mb-6">/hook/{{ slug }}</p>
+
+  {# --- Executor config summary --- #}
+  <div class="border rounded-lg p-4 mb-8">
+    <h2 class="text-lg font-semibold mb-3">Executor</h2>
+    <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
+      <dt class="text-gray-500">Type</dt>
+      <dd class="font-mono">{{ executor_type }}</dd>
+
+      <dt class="text-gray-500">Command</dt>
+      <dd class="font-mono bg-gray-50 px-2 py-1 rounded">{{ executor_command }}</dd>
+
+      {% if cwd %}
+      <dt class="text-gray-500">Working directory</dt>
+      <dd class="font-mono">{{ cwd }}</dd>
+      {% endif %}
+
+      <dt class="text-gray-500">Timeout</dt>
+      <dd>{{ timeout_secs }}s</dd>
+
+      {% if env_vars %}
+      <dt class="text-gray-500">Environment</dt>
+      <dd>
+        {% for var in env_vars %}
+        <span class="inline-block bg-gray-100 text-gray-700 text-xs font-mono px-1.5 py-0.5 rounded mr-1 mb-1">{{ var }}</span>
+        {% endfor %}
+      </dd>
+      {% endif %}
+    </dl>
+  </div>
+
+  {# --- Execution history --- #}
+  <div class="mb-8">
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="text-lg font-semibold">Execution History</h2>
+      <span class="text-sm text-gray-400">{{ total }} total</span>
+    </div>
+
+    <div id="execution-list"
+         hx-get="/hooks/{{ slug }}/executions?page=1"
+         hx-trigger="load"
+         hx-swap="innerHTML">
+      {# Initial content loaded via HTMX #}
+    </div>
+  </div>
+</main>
+{% endblock %}
