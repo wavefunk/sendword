@@ -4,7 +4,10 @@ use sendword::server::AppState;
 use sendword::templates::Templates;
 
 async fn spawn_test_server() -> String {
-    let config = AppConfig::default();
+    spawn_test_server_with_config(AppConfig::default()).await
+}
+
+async fn spawn_test_server_with_config(config: AppConfig) -> String {
     let db = Db::new_in_memory().await.expect("in-memory db");
     db.migrate().await.expect("migration");
     let templates = Templates::new(Templates::default_dir());
@@ -79,4 +82,104 @@ async fn stub_routes_return_not_implemented() {
         .await
         .unwrap();
     assert_eq!(resp.status(), 501);
+}
+
+/// Verifies that routes enforce their declared HTTP methods.
+/// A GET to a POST-only route (e.g. /hook/:slug) must return 405, not 501.
+/// This catches accidental method changes in route definitions that could
+/// allow unintended hook triggers.
+#[tokio::test]
+async fn wrong_http_method_returns_405() {
+    let url = spawn_test_server().await;
+    let client = reqwest::Client::new();
+
+    // GET to a POST-only route
+    let resp = client
+        .get(format!("{url}/hook/test-hook"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 405);
+
+    // POST to a GET-only route
+    let resp = client
+        .post(format!("{url}/hooks/test-hook"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 405);
+
+    // POST to the dashboard (GET-only)
+    let resp = client.post(format!("{url}/")).send().await.unwrap();
+    assert_eq!(resp.status(), 405);
+
+    // POST to healthz (GET-only)
+    let resp = client.post(format!("{url}/healthz")).send().await.unwrap();
+    assert_eq!(resp.status(), 405);
+}
+
+/// Verifies that the dashboard renders hooks from config.
+/// The default config has no hooks; this test configures hooks and verifies
+/// they appear in the rendered HTML, exercising the config-to-template pipeline.
+#[tokio::test]
+async fn dashboard_renders_configured_hooks() {
+    use sendword::config::{ExecutorConfig, HookConfig};
+    use std::collections::HashMap;
+
+    let config = AppConfig {
+        hooks: vec![
+            HookConfig {
+                name: "Deploy App".into(),
+                slug: "deploy-app".into(),
+                description: "Deploys the application".into(),
+                enabled: true,
+                executor: ExecutorConfig::Shell {
+                    command: "make deploy".into(),
+                },
+                env: HashMap::new(),
+                cwd: None,
+                timeout: None,
+                retries: None,
+                rate_limit: None,
+            },
+            HookConfig {
+                name: "Run Tests".into(),
+                slug: "run-tests".into(),
+                description: String::new(),
+                enabled: false,
+                executor: ExecutorConfig::Shell {
+                    command: "make test".into(),
+                },
+                env: HashMap::new(),
+                cwd: None,
+                timeout: None,
+                retries: None,
+                rate_limit: None,
+            },
+        ],
+        ..AppConfig::default()
+    };
+
+    let url = spawn_test_server_with_config(config).await;
+    let resp = reqwest::get(format!("{url}/")).await.unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+
+    // Both hook names should appear
+    assert!(body.contains("Deploy App"), "dashboard should show hook name");
+    assert!(body.contains("Run Tests"), "dashboard should show second hook name");
+
+    // Slugs should appear as URL paths
+    assert!(
+        body.contains("/hook/deploy-app"),
+        "dashboard should show hook URL path"
+    );
+    assert!(
+        body.contains("/hook/run-tests"),
+        "dashboard should show second hook URL path"
+    );
+
+    // Enabled/disabled status should be rendered
+    assert!(body.contains("enabled"), "dashboard should show enabled status");
+    assert!(body.contains("disabled"), "dashboard should show disabled status");
 }
