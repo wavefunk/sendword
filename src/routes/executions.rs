@@ -10,6 +10,7 @@ use serde::Serialize;
 use crate::auth::AuthUser;
 use crate::config::ExecutorConfig;
 use crate::error::AppError;
+use crate::interpolation::interpolate_command;
 use crate::masking::mask_secrets;
 use crate::models::execution;
 use crate::retry;
@@ -147,6 +148,15 @@ async fn replay_execution(
     let command = match &hook.executor {
         ExecutorConfig::Shell { command } => command.clone(),
     };
+
+    // Interpolate payload fields from the original request into the command template
+    let command =
+        if let Ok(payload_value) = serde_json::from_str::<serde_json::Value>(&original.request_payload) {
+            interpolate_command(&command, &payload_value).into_owned()
+        } else {
+            command
+        };
+
     let env = hook.env.clone();
     let cwd = hook.cwd.clone();
     let logs_dir = config.logs.dir.clone();

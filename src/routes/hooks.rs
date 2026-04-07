@@ -11,6 +11,7 @@ use axum::{Form, Json, Router};
 use serde::{Deserialize, Serialize};
 
 use crate::auth::AuthUser;
+use crate::interpolation::interpolate_command;
 use crate::payload::{FieldType, PayloadField, PayloadSchema};
 use crate::config::{BackoffStrategy, ExecutorConfig, HmacAlgorithm, HookAuthConfig};
 use crate::webhook_auth;
@@ -107,6 +108,14 @@ async fn trigger_hook(
 
     let command = match &hook.executor {
         ExecutorConfig::Shell { command } => command.clone(),
+    };
+
+    // Interpolate payload fields into command template
+    let command = if let Ok(payload_value) = serde_json::from_str::<serde_json::Value>(&payload_str)
+    {
+        interpolate_command(&command, &payload_value).into_owned()
+    } else {
+        command
     };
 
     let env = hook.env.clone();
