@@ -81,8 +81,9 @@ async fn stub_routes_return_not_implemented() {
     let resp = client.post(format!("{url}/hook/test-hook")).send().await.unwrap();
     assert_eq!(resp.status(), 404);
 
+    // hook_detail returns 404 for non-existent hooks
     let resp = client.get(format!("{url}/hooks/test-hook")).send().await.unwrap();
-    assert_eq!(resp.status(), 501);
+    assert_eq!(resp.status(), 404);
 
     let resp = client.get(format!("{url}/executions/some-id")).send().await.unwrap();
     assert_eq!(resp.status(), 501);
@@ -286,4 +287,221 @@ async fn dashboard_shows_no_executions_for_new_hook() {
 
     assert!(body.contains("Fresh Hook"));
     assert!(body.contains("No executions yet"));
+}
+
+// --- Hook detail page tests ---
+
+fn make_test_hook(name: &str, slug: &str, command: &str) -> sendword::config::HookConfig {
+    use sendword::config::{ExecutorConfig, HookConfig};
+    use std::collections::HashMap;
+
+    HookConfig {
+        name: name.into(),
+        slug: slug.into(),
+        description: "A test hook for integration tests".into(),
+        enabled: true,
+        executor: ExecutorConfig::Shell {
+            command: command.into(),
+        },
+        env: HashMap::from([("APP_ENV".into(), "test".into())]),
+        cwd: Some("/tmp".into()),
+        timeout: None,
+        retries: None,
+        rate_limit: None,
+    }
+}
+
+#[tokio::test]
+async fn hook_detail_returns_404_for_unknown_slug() {
+    let url = spawn_test_server().await;
+    let resp = reqwest::get(format!("{url}/hooks/nonexistent")).await.unwrap();
+    assert_eq!(resp.status(), 404);
+}
+
+#[tokio::test]
+async fn hook_detail_renders_hook_config() {
+    let config = AppConfig {
+        hooks: vec![make_test_hook("Deploy App", "deploy-app", "make deploy")],
+        ..AppConfig::default()
+    };
+
+    let url = spawn_test_server_with_config(config).await;
+    let resp = reqwest::get(format!("{url}/hooks/deploy-app")).await.unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+
+    // Hook name and slug
+    assert!(body.contains("Deploy App"), "should show hook name");
+    assert!(body.contains("/hook/deploy-app"), "should show trigger URL");
+
+    // Description
+    assert!(
+        body.contains("A test hook for integration tests"),
+        "should show description"
+    );
+
+    // Enabled status
+    assert!(body.contains("enabled"), "should show enabled status");
+
+    // Executor config
+    assert!(body.contains("shell"), "should show executor type");
+    assert!(body.contains("make deploy"), "should show command");
+    // MiniJinja HTML-escapes "/" to "&#x2f;", so check for the escaped form
+    assert!(
+        body.contains("&#x2f;tmp") || body.contains("/tmp"),
+        "should show working directory"
+    );
+    assert!(body.contains("APP_ENV"), "should show env var name");
+
+    // Timeout (should show the default 30s)
+    assert!(body.contains("30"), "should show timeout");
+
+    // Back to dashboard link
+    assert!(body.contains("Back to dashboard"), "should have back link");
+}
+
+#[tokio::test]
+async fn hook_detail_shows_disabled_hook() {
+    use sendword::config::{ExecutorConfig, HookConfig};
+    use std::collections::HashMap;
+
+    let config = AppConfig {
+        hooks: vec![HookConfig {
+            name: "Disabled Hook".into(),
+            slug: "disabled-hook".into(),
+            description: String::new(),
+            enabled: false,
+            executor: ExecutorConfig::Shell {
+                command: "echo nope".into(),
+            },
+            env: HashMap::new(),
+            cwd: None,
+            timeout: None,
+            retries: None,
+            rate_limit: None,
+        }],
+        ..AppConfig::default()
+    };
+
+    let url = spawn_test_server_with_config(config).await;
+    let resp = reqwest::get(format!("{url}/hooks/disabled-hook")).await.unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+
+    assert!(body.contains("disabled"), "should show disabled status");
+}
+
+#[tokio::test]
+async fn hook_detail_shows_execution_history() {
+    use sendword::models::execution::{self, NewExecution};
+    use sendword::models::ExecutionStatus;
+
+    let config = AppConfig {
+        hooks: vec![make_test_hook("Test Hook", "test-hook", "echo ok")],
+        ..AppConfig::default()
+    };
+
+    let state = test_state(config).await;
+
+    // Create executions with different statuses
+    let exec1 = execution::create(
+        state.db.pool(),
+        &NewExecution {
+            id: None,
+            hook_slug: "test-hook",
+            log_path: "data/logs/test1",
+            trigger_source: "127.0.0.1",
+            request_payload: "{}",
+            retry_of: None,
+        },
+    )
+    .await
+    .unwrap();
+    execution::mark_running(state.db.pool(), &exec1.id)
+        .await
+        .unwrap();
+    execution::mark_completed(state.db.pool(), &exec1.id, ExecutionStatus::Success, Some(0))
+        .await
+        .unwrap();
+
+    let exec2 = execution::create(
+        state.db.pool(),
+        &NewExecution {
+            id: None,
+            hook_slug: "test-hook",
+            log_path: "data/logs/test2",
+            trigger_source: "10.0.0.1",
+            request_payload: "{}",
+            retry_of: None,
+        },
+    )
+    .await
+    .unwrap();
+    execution::mark_running(state.db.pool(), &exec2.id)
+        .await
+        .unwrap();
+    execution::mark_completed(state.db.pool(), &exec2.id, ExecutionStatus::Failed, Some(1))
+        .await
+        .unwrap();
+
+    let url = spawn_server(state).await;
+
+    // Test the full page
+    let resp = reqwest::get(format!("{url}/hooks/test-hook")).await.unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+
+    assert!(body.contains("2 total"), "should show total count");
+    assert!(
+        body.contains("Execution History"),
+        "should have execution history section"
+    );
+
+    // Test the HTMX partial endpoint
+    let resp = reqwest::get(format!("{url}/hooks/test-hook/executions?page=1"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let partial = resp.text().await.unwrap();
+
+    // Both executions should appear in the partial
+    assert!(partial.contains("success"), "should show success status");
+    assert!(partial.contains("failed"), "should show failed status");
+
+    // Should link to execution detail
+    assert!(
+        partial.contains("/executions/"),
+        "should link to execution detail"
+    );
+}
+
+#[tokio::test]
+async fn hook_detail_execution_list_returns_404_for_unknown_hook() {
+    let url = spawn_test_server().await;
+    let resp = reqwest::get(format!("{url}/hooks/nonexistent/executions"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+}
+
+#[tokio::test]
+async fn hook_detail_no_executions_shows_empty_message() {
+    let config = AppConfig {
+        hooks: vec![make_test_hook("Empty Hook", "empty-hook", "echo hi")],
+        ..AppConfig::default()
+    };
+
+    let url = spawn_test_server_with_config(config).await;
+
+    // The HTMX partial for a hook with no executions
+    let resp = reqwest::get(format!("{url}/hooks/empty-hook/executions?page=1"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+
+    assert!(
+        body.contains("No executions yet"),
+        "should show empty state message"
+    );
 }
