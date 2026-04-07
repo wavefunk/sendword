@@ -12,6 +12,13 @@ path = "data/sendword.db"
 [logs]
 dir = "data/logs"
 
+[auth]
+session_lifetime = "24h"
+secure_cookie = false
+
+[scripts]
+dir = "data/scripts"
+
 [defaults]
 timeout = "30s"
 

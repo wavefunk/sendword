@@ -17,6 +17,9 @@ async fn main() -> eyre::Result<()> {
         "config loaded"
     );
 
+    tokio::fs::create_dir_all(&config.scripts.dir).await?;
+    tracing::info!(dir = %config.scripts.dir, "scripts directory ready");
+
     let db = sendword::db::Db::new(&config.database).await?;
     db.migrate().await?;
     tracing::info!("database ready");
