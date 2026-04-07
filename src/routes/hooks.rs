@@ -1861,4 +1861,131 @@ required = true
         assert!(location.contains("error="));
     }
 
+    #[tokio::test]
+    async fn trigger_empty_body_with_schema_returns_422() {
+        let toml = r#"[server]
+port = 8080
+
+[[hooks]]
+name = "Test"
+slug = "test"
+[hooks.executor]
+type = "shell"
+command = "echo ok"
+[[hooks.payload.fields]]
+name = "action"
+type = "string"
+required = true
+"#;
+        let (state, _dir) = test_state_with_config(toml).await;
+        let resp = app(state)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/hook/test")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["error"], "payload validation failed");
+        assert!(json["details"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("missing"));
+    }
+
+    #[tokio::test]
+    async fn trigger_multiple_errors_returns_all_in_422() {
+        let toml = r#"[server]
+port = 8080
+
+[[hooks]]
+name = "Test"
+slug = "test"
+[hooks.executor]
+type = "shell"
+command = "echo ok"
+[[hooks.payload.fields]]
+name = "action"
+type = "string"
+required = true
+[[hooks.payload.fields]]
+name = "count"
+type = "number"
+required = true
+"#;
+        let (state, _dir) = test_state_with_config(toml).await;
+        let resp = app(state)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/hook/test")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(r#"{"action": 42, "count": "not-a-number"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let details = json["details"].as_array().unwrap();
+        assert_eq!(details.len(), 2, "should accumulate both type-mismatch errors");
+    }
+
+    #[tokio::test]
+    async fn trigger_dot_notation_field_validation() {
+        let toml = r#"[server]
+port = 8080
+
+[[hooks]]
+name = "Test"
+slug = "test"
+[hooks.executor]
+type = "shell"
+command = "echo ok"
+[[hooks.payload.fields]]
+name = "repo.name"
+type = "string"
+required = true
+"#;
+        let (state, _dir) = test_state_with_config(toml).await;
+
+        // Valid nested payload
+        let resp = app(state.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/hook/test")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(r#"{"repo": {"name": "myapp"}}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // Missing nested field
+        let resp = app(state)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/hook/test")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(r#"{"repo": {}}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
 }
