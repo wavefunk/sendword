@@ -325,6 +325,7 @@ mod tests {
             timeout: None,
             retries,
             rate_limit: None,
+            payload: None,
         }
     }
 

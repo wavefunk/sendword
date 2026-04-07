@@ -7,6 +7,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use crate::masking::MaskingConfig;
+use crate::payload::PayloadSchema;
 
 // --- Error type ---
 
@@ -444,6 +445,7 @@ pub struct HookConfig {
     pub timeout: Option<Duration>,
     pub retries: Option<RetryConfig>,
     pub rate_limit: Option<RateLimitConfig>,
+    pub payload: Option<PayloadSchema>,
 }
 
 #[cfg(test)]
@@ -748,6 +750,7 @@ mod tests {
             timeout: None,
             retries: None,
             rate_limit: None,
+            payload: None,
         }
     }
 
@@ -1210,5 +1213,67 @@ mod tests {
         config.masking.env_vars = vec!["".into()];
         let err = config.validate().unwrap_err();
         assert!(err.to_string().contains("masking.env_vars[0] must be non-empty"));
+    }
+
+    #[test]
+    fn hook_with_payload_schema_loads() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "sendword.toml",
+                r#"
+                [server]
+                port = 8080
+
+                [[hooks]]
+                name = "Deploy"
+                slug = "deploy"
+                [hooks.executor]
+                type = "shell"
+                command = "echo deploy"
+                [[hooks.payload.fields]]
+                name = "action"
+                type = "string"
+                required = true
+                [[hooks.payload.fields]]
+                name = "tag"
+                type = "string"
+                required = false
+                "#,
+            )?;
+            let config = AppConfig::load_from("sendword.toml", "nonexistent.json")
+                .expect("should load");
+            let hook = &config.hooks[0];
+            let schema = hook.payload.as_ref().expect("payload schema should be present");
+            assert_eq!(schema.fields.len(), 2);
+            assert_eq!(schema.fields[0].name, "action");
+            assert!(schema.fields[0].required);
+            assert_eq!(schema.fields[1].name, "tag");
+            assert!(!schema.fields[1].required);
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn hook_without_payload_schema_loads_as_none() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "sendword.toml",
+                r#"
+                [server]
+                port = 8080
+
+                [[hooks]]
+                name = "Simple"
+                slug = "simple"
+                [hooks.executor]
+                type = "shell"
+                command = "echo hi"
+                "#,
+            )?;
+            let config = AppConfig::load_from("sendword.toml", "nonexistent.json")
+                .expect("should load");
+            assert!(config.hooks[0].payload.is_none());
+            Ok(())
+        });
     }
 }

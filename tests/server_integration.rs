@@ -196,6 +196,7 @@ async fn dashboard_renders_configured_hooks() {
                 timeout: None,
                 retries: None,
                 rate_limit: None,
+                payload: None,
             },
             HookConfig {
                 name: "Run Tests".into(),
@@ -211,6 +212,7 @@ async fn dashboard_renders_configured_hooks() {
                 timeout: None,
                 retries: None,
                 rate_limit: None,
+                payload: None,
             },
         ],
         ..AppConfig::default()
@@ -268,6 +270,7 @@ async fn dashboard_shows_last_execution_status() {
             timeout: None,
             retries: None,
             rate_limit: None,
+            payload: None,
         }],
         ..AppConfig::default()
     };
@@ -335,6 +338,7 @@ async fn dashboard_shows_no_executions_for_new_hook() {
             timeout: None,
             retries: None,
             rate_limit: None,
+            payload: None,
         }],
         ..AppConfig::default()
     };
@@ -375,6 +379,7 @@ fn make_test_hook(name: &str, slug: &str, command: &str) -> sendword::config::Ho
         timeout: None,
         retries: None,
         rate_limit: None,
+        payload: None,
     }
 }
 
@@ -470,6 +475,7 @@ async fn hook_detail_shows_disabled_hook() {
             timeout: None,
             retries: None,
             rate_limit: None,
+            payload: None,
         }],
         ..AppConfig::default()
     };
@@ -694,6 +700,7 @@ async fn replay_creates_new_execution_linked_to_original() {
             timeout: None,
             retries: None,
             rate_limit: None,
+            payload: None,
         }],
         ..AppConfig::default()
     };
@@ -774,6 +781,7 @@ async fn replay_spawns_executor_and_runs_command() {
             timeout: None,
             retries: None,
             rate_limit: None,
+            payload: None,
         }],
         ..AppConfig::default()
     };
@@ -1621,6 +1629,7 @@ fn shell_hook(slug: &str) -> HookConfig {
         timeout: None,
         retries: None,
         rate_limit: None,
+        payload: None,
     }
 }
 
