@@ -1,5 +1,7 @@
+use crate::config::DatabaseConfig;
 use crate::error::{DbError, DbResult};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
+use std::path::Path;
 use std::str::FromStr;
 
 #[derive(Clone, Debug)]
@@ -8,8 +10,19 @@ pub struct Db {
 }
 
 impl Db {
-    pub async fn new(database_url: &str) -> DbResult<Self> {
-        let options = SqliteConnectOptions::from_str(database_url)?
+    pub async fn new(config: &DatabaseConfig) -> DbResult<Self> {
+        // Ensure the parent directory exists
+        if let Some(parent) = Path::new(&config.path).parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        let url = if config.path.starts_with("sqlite:") {
+            config.path.clone()
+        } else {
+            format!("sqlite://{}", config.path)
+        };
+
+        let options = SqliteConnectOptions::from_str(&url)?
             .create_if_missing(true)
             .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
             .foreign_keys(true)

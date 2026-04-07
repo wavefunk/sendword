@@ -3,6 +3,9 @@ pub enum DbError {
     #[error("sqlx error: {0}")]
     Sqlx(#[from] sqlx::Error),
 
+    #[error("io error: {0}")]
+    Io(#[from] std::io::Error),
+
     #[error("migration error: {0}")]
     Migration(String),
 
