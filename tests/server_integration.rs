@@ -85,15 +85,17 @@ async fn stub_routes_return_not_implemented() {
     let resp = client.get(format!("{url}/hooks/test-hook")).send().await.unwrap();
     assert_eq!(resp.status(), 404);
 
+    // execution_detail returns 404 for non-existent executions
     let resp = client.get(format!("{url}/executions/some-id")).send().await.unwrap();
-    assert_eq!(resp.status(), 501);
+    assert_eq!(resp.status(), 404);
 
+    // replay returns 404 for non-existent executions
     let resp = client
         .post(format!("{url}/executions/some-id/replay"))
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), 501);
+    assert_eq!(resp.status(), 404);
 }
 
 /// Verifies that routes enforce their declared HTTP methods.
@@ -504,4 +506,210 @@ async fn hook_detail_no_executions_shows_empty_message() {
         body.contains("No executions yet"),
         "should show empty state message"
     );
+}
+
+// --- Replay handler tests ---
+
+#[tokio::test]
+async fn replay_returns_404_for_nonexistent_execution() {
+    let url = spawn_test_server().await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .post(format!("{url}/executions/nonexistent-id/replay"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+}
+
+#[tokio::test]
+async fn replay_returns_404_when_hook_no_longer_exists() {
+    use sendword::models::execution::{self, NewExecution};
+
+    // Create state with no hooks configured
+    let state = test_state(AppConfig::default()).await;
+
+    // Insert an execution for a hook slug that doesn't exist in config
+    let exec = execution::create(
+        state.db.pool(),
+        &NewExecution {
+            id: None,
+            hook_slug: "deleted-hook",
+            log_path: "data/logs/deleted",
+            trigger_source: "127.0.0.1",
+            request_payload: r#"{"key": "value"}"#,
+            retry_of: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let url = spawn_server(state).await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .post(format!("{url}/executions/{}/replay", exec.id))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+}
+
+#[tokio::test]
+async fn replay_creates_new_execution_linked_to_original() {
+    use sendword::config::{ExecutorConfig, HookConfig};
+    use sendword::models::execution::{self, NewExecution};
+    use sendword::models::ExecutionStatus;
+    use std::collections::HashMap;
+
+    let config = AppConfig {
+        hooks: vec![HookConfig {
+            name: "Echo Hook".into(),
+            slug: "echo-hook".into(),
+            description: String::new(),
+            enabled: true,
+            executor: ExecutorConfig::Shell {
+                command: "echo replayed".into(),
+            },
+            env: HashMap::new(),
+            cwd: None,
+            timeout: None,
+            retries: None,
+            rate_limit: None,
+        }],
+        ..AppConfig::default()
+    };
+
+    let state = test_state(config).await;
+    let pool = state.db.pool().clone();
+
+    // Create an original execution and mark it completed
+    let original = execution::create(
+        &pool,
+        &NewExecution {
+            id: None,
+            hook_slug: "echo-hook",
+            log_path: "data/logs/original",
+            trigger_source: "10.0.0.1",
+            request_payload: r#"{"action": "deploy"}"#,
+            retry_of: None,
+        },
+    )
+    .await
+    .unwrap();
+    execution::mark_running(&pool, &original.id).await.unwrap();
+    execution::mark_completed(&pool, &original.id, ExecutionStatus::Success, Some(0))
+        .await
+        .unwrap();
+
+    let url = spawn_server(state).await;
+    let client = reqwest::Client::new();
+
+    // Replay the execution
+    let resp = client
+        .post(format!("{url}/executions/{}/replay", original.id))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let new_id = body["execution_id"].as_str().expect("execution_id in response");
+    assert!(!new_id.is_empty(), "new execution_id should be non-empty");
+    assert_ne!(new_id, original.id, "replay should create a new execution");
+
+    // Verify the new execution in the DB
+    let replay_exec = execution::get_by_id(&pool, new_id).await.unwrap();
+    assert_eq!(replay_exec.hook_slug, "echo-hook");
+    assert_eq!(replay_exec.request_payload, r#"{"action": "deploy"}"#);
+    assert_eq!(replay_exec.trigger_source, "10.0.0.1");
+    assert_eq!(replay_exec.retry_of.as_deref(), Some(original.id.as_str()));
+}
+
+#[tokio::test]
+async fn replay_spawns_executor_and_runs_command() {
+    use sendword::config::{ExecutorConfig, HookConfig};
+    use sendword::models::execution::{self, NewExecution};
+    use sendword::models::ExecutionStatus;
+    use std::collections::HashMap;
+
+    let tmp = tempfile::TempDir::new().expect("temp dir");
+    let logs_dir = tmp.path().to_str().expect("utf-8 path");
+
+    let config = AppConfig {
+        logs: sendword::config::LogsConfig {
+            dir: logs_dir.into(),
+        },
+        hooks: vec![HookConfig {
+            name: "Echo Hook".into(),
+            slug: "echo-hook".into(),
+            description: String::new(),
+            enabled: true,
+            executor: ExecutorConfig::Shell {
+                command: "echo replayed-output".into(),
+            },
+            env: HashMap::new(),
+            cwd: None,
+            timeout: None,
+            retries: None,
+            rate_limit: None,
+        }],
+        ..AppConfig::default()
+    };
+
+    let state = test_state(config).await;
+    let pool = state.db.pool().clone();
+
+    // Create the original execution
+    let original = execution::create(
+        &pool,
+        &NewExecution {
+            id: None,
+            hook_slug: "echo-hook",
+            log_path: &format!("{logs_dir}/original"),
+            trigger_source: "127.0.0.1",
+            request_payload: "{}",
+            retry_of: None,
+        },
+    )
+    .await
+    .unwrap();
+    execution::mark_running(&pool, &original.id).await.unwrap();
+    execution::mark_completed(&pool, &original.id, ExecutionStatus::Failed, Some(1))
+        .await
+        .unwrap();
+
+    let url = spawn_server(state).await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .post(format!("{url}/executions/{}/replay", original.id))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let new_id = body["execution_id"].as_str().expect("execution_id");
+
+    // Wait for the spawned executor to complete
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let exec = execution::get_by_id(&pool, new_id).await.unwrap();
+        if exec.status.is_terminal() {
+            assert_eq!(exec.status, ExecutionStatus::Success);
+            assert_eq!(exec.exit_code, Some(0));
+            break;
+        }
+        if std::time::Instant::now() > deadline {
+            panic!("replay execution did not complete within 5 seconds");
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+
+    // Verify stdout log was written
+    let stdout_path = std::path::Path::new(logs_dir).join(new_id).join("stdout.log");
+    let stdout = tokio::fs::read_to_string(&stdout_path).await.unwrap();
+    assert_eq!(stdout.trim(), "replayed-output");
 }
