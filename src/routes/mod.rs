@@ -3,6 +3,7 @@ mod dashboard;
 mod executions;
 mod health;
 mod hooks;
+mod scripts;
 
 use std::sync::Arc;
 
@@ -17,4 +18,5 @@ pub fn router() -> Router<Arc<AppState>> {
         .merge(dashboard::router())
         .merge(hooks::router())
         .merge(executions::router())
+        .merge(scripts::router())
 }
