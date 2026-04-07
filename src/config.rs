@@ -65,6 +65,14 @@ fn default_true() -> bool {
     true
 }
 
+fn default_session_lifetime() -> Duration {
+    Duration::from_secs(24 * 60 * 60)
+}
+
+fn default_scripts_dir() -> String {
+    "data/scripts".into()
+}
+
 // --- Config types ---
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -75,6 +83,10 @@ pub struct AppConfig {
     pub database: DatabaseConfig,
     #[serde(default)]
     pub logs: LogsConfig,
+    #[serde(default)]
+    pub auth: AuthConfig,
+    #[serde(default)]
+    pub scripts: ScriptsConfig,
     #[serde(default)]
     pub defaults: DefaultsConfig,
     #[serde(default)]
@@ -106,6 +118,14 @@ impl AppConfig {
 
         if self.defaults.rate_limit.max_per_minute == 0 {
             errors.push("defaults.rate_limit.max_per_minute must be greater than 0".into());
+        }
+
+        if self.auth.session_lifetime == Duration::ZERO {
+            errors.push("auth.session_lifetime must be greater than 0".into());
+        }
+
+        if self.scripts.dir.is_empty() {
+            errors.push("scripts.dir must be non-empty".into());
         }
 
         if self.defaults.timeout == Duration::ZERO {
@@ -245,6 +265,37 @@ impl Default for LogsConfig {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct AuthConfig {
+    #[serde(default = "default_session_lifetime", with = "humantime_serde")]
+    pub session_lifetime: Duration,
+    #[serde(default)]
+    pub secure_cookie: bool,
+}
+
+impl Default for AuthConfig {
+    fn default() -> Self {
+        Self {
+            session_lifetime: default_session_lifetime(),
+            secure_cookie: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ScriptsConfig {
+    #[serde(default = "default_scripts_dir")]
+    pub dir: String,
+}
+
+impl Default for ScriptsConfig {
+    fn default() -> Self {
+        Self {
+            dir: default_scripts_dir(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct RateLimitConfig {
     pub max_per_minute: u32,
 }
@@ -360,6 +411,9 @@ mod tests {
             assert_eq!(config.defaults.retries.backoff, BackoffStrategy::Exponential);
             assert_eq!(config.defaults.retries.initial_delay, Duration::from_secs(1));
             assert_eq!(config.defaults.retries.max_delay, Duration::from_secs(60));
+            assert_eq!(config.auth.session_lifetime, Duration::from_secs(24 * 60 * 60));
+            assert!(!config.auth.secure_cookie);
+            assert_eq!(config.scripts.dir, "data/scripts");
             Ok(())
         });
     }
@@ -464,6 +518,29 @@ mod tests {
             let rl = hook.rate_limit.as_ref().expect("rate_limit should be Some");
             assert_eq!(rl.max_per_minute, 10);
 
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn auth_and_scripts_config_from_toml() {
+        figment::Jail::expect_with(|_jail| {
+            let toml = r#"
+                [auth]
+                session_lifetime = "7d"
+                secure_cookie = true
+
+                [scripts]
+                dir = "/opt/sendword/scripts"
+            "#;
+
+            let config: AppConfig = Figment::new()
+                .merge(Data::<Toml>::string(toml))
+                .extract()?;
+
+            assert_eq!(config.auth.session_lifetime, Duration::from_secs(7 * 24 * 60 * 60));
+            assert!(config.auth.secure_cookie);
+            assert_eq!(config.scripts.dir, "/opt/sendword/scripts");
             Ok(())
         });
     }
@@ -745,6 +822,22 @@ mod tests {
             "expected at least 3 errors, got {}:\n{msg}",
             error_lines.len()
         );
+    }
+
+    #[test]
+    fn validation_catches_zero_session_lifetime() {
+        let mut config = AppConfig::default();
+        config.auth.session_lifetime = Duration::ZERO;
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("session_lifetime must be greater than 0"));
+    }
+
+    #[test]
+    fn validation_catches_empty_scripts_dir() {
+        let mut config = AppConfig::default();
+        config.scripts.dir = String::new();
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("scripts.dir must be non-empty"));
     }
 
     #[test]
