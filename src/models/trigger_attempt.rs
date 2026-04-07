@@ -128,3 +128,266 @@ pub async fn list_recent(pool: &SqlitePool, limit: i64) -> DbResult<Vec<TriggerA
     .await?;
     Ok(rows)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::Db;
+
+    async fn test_pool() -> SqlitePool {
+        let db = Db::new_in_memory().await.expect("in-memory db");
+        db.migrate().await.expect("migration");
+        db.pool().clone()
+    }
+
+    fn make_attempt(status: TriggerAttemptStatus) -> NewTriggerAttempt<'static> {
+        NewTriggerAttempt {
+            hook_slug: "deploy-app",
+            source_ip: "127.0.0.1",
+            status,
+            reason: "test reason",
+            execution_id: None,
+        }
+    }
+
+    // --- Display round-trip: verify each variant produces the exact DB-safe string ---
+
+    #[test]
+    fn status_display_matches_db_check_constraint() {
+        let cases = [
+            (TriggerAttemptStatus::Fired, "fired"),
+            (TriggerAttemptStatus::AuthFailed, "auth_failed"),
+            (TriggerAttemptStatus::ValidationFailed, "validation_failed"),
+            (TriggerAttemptStatus::Filtered, "filtered"),
+            (TriggerAttemptStatus::RateLimited, "rate_limited"),
+            (TriggerAttemptStatus::ScheduleSkipped, "schedule_skipped"),
+            (TriggerAttemptStatus::CooldownSkipped, "cooldown_skipped"),
+            (TriggerAttemptStatus::ConcurrencyRejected, "concurrency_rejected"),
+            (TriggerAttemptStatus::PendingApproval, "pending_approval"),
+        ];
+        for (variant, expected) in cases {
+            assert_eq!(variant.to_string(), expected);
+        }
+    }
+
+    // --- insert + get_by_id round-trip for every status variant ---
+
+    #[tokio::test]
+    async fn insert_and_get_by_id_round_trip_all_statuses() {
+        let pool = test_pool().await;
+
+        let all_statuses = [
+            TriggerAttemptStatus::Fired,
+            TriggerAttemptStatus::AuthFailed,
+            TriggerAttemptStatus::ValidationFailed,
+            TriggerAttemptStatus::Filtered,
+            TriggerAttemptStatus::RateLimited,
+            TriggerAttemptStatus::ScheduleSkipped,
+            TriggerAttemptStatus::CooldownSkipped,
+            TriggerAttemptStatus::ConcurrencyRejected,
+            TriggerAttemptStatus::PendingApproval,
+        ];
+
+        for status in all_statuses {
+            let expected_status = status.clone();
+            let attempt = insert(&pool, &make_attempt(status)).await.unwrap();
+
+            assert_eq!(attempt.status, expected_status);
+            assert_eq!(attempt.hook_slug, "deploy-app");
+            assert_eq!(attempt.source_ip, "127.0.0.1");
+            assert_eq!(attempt.reason, "test reason");
+            assert!(attempt.execution_id.is_none());
+            assert!(!attempt.id.is_empty());
+            assert!(!attempt.attempted_at.is_empty());
+
+            // Fetch back from DB and verify the status survived the round-trip
+            let fetched = get_by_id(&pool, &attempt.id).await.unwrap();
+            assert_eq!(fetched.id, attempt.id);
+            assert_eq!(fetched.status, expected_status);
+        }
+    }
+
+    // --- get_by_id error case ---
+
+    #[tokio::test]
+    async fn get_by_id_returns_not_found_for_missing_id() {
+        let pool = test_pool().await;
+        let result = get_by_id(&pool, "nonexistent").await;
+        assert!(matches!(result, Err(DbError::NotFound(_))));
+    }
+
+    // --- Nullable execution_id ---
+
+    #[tokio::test]
+    async fn insert_with_execution_id_persists_it() {
+        let pool = test_pool().await;
+
+        // Create an execution first so the FK is satisfied
+        use crate::models::execution::{self, NewExecution};
+        let exec = execution::create(
+            &pool,
+            &NewExecution {
+                id: None,
+                hook_slug: "deploy-app",
+                log_path: "data/logs/test",
+                trigger_source: "127.0.0.1",
+                request_payload: "{}",
+                retry_of: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let attempt = insert(
+            &pool,
+            &NewTriggerAttempt {
+                hook_slug: "deploy-app",
+                source_ip: "10.0.0.1",
+                status: TriggerAttemptStatus::Fired,
+                reason: "matched",
+                execution_id: Some(&exec.id),
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(attempt.execution_id.as_deref(), Some(exec.id.as_str()));
+
+        let fetched = get_by_id(&pool, &attempt.id).await.unwrap();
+        assert_eq!(fetched.execution_id.as_deref(), Some(exec.id.as_str()));
+    }
+
+    #[tokio::test]
+    async fn insert_without_execution_id_stores_null() {
+        let pool = test_pool().await;
+        let attempt = insert(&pool, &make_attempt(TriggerAttemptStatus::AuthFailed))
+            .await
+            .unwrap();
+        assert!(attempt.execution_id.is_none());
+    }
+
+    // --- list_by_hook: ordering and pagination ---
+
+    #[tokio::test]
+    async fn list_by_hook_returns_descending_order() {
+        let pool = test_pool().await;
+
+        for _ in 0..3 {
+            insert(&pool, &make_attempt(TriggerAttemptStatus::Fired))
+                .await
+                .unwrap();
+        }
+
+        let list = list_by_hook(&pool, "deploy-app", 10, 0).await.unwrap();
+        assert_eq!(list.len(), 3);
+
+        for pair in list.windows(2) {
+            assert!(pair[0].attempted_at >= pair[1].attempted_at);
+        }
+    }
+
+    #[tokio::test]
+    async fn list_by_hook_respects_limit_and_offset() {
+        let pool = test_pool().await;
+
+        for _ in 0..5 {
+            insert(&pool, &make_attempt(TriggerAttemptStatus::Filtered))
+                .await
+                .unwrap();
+        }
+
+        let page1 = list_by_hook(&pool, "deploy-app", 2, 0).await.unwrap();
+        assert_eq!(page1.len(), 2);
+
+        let page2 = list_by_hook(&pool, "deploy-app", 2, 2).await.unwrap();
+        assert_eq!(page2.len(), 2);
+
+        let page3 = list_by_hook(&pool, "deploy-app", 2, 4).await.unwrap();
+        assert_eq!(page3.len(), 1);
+
+        // Pages should not overlap
+        assert_ne!(page1[0].id, page2[0].id);
+        assert_ne!(page2[0].id, page3[0].id);
+    }
+
+    #[tokio::test]
+    async fn list_by_hook_filters_by_slug() {
+        let pool = test_pool().await;
+
+        insert(&pool, &make_attempt(TriggerAttemptStatus::Fired))
+            .await
+            .unwrap();
+        insert(
+            &pool,
+            &NewTriggerAttempt {
+                hook_slug: "other-hook",
+                source_ip: "10.0.0.1",
+                status: TriggerAttemptStatus::RateLimited,
+                reason: "too fast",
+                execution_id: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let list = list_by_hook(&pool, "deploy-app", 10, 0).await.unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].hook_slug, "deploy-app");
+    }
+
+    // --- list_recent: ordering, limit, cross-hook ---
+
+    #[tokio::test]
+    async fn list_recent_returns_across_all_hooks() {
+        let pool = test_pool().await;
+
+        insert(&pool, &make_attempt(TriggerAttemptStatus::Fired))
+            .await
+            .unwrap();
+        insert(
+            &pool,
+            &NewTriggerAttempt {
+                hook_slug: "other-hook",
+                source_ip: "10.0.0.1",
+                status: TriggerAttemptStatus::AuthFailed,
+                reason: "bad token",
+                execution_id: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let list = list_recent(&pool, 10).await.unwrap();
+        assert_eq!(list.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn list_recent_respects_limit() {
+        let pool = test_pool().await;
+
+        for _ in 0..5 {
+            insert(&pool, &make_attempt(TriggerAttemptStatus::Fired))
+                .await
+                .unwrap();
+        }
+
+        let list = list_recent(&pool, 3).await.unwrap();
+        assert_eq!(list.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn list_recent_returns_descending_order() {
+        let pool = test_pool().await;
+
+        for _ in 0..3 {
+            insert(&pool, &make_attempt(TriggerAttemptStatus::Fired))
+                .await
+                .unwrap();
+        }
+
+        let list = list_recent(&pool, 10).await.unwrap();
+        for pair in list.windows(2) {
+            assert!(pair[0].attempted_at >= pair[1].attempted_at);
+        }
+    }
+}
