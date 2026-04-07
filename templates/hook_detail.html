@@ -70,6 +70,57 @@
     </dl>
   </div>
 
+  {# --- Authentication --- #}
+  {% if auth_mode is defined %}
+  <div class="border rounded-lg p-4 mb-8">
+    <h2 class="text-lg font-semibold mb-3">Authentication</h2>
+    <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
+      <dt class="text-gray-500">Mode</dt>
+      <dd>
+        <span class="inline-block text-xs font-medium px-2 py-0.5 rounded
+          {%- if auth_mode == 'none' %} bg-gray-100 text-gray-600
+          {%- elif auth_mode == 'bearer' %} bg-blue-100 text-blue-800
+          {%- elif auth_mode == 'hmac' %} bg-purple-100 text-purple-800
+          {%- else %} bg-gray-100 text-gray-600
+          {%- endif %}">
+          {{ auth_mode }}
+        </span>
+      </dd>
+    </dl>
+  </div>
+  {% endif %}
+
+  {# --- Payload Schema --- #}
+  {% if payload_fields is defined and payload_fields %}
+  <div class="border rounded-lg p-4 mb-8">
+    <h2 class="text-lg font-semibold mb-3">Payload Schema</h2>
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="text-left text-gray-500 border-b">
+          <th class="pb-2 font-medium">Field</th>
+          <th class="pb-2 font-medium">Type</th>
+          <th class="pb-2 font-medium">Required</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for field in payload_fields %}
+        <tr class="border-b last:border-0">
+          <td class="py-1.5 font-mono">{{ field.name }}</td>
+          <td class="py-1.5 font-mono text-gray-600">{{ field.type }}</td>
+          <td class="py-1.5">
+            {% if field.required %}
+            <span class="text-xs bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded">required</span>
+            {% else %}
+            <span class="text-xs text-gray-400">optional</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
   {# --- Execution history --- #}
   <div class="mb-8">
     <div class="flex items-center justify-between mb-3">
