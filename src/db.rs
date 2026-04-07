@@ -37,6 +37,20 @@ impl Db {
         Ok(Self { pool })
     }
 
+    pub async fn new_in_memory() -> DbResult<Self> {
+        let options = SqliteConnectOptions::from_str("sqlite::memory:")?
+            .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+            .foreign_keys(true)
+            .synchronous(sqlx::sqlite::SqliteSynchronous::Normal);
+
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await?;
+
+        Ok(Self { pool })
+    }
+
     pub fn pool(&self) -> &SqlitePool {
         &self.pool
     }
