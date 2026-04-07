@@ -6,6 +6,8 @@ use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
+use crate::masking::MaskingConfig;
+
 // --- Error type ---
 
 #[derive(Debug, thiserror::Error)]
@@ -90,6 +92,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub defaults: DefaultsConfig,
     #[serde(default)]
+    pub masking: MaskingConfig,
+    #[serde(default)]
     pub hooks: Vec<HookConfig>,
 }
 
@@ -104,7 +108,10 @@ impl AppConfig {
             .merge(Json::file(json_path))
             .merge(Env::prefixed("SENDWORD_").split("__"));
 
-        let config: AppConfig = figment.extract()?;
+        let mut config: AppConfig = figment.extract()?;
+        if let Err(errors) = config.masking.compile() {
+            return Err(ConfigError::Validation(errors.join("\n")));
+        }
         config.validate()?;
         Ok(config)
     }
@@ -136,6 +143,12 @@ impl AppConfig {
             errors.push(
                 "defaults.retries.initial_delay must not exceed defaults.retries.max_delay".into(),
             );
+        }
+
+        for (i, name) in self.masking.env_vars.iter().enumerate() {
+            if name.is_empty() {
+                errors.push(format!("masking.env_vars[{i}] must be non-empty"));
+            }
         }
 
         let mut seen_slugs = HashSet::with_capacity(self.hooks.len());
@@ -878,5 +891,91 @@ mod tests {
         // Slugs up to 64 chars are valid; this is the upper boundary
         let slug_64 = "a".repeat(64);
         assert!(is_valid_slug(&slug_64));
+    }
+
+    // --- Masking config tests ---
+
+    #[test]
+    fn masking_config_deserializes_and_compiles() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "test.toml",
+                r#"
+                [masking]
+                env_vars = ["SECRET_KEY"]
+                patterns = ["Bearer [A-Za-z0-9]+"]
+            "#,
+            )?;
+
+            let config = AppConfig::load_from("test.toml", "nonexistent.json")
+                .map_err(|e| e.to_string())?;
+            assert_eq!(config.masking.env_vars, vec!["SECRET_KEY"]);
+            assert_eq!(config.masking.patterns.len(), 1);
+            assert_eq!(config.masking.compiled_patterns.len(), 1);
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn masking_config_invalid_regex_fails_load() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "test.toml",
+                r#"
+                [masking]
+                patterns = ["[invalid("]
+            "#,
+            )?;
+
+            let result = AppConfig::load_from("test.toml", "nonexistent.json");
+            assert!(result.is_err());
+            let msg = result.unwrap_err().to_string();
+            assert!(
+                msg.contains("masking.patterns[0]"),
+                "error should reference the pattern index: {msg}"
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn masking_config_defaults_to_empty() {
+        figment::Jail::expect_with(|_jail| {
+            let config: AppConfig = Figment::new()
+                .merge(Toml::file("nonexistent.toml"))
+                .merge(Json::file("nonexistent.json"))
+                .extract()?;
+
+            assert!(config.masking.env_vars.is_empty());
+            assert!(config.masking.patterns.is_empty());
+            assert!(config.masking.compiled_patterns.is_empty());
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn masking_config_empty_section_defaults_to_empty() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "test.toml",
+                r#"
+                [masking]
+            "#,
+            )?;
+
+            let config = AppConfig::load_from("test.toml", "nonexistent.json")
+                .map_err(|e| e.to_string())?;
+            assert!(config.masking.env_vars.is_empty());
+            assert!(config.masking.patterns.is_empty());
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn masking_config_empty_env_var_name_fails_validation() {
+        let mut config = AppConfig::default();
+        config.masking.env_vars = vec!["".into()];
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("masking.env_vars[0] must be non-empty"));
     }
 }
