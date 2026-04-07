@@ -33,9 +33,32 @@ async fn spawn_test_server() -> String {
     spawn_server(state).await
 }
 
-async fn spawn_test_server_with_config(config: AppConfig) -> String {
+async fn create_test_session(state: &Arc<AppState>) -> String {
+    use sendword::models::{session, user};
+    use std::time::Duration;
+
+    let pool = state.db.pool();
+    let u = user::create(pool, "testadmin", "testpass123")
+        .await
+        .expect("create test user");
+    let sess = session::create(pool, &u.id, Duration::from_secs(3600))
+        .await
+        .expect("create test session");
+    sess.id
+}
+
+async fn spawn_authed_server(config: AppConfig) -> (String, String) {
     let state = test_state(config).await;
-    spawn_server(state).await
+    let token = create_test_session(&state).await;
+    let url = spawn_server(state).await;
+    (url, token)
+}
+
+fn client_no_redirect() -> reqwest::Client {
+    reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap()
 }
 
 #[tokio::test]
@@ -57,8 +80,14 @@ async fn healthz_returns_json_content_type() {
 
 #[tokio::test]
 async fn dashboard_returns_html() {
-    let url = spawn_test_server().await;
-    let resp = reqwest::get(format!("{url}/")).await.unwrap();
+    let (url, token) = spawn_authed_server(AppConfig::default()).await;
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("{url}/"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(resp.status(), 200);
     let body = resp.text().await.unwrap();
     assert!(body.contains("sendword"));
@@ -74,24 +103,35 @@ async fn nonexistent_route_returns_404() {
 
 #[tokio::test]
 async fn stub_routes_return_not_implemented() {
-    let url = spawn_test_server().await;
+    let (url, token) = spawn_authed_server(AppConfig::default()).await;
     let client = reqwest::Client::new();
 
-    // trigger_hook returns 404 for non-existent/disabled hooks
+    // trigger_hook returns 404 for non-existent/disabled hooks (unprotected)
     let resp = client.post(format!("{url}/hook/test-hook")).send().await.unwrap();
     assert_eq!(resp.status(), 404);
 
-    // hook_detail returns 404 for non-existent hooks
-    let resp = client.get(format!("{url}/hooks/test-hook")).send().await.unwrap();
+    // hook_detail returns 404 for non-existent hooks (protected)
+    let resp = client
+        .get(format!("{url}/hooks/test-hook"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(resp.status(), 404);
 
-    // execution_detail returns 404 for non-existent executions
-    let resp = client.get(format!("{url}/executions/some-id")).send().await.unwrap();
+    // execution_detail returns 404 for non-existent executions (protected)
+    let resp = client
+        .get(format!("{url}/executions/some-id"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(resp.status(), 404);
 
-    // replay returns 404 for non-existent executions
+    // replay returns 404 for non-existent executions (protected)
     let resp = client
         .post(format!("{url}/executions/some-id/replay"))
+        .header("Cookie", format!("sendword_session={token}"))
         .send()
         .await
         .unwrap();
@@ -174,8 +214,14 @@ async fn dashboard_renders_configured_hooks() {
         ..AppConfig::default()
     };
 
-    let url = spawn_test_server_with_config(config).await;
-    let resp = reqwest::get(format!("{url}/")).await.unwrap();
+    let (url, token) = spawn_authed_server(config).await;
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("{url}/"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(resp.status(), 200);
     let body = resp.text().await.unwrap();
 
@@ -224,6 +270,7 @@ async fn dashboard_shows_last_execution_status() {
     };
 
     let state = test_state(config).await;
+    let token = create_test_session(&state).await;
 
     // Create an execution and mark it as success
     let exec = execution::create(
@@ -247,7 +294,13 @@ async fn dashboard_shows_last_execution_status() {
         .unwrap();
 
     let url = spawn_server(state).await;
-    let resp = reqwest::get(format!("{url}/")).await.unwrap();
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("{url}/"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(resp.status(), 200);
     let body = resp.text().await.unwrap();
 
@@ -283,8 +336,15 @@ async fn dashboard_shows_no_executions_for_new_hook() {
     };
 
     let state = test_state(config).await;
+    let token = create_test_session(&state).await;
     let url = spawn_server(state).await;
-    let resp = reqwest::get(format!("{url}/")).await.unwrap();
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("{url}/"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .send()
+        .await
+        .unwrap();
     let body = resp.text().await.unwrap();
 
     assert!(body.contains("Fresh Hook"));
@@ -315,8 +375,14 @@ fn make_test_hook(name: &str, slug: &str, command: &str) -> sendword::config::Ho
 
 #[tokio::test]
 async fn hook_detail_returns_404_for_unknown_slug() {
-    let url = spawn_test_server().await;
-    let resp = reqwest::get(format!("{url}/hooks/nonexistent")).await.unwrap();
+    let (url, token) = spawn_authed_server(AppConfig::default()).await;
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("{url}/hooks/nonexistent"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(resp.status(), 404);
 }
 
@@ -327,8 +393,14 @@ async fn hook_detail_renders_hook_config() {
         ..AppConfig::default()
     };
 
-    let url = spawn_test_server_with_config(config).await;
-    let resp = reqwest::get(format!("{url}/hooks/deploy-app")).await.unwrap();
+    let (url, token) = spawn_authed_server(config).await;
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("{url}/hooks/deploy-app"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(resp.status(), 200);
     let body = resp.text().await.unwrap();
 
@@ -385,8 +457,14 @@ async fn hook_detail_shows_disabled_hook() {
         ..AppConfig::default()
     };
 
-    let url = spawn_test_server_with_config(config).await;
-    let resp = reqwest::get(format!("{url}/hooks/disabled-hook")).await.unwrap();
+    let (url, token) = spawn_authed_server(config).await;
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("{url}/hooks/disabled-hook"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(resp.status(), 200);
     let body = resp.text().await.unwrap();
 
@@ -404,6 +482,7 @@ async fn hook_detail_shows_execution_history() {
     };
 
     let state = test_state(config).await;
+    let token = create_test_session(&state).await;
 
     // Create executions with different statuses
     let exec1 = execution::create(
@@ -447,9 +526,15 @@ async fn hook_detail_shows_execution_history() {
         .unwrap();
 
     let url = spawn_server(state).await;
+    let client = reqwest::Client::new();
 
     // Test the full page
-    let resp = reqwest::get(format!("{url}/hooks/test-hook")).await.unwrap();
+    let resp = client
+        .get(format!("{url}/hooks/test-hook"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(resp.status(), 200);
     let body = resp.text().await.unwrap();
 
@@ -460,7 +545,10 @@ async fn hook_detail_shows_execution_history() {
     );
 
     // Test the HTMX partial endpoint
-    let resp = reqwest::get(format!("{url}/hooks/test-hook/executions?page=1"))
+    let resp = client
+        .get(format!("{url}/hooks/test-hook/executions?page=1"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), 200);
@@ -479,8 +567,12 @@ async fn hook_detail_shows_execution_history() {
 
 #[tokio::test]
 async fn hook_detail_execution_list_returns_404_for_unknown_hook() {
-    let url = spawn_test_server().await;
-    let resp = reqwest::get(format!("{url}/hooks/nonexistent/executions"))
+    let (url, token) = spawn_authed_server(AppConfig::default()).await;
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("{url}/hooks/nonexistent/executions"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), 404);
@@ -493,10 +585,14 @@ async fn hook_detail_no_executions_shows_empty_message() {
         ..AppConfig::default()
     };
 
-    let url = spawn_test_server_with_config(config).await;
+    let (url, token) = spawn_authed_server(config).await;
+    let client = reqwest::Client::new();
 
     // The HTMX partial for a hook with no executions
-    let resp = reqwest::get(format!("{url}/hooks/empty-hook/executions?page=1"))
+    let resp = client
+        .get(format!("{url}/hooks/empty-hook/executions?page=1"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), 200);
@@ -512,11 +608,12 @@ async fn hook_detail_no_executions_shows_empty_message() {
 
 #[tokio::test]
 async fn replay_returns_404_for_nonexistent_execution() {
-    let url = spawn_test_server().await;
+    let (url, token) = spawn_authed_server(AppConfig::default()).await;
     let client = reqwest::Client::new();
 
     let resp = client
         .post(format!("{url}/executions/nonexistent-id/replay"))
+        .header("Cookie", format!("sendword_session={token}"))
         .send()
         .await
         .unwrap();
@@ -529,6 +626,7 @@ async fn replay_returns_404_when_hook_no_longer_exists() {
 
     // Create state with no hooks configured
     let state = test_state(AppConfig::default()).await;
+    let token = create_test_session(&state).await;
 
     // Insert an execution for a hook slug that doesn't exist in config
     let exec = execution::create(
@@ -550,6 +648,7 @@ async fn replay_returns_404_when_hook_no_longer_exists() {
 
     let resp = client
         .post(format!("{url}/executions/{}/replay", exec.id))
+        .header("Cookie", format!("sendword_session={token}"))
         .send()
         .await
         .unwrap();
@@ -582,6 +681,7 @@ async fn replay_creates_new_execution_linked_to_original() {
     };
 
     let state = test_state(config).await;
+    let token = create_test_session(&state).await;
     let pool = state.db.pool().clone();
 
     // Create an original execution and mark it completed
@@ -609,6 +709,7 @@ async fn replay_creates_new_execution_linked_to_original() {
     // Replay the execution
     let resp = client
         .post(format!("{url}/executions/{}/replay", original.id))
+        .header("Cookie", format!("sendword_session={token}"))
         .send()
         .await
         .unwrap();
@@ -659,6 +760,7 @@ async fn replay_spawns_executor_and_runs_command() {
     };
 
     let state = test_state(config).await;
+    let token = create_test_session(&state).await;
     let pool = state.db.pool().clone();
 
     // Create the original execution
@@ -685,6 +787,7 @@ async fn replay_spawns_executor_and_runs_command() {
 
     let resp = client
         .post(format!("{url}/executions/{}/replay", original.id))
+        .header("Cookie", format!("sendword_session={token}"))
         .send()
         .await
         .unwrap();
@@ -718,8 +821,12 @@ async fn replay_spawns_executor_and_runs_command() {
 
 #[tokio::test]
 async fn execution_detail_returns_404_for_unknown_id() {
-    let url = spawn_test_server().await;
-    let resp = reqwest::get(format!("{url}/executions/nonexistent"))
+    let (url, token) = spawn_authed_server(AppConfig::default()).await;
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("{url}/executions/nonexistent"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), 404);
@@ -736,6 +843,7 @@ async fn execution_detail_renders_metadata() {
     };
 
     let state = test_state(config).await;
+    let token = create_test_session(&state).await;
 
     let exec = execution::create(
         state.db.pool(),
@@ -759,8 +867,12 @@ async fn execution_detail_renders_metadata() {
 
     let exec_id = exec.id.clone();
     let url = spawn_server(state).await;
+    let client = reqwest::Client::new();
 
-    let resp = reqwest::get(format!("{url}/executions/{exec_id}"))
+    let resp = client
+        .get(format!("{url}/executions/{exec_id}"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), 200);
@@ -814,6 +926,7 @@ async fn execution_detail_shows_failed_status_with_red_badge() {
     };
 
     let state = test_state(config).await;
+    let token = create_test_session(&state).await;
 
     let exec = execution::create(
         state.db.pool(),
@@ -837,8 +950,12 @@ async fn execution_detail_shows_failed_status_with_red_badge() {
 
     let exec_id = exec.id.clone();
     let url = spawn_server(state).await;
+    let client = reqwest::Client::new();
 
-    let resp = reqwest::get(format!("{url}/executions/{exec_id}"))
+    let resp = client
+        .get(format!("{url}/executions/{exec_id}"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), 200);
@@ -865,6 +982,7 @@ async fn execution_detail_reads_log_files() {
     };
 
     let state = test_state(config).await;
+    let token = create_test_session(&state).await;
 
     let exec_id = sendword::id::new_id();
     let log_path = format!("{logs_dir}/{exec_id}");
@@ -899,8 +1017,12 @@ async fn execution_detail_reads_log_files() {
         .unwrap();
 
     let url = spawn_server(state).await;
+    let client = reqwest::Client::new();
 
-    let resp = reqwest::get(format!("{url}/executions/{exec_id}"))
+    let resp = client
+        .get(format!("{url}/executions/{exec_id}"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), 200);
@@ -929,6 +1051,7 @@ async fn execution_detail_shows_fallback_when_logs_missing() {
     };
 
     let state = test_state(config).await;
+    let token = create_test_session(&state).await;
 
     let exec = execution::create(
         state.db.pool(),
@@ -946,8 +1069,12 @@ async fn execution_detail_shows_fallback_when_logs_missing() {
 
     let exec_id = exec.id.clone();
     let url = spawn_server(state).await;
+    let client = reqwest::Client::new();
 
-    let resp = reqwest::get(format!("{url}/executions/{exec_id}"))
+    let resp = client
+        .get(format!("{url}/executions/{exec_id}"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), 200);
@@ -972,6 +1099,7 @@ async fn execution_detail_shows_retry_info_when_replay() {
     };
 
     let state = test_state(config).await;
+    let token = create_test_session(&state).await;
 
     // Create original execution
     let original = execution::create(
@@ -1017,8 +1145,12 @@ async fn execution_detail_shows_retry_info_when_replay() {
     let replay_id = replay.id.clone();
     let original_id = original.id.clone();
     let url = spawn_server(state).await;
+    let client = reqwest::Client::new();
 
-    let resp = reqwest::get(format!("{url}/executions/{replay_id}"))
+    let resp = client
+        .get(format!("{url}/executions/{replay_id}"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), 200);
@@ -1046,6 +1178,7 @@ async fn execution_detail_hides_retry_section_when_not_applicable() {
     };
 
     let state = test_state(config).await;
+    let token = create_test_session(&state).await;
 
     let exec = execution::create(
         state.db.pool(),
@@ -1063,8 +1196,12 @@ async fn execution_detail_hides_retry_section_when_not_applicable() {
 
     let exec_id = exec.id.clone();
     let url = spawn_server(state).await;
+    let client = reqwest::Client::new();
 
-    let resp = reqwest::get(format!("{url}/executions/{exec_id}"))
+    let resp = client
+        .get(format!("{url}/executions/{exec_id}"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), 200);
@@ -1086,6 +1223,7 @@ async fn execution_detail_shows_pending_status_with_yellow_badge() {
     };
 
     let state = test_state(config).await;
+    let token = create_test_session(&state).await;
 
     // Execution stays in pending status (not started)
     let exec = execution::create(
@@ -1104,8 +1242,12 @@ async fn execution_detail_shows_pending_status_with_yellow_badge() {
 
     let exec_id = exec.id.clone();
     let url = spawn_server(state).await;
+    let client = reqwest::Client::new();
 
-    let resp = reqwest::get(format!("{url}/executions/{exec_id}"))
+    let resp = client
+        .get(format!("{url}/executions/{exec_id}"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), 200);
@@ -1121,4 +1263,71 @@ async fn execution_detail_shows_pending_status_with_yellow_badge() {
         body.contains("Started at"),
         "should show started at label"
     );
+}
+
+// --- Auth redirect tests ---
+
+#[tokio::test]
+async fn unauthenticated_dashboard_redirects_to_login() {
+    let url = spawn_test_server().await;
+    let client = client_no_redirect();
+    let resp = client.get(format!("{url}/")).send().await.unwrap();
+    assert_eq!(resp.status(), 303);
+    let location = resp.headers().get("location").unwrap().to_str().unwrap();
+    assert_eq!(location, "/login");
+}
+
+#[tokio::test]
+async fn unauthenticated_hook_detail_redirects_to_login() {
+    let url = spawn_test_server().await;
+    let client = client_no_redirect();
+    let resp = client
+        .get(format!("{url}/hooks/some-slug"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 303);
+    let location = resp.headers().get("location").unwrap().to_str().unwrap();
+    assert_eq!(location, "/login");
+}
+
+#[tokio::test]
+async fn unauthenticated_execution_detail_redirects_to_login() {
+    let url = spawn_test_server().await;
+    let client = client_no_redirect();
+    let resp = client
+        .get(format!("{url}/executions/some-id"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 303);
+    let location = resp.headers().get("location").unwrap().to_str().unwrap();
+    assert_eq!(location, "/login");
+}
+
+#[tokio::test]
+async fn unauthenticated_replay_redirects_to_login() {
+    let url = spawn_test_server().await;
+    let client = client_no_redirect();
+    let resp = client
+        .post(format!("{url}/executions/some-id/replay"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 303);
+    let location = resp.headers().get("location").unwrap().to_str().unwrap();
+    assert_eq!(location, "/login");
+}
+
+#[tokio::test]
+async fn webhook_trigger_still_works_without_session_cookie() {
+    let url = spawn_test_server().await;
+    let client = reqwest::Client::new();
+    // POST to a nonexistent hook should return 404, not a redirect
+    let resp = client
+        .post(format!("{url}/hook/nonexistent"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
 }
