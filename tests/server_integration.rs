@@ -1794,3 +1794,149 @@ async fn trigger_hmac_hook_without_signature_header_returns_401() {
         .unwrap();
     assert_eq!(resp.status(), 401);
 }
+
+// --- Auth config round-trip via web UI ---
+
+#[tokio::test]
+async fn create_hook_with_bearer_auth_via_form() {
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let config_path = dir.path().join("sendword.toml");
+    std::fs::write(&config_path, "[server]\nport = 8080\n").expect("write");
+
+    let config = AppConfig::load_from(
+        config_path.to_str().unwrap(),
+        "nonexistent.json",
+    ).expect("valid config");
+
+    let db = Db::new_in_memory().await.expect("db");
+    db.migrate().await.expect("migrate");
+    let templates = Templates::new(Templates::default_dir());
+    let state = AppState::new(config, &config_path, db, templates);
+    let token = create_test_session(&state).await;
+    let url = spawn_server(state).await;
+
+    let client = client_no_redirect();
+    let resp = client
+        .post(format!("{url}/hooks/new"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body(
+            "name=Bearer+Hook&slug=bearer-hook&command=echo+ok&enabled=true\
+             &auth_mode=bearer&auth_token=%24%7BWEBHOOK_TOKEN%7D\
+             &description=&cwd=&timeout=&env_text=\
+             &retry_count=0&retry_backoff=exponential\
+             &retry_initial_delay=&retry_max_delay="
+        )
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 303, "expected redirect after create");
+
+    // Verify the hook detail page shows bearer auth
+    let detail = reqwest::Client::new()
+        .get(format!("{url}/hooks/bearer-hook"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(detail.status(), 200);
+    let body = detail.text().await.unwrap();
+    assert!(body.contains("bearer"), "detail page should show bearer auth mode");
+}
+
+#[tokio::test]
+async fn create_hook_with_hmac_auth_via_form() {
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let config_path = dir.path().join("sendword.toml");
+    std::fs::write(&config_path, "[server]\nport = 8080\n").expect("write");
+
+    let config = AppConfig::load_from(
+        config_path.to_str().unwrap(),
+        "nonexistent.json",
+    ).expect("valid config");
+
+    let db = Db::new_in_memory().await.expect("db");
+    db.migrate().await.expect("migrate");
+    let templates = Templates::new(Templates::default_dir());
+    let state = AppState::new(config, &config_path, db, templates);
+    let token = create_test_session(&state).await;
+    let url = spawn_server(state).await;
+
+    let client = client_no_redirect();
+    let resp = client
+        .post(format!("{url}/hooks/new"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body(
+            "name=HMAC+Hook&slug=hmac-hook&command=echo+ok&enabled=true\
+             &auth_mode=hmac&auth_header=X-Hub-Signature-256\
+             &auth_algorithm=sha256&auth_secret=%24%7BWEBHOOK_SECRET%7D\
+             &description=&cwd=&timeout=&env_text=\
+             &retry_count=0&retry_backoff=exponential\
+             &retry_initial_delay=&retry_max_delay="
+        )
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 303, "expected redirect after create");
+
+    // Verify the TOML file contains the auth config
+    let toml_content = std::fs::read_to_string(&config_path).unwrap();
+    assert!(toml_content.contains("mode = \"hmac\""), "TOML should contain hmac mode");
+    assert!(toml_content.contains("X-Hub-Signature-256"), "TOML should contain header name");
+}
+
+#[tokio::test]
+async fn edit_hook_to_add_bearer_auth() {
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let config_path = dir.path().join("sendword.toml");
+    let initial_toml = r#"
+[server]
+port = 8080
+
+[[hooks]]
+name = "Public Hook"
+slug = "public-hook"
+[hooks.executor]
+type = "shell"
+command = "echo ok"
+"#;
+    std::fs::write(&config_path, initial_toml).expect("write");
+
+    let config = AppConfig::load_from(
+        config_path.to_str().unwrap(),
+        "nonexistent.json",
+    ).expect("valid config");
+
+    let db = Db::new_in_memory().await.expect("db");
+    db.migrate().await.expect("migrate");
+    let templates = Templates::new(Templates::default_dir());
+    let state = AppState::new(config, &config_path, db, templates);
+    let token = create_test_session(&state).await;
+    let url = spawn_server(state).await;
+
+    let client = client_no_redirect();
+    let resp = client
+        .post(format!("{url}/hooks/public-hook/edit"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body(
+            "name=Public+Hook&slug=public-hook&command=echo+ok&enabled=true\
+             &auth_mode=bearer&auth_token=my-secret\
+             &description=&cwd=&timeout=&env_text=\
+             &retry_count=0&retry_backoff=exponential\
+             &retry_initial_delay=&retry_max_delay="
+        )
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 303, "expected redirect after edit");
+
+    // Verify TOML now has auth section
+    let toml_content = std::fs::read_to_string(&config_path).unwrap();
+    assert!(toml_content.contains("mode = \"bearer\""), "TOML should contain bearer mode");
+    assert!(toml_content.contains("my-secret"), "TOML should contain token");
+}
