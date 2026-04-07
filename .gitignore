@@ -11,3 +11,6 @@ static/dist/
 node_modules/
 .playwright/
 .playwright-cli/
+
+# Beads / Dolt files (added by bd init)
+.beads-credential-key
