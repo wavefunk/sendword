@@ -8,5 +8,6 @@ pub mod models;
 pub mod retry;
 pub mod routes;
 pub mod server;
+pub mod tasks;
 pub mod templates;
 pub mod timestamp;

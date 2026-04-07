@@ -64,6 +64,9 @@ async fn serve() -> eyre::Result<()> {
     db.migrate().await?;
     tracing::info!("database ready");
 
+    let _sweep_handle = sendword::tasks::spawn_session_sweep(db.pool().clone());
+    tracing::info!("session sweep task started");
+
     let templates = sendword::templates::Templates::new(
         sendword::templates::Templates::default_dir(),
     );
