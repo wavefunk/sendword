@@ -138,5 +138,64 @@
       {# Initial content loaded via HTMX #}
     </div>
   </div>
+
+  {# --- Trigger Attempts --- #}
+  <div class="mb-8">
+    <h2 class="text-lg font-semibold mb-3">Trigger Attempts</h2>
+
+    <div class="flex gap-2 mb-4" id="attempt-filters">
+      <button
+        hx-get="/hooks/{{ slug }}/attempts"
+        hx-target="#attempt-list"
+        hx-swap="innerHTML"
+        class="attempt-filter active px-3 py-1 text-sm rounded border font-medium bg-gray-800 text-white border-gray-800"
+        hx-on:click="setActiveFilter(this)">
+        All
+      </button>
+      <button
+        hx-get="/hooks/{{ slug }}/attempts?status=fired"
+        hx-target="#attempt-list"
+        hx-swap="innerHTML"
+        class="attempt-filter px-3 py-1 text-sm rounded border font-medium bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
+        hx-on:click="setActiveFilter(this)">
+        Fired
+      </button>
+      <button
+        hx-get="/hooks/{{ slug }}/attempts?status=auth_failed"
+        hx-target="#attempt-list"
+        hx-swap="innerHTML"
+        class="attempt-filter px-3 py-1 text-sm rounded border font-medium bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
+        hx-on:click="setActiveFilter(this)">
+        Auth Failed
+      </button>
+      <button
+        hx-get="/hooks/{{ slug }}/attempts?status=validation_failed"
+        hx-target="#attempt-list"
+        hx-swap="innerHTML"
+        class="attempt-filter px-3 py-1 text-sm rounded border font-medium bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
+        hx-on:click="setActiveFilter(this)">
+        Validation Failed
+      </button>
+    </div>
+
+    <script>
+      function setActiveFilter(el) {
+        var buttons = document.querySelectorAll('#attempt-filters .attempt-filter');
+        for (var i = 0; i < buttons.length; i++) {
+          buttons[i].classList.remove('active', 'bg-gray-800', 'text-white', 'border-gray-800');
+          buttons[i].classList.add('bg-white', 'text-gray-700', 'border-gray-300');
+        }
+        el.classList.remove('bg-white', 'text-gray-700', 'border-gray-300');
+        el.classList.add('active', 'bg-gray-800', 'text-white', 'border-gray-800');
+      }
+    </script>
+
+    <div id="attempt-list"
+         hx-get="/hooks/{{ slug }}/attempts"
+         hx-trigger="load"
+         hx-swap="innerHTML">
+      {# Initial content loaded via HTMX #}
+    </div>
+  </div>
 </main>
 {% endblock %}

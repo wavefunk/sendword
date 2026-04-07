@@ -34,6 +34,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/hooks/{slug}/edit", get(edit_hook_form).post(update_hook))
         .route("/hooks/{slug}/delete", post(delete_hook))
         .route("/hooks/{slug}/executions", get(execution_list))
+        .route("/hooks/{slug}/attempts", get(trigger_attempt_list))
 }
 
 #[derive(Serialize)]
@@ -394,6 +395,74 @@ async fn execution_list(
             page => page,
             total_pages => total_pages,
             has_more => has_more,
+        },
+    )?;
+
+    Ok(Html(html))
+}
+
+// ---------------------------------------------------------------------------
+// GET /hooks/:slug/attempts — HTMX partial
+// ---------------------------------------------------------------------------
+
+const ATTEMPTS_PER_PAGE: i64 = 20;
+
+#[derive(Deserialize)]
+struct AttemptFilterParams {
+    status: Option<String>,
+}
+
+async fn trigger_attempt_list(
+    _auth: AuthUser,
+    State(state): State<Arc<AppState>>,
+    Path(slug): Path<String>,
+    Query(params): Query<AttemptFilterParams>,
+) -> Result<Html<String>, AppError> {
+    let config = state.config.load();
+
+    // Verify hook exists
+    let _hook = config
+        .hooks
+        .iter()
+        .find(|h| h.slug == slug)
+        .ok_or(AppError::not_found("hook"))?;
+
+    let pool = state.db.pool();
+
+    let parsed_status = params
+        .status
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .and_then(trigger_attempt::TriggerAttemptStatus::parse);
+
+    let attempts = if let Some(ref status) = parsed_status {
+        trigger_attempt::list_by_hook_filtered(pool, &slug, status, ATTEMPTS_PER_PAGE, 0).await?
+    } else {
+        trigger_attempt::list_by_hook(pool, &slug, ATTEMPTS_PER_PAGE, 0).await?
+    };
+
+    let rows: Vec<serde_json::Value> = attempts
+        .iter()
+        .map(|a| {
+            serde_json::json!({
+                "id": a.id,
+                "attempted_at": a.attempted_at,
+                "status": a.status.to_string(),
+                "source_ip": a.source_ip,
+                "reason": a.reason,
+                "execution_id": a.execution_id,
+            })
+        })
+        .collect();
+
+    let active_status = params.status.as_deref().unwrap_or("");
+
+    let html = state.templates.render(
+        "partials/trigger_attempt_list.html",
+        context! {
+            slug => slug,
+            attempts => rows,
+            active_status => active_status,
         },
     )?;
 

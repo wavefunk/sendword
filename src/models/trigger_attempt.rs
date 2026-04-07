@@ -22,6 +22,24 @@ pub enum TriggerAttemptStatus {
     PendingApproval,
 }
 
+impl TriggerAttemptStatus {
+    /// Parse a status string. Returns `None` for unrecognised values.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "fired" => Some(Self::Fired),
+            "auth_failed" => Some(Self::AuthFailed),
+            "validation_failed" => Some(Self::ValidationFailed),
+            "filtered" => Some(Self::Filtered),
+            "rate_limited" => Some(Self::RateLimited),
+            "schedule_skipped" => Some(Self::ScheduleSkipped),
+            "cooldown_skipped" => Some(Self::CooldownSkipped),
+            "concurrency_rejected" => Some(Self::ConcurrencyRejected),
+            "pending_approval" => Some(Self::PendingApproval),
+            _ => None,
+        }
+    }
+}
+
 impl std::fmt::Display for TriggerAttemptStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
@@ -110,6 +128,29 @@ pub async fn list_by_hook(
          ORDER BY attempted_at DESC LIMIT ? OFFSET ?",
     )
     .bind(hook_slug)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+/// List trigger attempts for a specific hook filtered by status, ordered by attempted_at DESC.
+pub async fn list_by_hook_filtered(
+    pool: &SqlitePool,
+    hook_slug: &str,
+    status: &TriggerAttemptStatus,
+    limit: i64,
+    offset: i64,
+) -> DbResult<Vec<TriggerAttempt>> {
+    let status_str = status.to_string();
+    let rows = sqlx::query_as::<_, TriggerAttempt>(
+        "SELECT id, hook_slug, attempted_at, source_ip, status, reason, execution_id \
+         FROM trigger_attempts WHERE hook_slug = ? AND status = ? \
+         ORDER BY attempted_at DESC LIMIT ? OFFSET ?",
+    )
+    .bind(hook_slug)
+    .bind(&status_str)
     .bind(limit)
     .bind(offset)
     .fetch_all(pool)
