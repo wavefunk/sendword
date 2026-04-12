@@ -363,8 +363,11 @@ fn apply_hook_fields(table: &mut Table, data: &HookFormData) {
                 let mut windows_array = Array::new();
                 for w in windows {
                     let mut wt = InlineTable::new();
-                    let days_joined = w.days.join(",");
-                    wt.insert("days", days_joined.as_str().into());
+                    let mut days_arr = Array::new();
+                    for day in &w.days {
+                        days_arr.push(day.as_str());
+                    }
+                    wt.insert("days", Value::Array(days_arr).into());
                     wt.insert("start_time", w.start_time.as_str().into());
                     wt.insert("end_time", w.end_time.as_str().into());
                     windows_array.push(wt);

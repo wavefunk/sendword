@@ -2494,3 +2494,376 @@ async fn attempt_list_requires_auth() {
     // Should redirect to login (303) when no session cookie
     assert_eq!(resp.status(), 303);
 }
+
+// ---------------------------------------------------------------------------
+// Trigger rules UI tests
+// ---------------------------------------------------------------------------
+
+/// Set up a test server backed by an on-disk TOML config file so that
+/// config_writer round-trips can be verified.
+async fn spawn_file_backed_server(initial_toml: &str) -> (String, String, std::path::PathBuf, tempfile::TempDir) {
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let config_path = dir.path().join("sendword.toml");
+    std::fs::write(&config_path, initial_toml).expect("write toml");
+
+    let config = AppConfig::load_from(
+        config_path.to_str().unwrap(),
+        "nonexistent.json",
+    ).expect("valid config");
+
+    let db = Db::new_in_memory().await.expect("db");
+    db.migrate().await.expect("migrate");
+    let templates = Templates::new(Templates::default_dir());
+    let state = AppState::new(config, &config_path, db, templates);
+    let token = create_test_session(&state).await;
+    let url = spawn_server(state).await;
+    (url, token, config_path, dir)
+}
+
+#[tokio::test]
+async fn create_hook_with_payload_filters_via_form() {
+    let (url, token, config_path, _dir) = spawn_file_backed_server("[server]\nport = 8080\n").await;
+    let client = client_no_redirect();
+
+    let resp = client
+        .post(format!("{url}/hooks/new"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body(
+            "name=Filter+Hook&slug=filter-hook&command=echo+ok&enabled=true\
+             &description=&cwd=&timeout=&env_text=\
+             &retry_count=0&retry_backoff=exponential\
+             &retry_initial_delay=&retry_max_delay=\
+             &auth_mode=none\
+             &trigger_filters_text=action%3Aequals%3Adeploy%0Aenv%3Acontains%3Aprod\
+             &trigger_windows_text=&trigger_cooldown=&trigger_rate_max=&trigger_rate_window="
+        )
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 303, "expected redirect after create");
+
+    let toml_content = std::fs::read_to_string(&config_path).unwrap();
+    assert!(toml_content.contains("payload_filters"), "TOML should contain payload_filters");
+    assert!(toml_content.contains("\"action\""), "TOML should contain field 'action'");
+    assert!(toml_content.contains("\"equals\""), "TOML should contain operator 'equals'");
+    assert!(toml_content.contains("\"deploy\""), "TOML should contain value 'deploy'");
+    assert!(toml_content.contains("\"env\""), "TOML should contain field 'env'");
+    assert!(toml_content.contains("\"contains\""), "TOML should contain operator 'contains'");
+}
+
+#[tokio::test]
+async fn hook_detail_displays_trigger_rules() {
+    use sendword::config::{
+        FilterOperator, PayloadFilter, TimeWindow, TriggerRateLimit, TriggerRules,
+    };
+    use std::time::Duration;
+
+    let mut hook = shell_hook("ruled-hook");
+    hook.trigger_rules = Some(TriggerRules {
+        payload_filters: Some(vec![PayloadFilter {
+            field: "action".into(),
+            operator: FilterOperator::Equals,
+            value: Some("deploy".into()),
+        }]),
+        time_windows: Some(vec![TimeWindow {
+            days: vec!["Mon".into(), "Fri".into()],
+            start_time: "09:00".into(),
+            end_time: "17:00".into(),
+        }]),
+        cooldown: Some(Duration::from_secs(300)),
+        rate_limit: Some(TriggerRateLimit {
+            max_requests: 10,
+            window: Duration::from_secs(3600),
+        }),
+    });
+
+    let config = AppConfig {
+        hooks: vec![hook],
+        ..AppConfig::default()
+    };
+    let (url, token) = spawn_authed_server(config).await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .get(format!("{url}/hooks/ruled-hook"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+
+    assert!(body.contains("Trigger Rules"), "detail page should show Trigger Rules section");
+    assert!(body.contains("action"), "detail page should show filter field");
+    assert!(body.contains("equals"), "detail page should show filter operator");
+    assert!(body.contains("deploy"), "detail page should show filter value");
+    assert!(body.contains("Mon"), "detail page should show time window days");
+    assert!(body.contains("09:00"), "detail page should show window start time");
+    assert!(body.contains("17:00"), "detail page should show window end time");
+    assert!(body.contains("5m"), "detail page should show cooldown");
+    assert!(body.contains("10"), "detail page should show rate limit max");
+    assert!(body.contains("1h"), "detail page should show rate limit window");
+}
+
+#[tokio::test]
+async fn hook_without_trigger_rules_shows_no_trigger_rules_section() {
+    let config = AppConfig {
+        hooks: vec![shell_hook("plain-hook")],
+        ..AppConfig::default()
+    };
+    let (url, token) = spawn_authed_server(config).await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .get(format!("{url}/hooks/plain-hook"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+
+    assert!(!body.contains("Trigger Rules"), "detail page should not show Trigger Rules section when none configured");
+}
+
+#[tokio::test]
+async fn create_hook_with_time_windows_and_cooldown() {
+    let (url, token, config_path, _dir) = spawn_file_backed_server("[server]\nport = 8080\n").await;
+    let client = client_no_redirect();
+
+    let resp = client
+        .post(format!("{url}/hooks/new"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body(
+            "name=Window+Hook&slug=window-hook&command=echo+ok&enabled=true\
+             &description=&cwd=&timeout=&env_text=\
+             &retry_count=0&retry_backoff=exponential\
+             &retry_initial_delay=&retry_max_delay=\
+             &auth_mode=none\
+             &trigger_filters_text=\
+             &trigger_windows_text=Mon%2CTue%3A09%3A00-17%3A00\
+             &trigger_cooldown=5m\
+             &trigger_rate_max=&trigger_rate_window="
+        )
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 303, "expected redirect after create");
+
+    let toml_content = std::fs::read_to_string(&config_path).unwrap();
+    assert!(toml_content.contains("time_windows"), "TOML should contain time_windows");
+    assert!(toml_content.contains("09:00"), "TOML should contain start_time");
+    assert!(toml_content.contains("17:00"), "TOML should contain end_time");
+    assert!(toml_content.contains(r#"cooldown = "5m""#), "TOML should contain cooldown");
+}
+
+#[tokio::test]
+async fn create_hook_with_rate_limit_via_form() {
+    let (url, token, config_path, _dir) = spawn_file_backed_server("[server]\nport = 8080\n").await;
+    let client = client_no_redirect();
+
+    let resp = client
+        .post(format!("{url}/hooks/new"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body(
+            "name=Rate+Hook&slug=rate-hook&command=echo+ok&enabled=true\
+             &description=&cwd=&timeout=&env_text=\
+             &retry_count=0&retry_backoff=exponential\
+             &retry_initial_delay=&retry_max_delay=\
+             &auth_mode=none\
+             &trigger_filters_text=&trigger_windows_text=&trigger_cooldown=\
+             &trigger_rate_max=10&trigger_rate_window=1h"
+        )
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 303, "expected redirect after create");
+
+    let toml_content = std::fs::read_to_string(&config_path).unwrap();
+    assert!(toml_content.contains("max_requests = 10"), "TOML should contain max_requests");
+    assert!(toml_content.contains(r#"window = "1h""#), "TOML should contain window");
+}
+
+#[tokio::test]
+async fn edit_hook_form_repopulates_trigger_rules() {
+    use sendword::config::{FilterOperator, PayloadFilter, TriggerRules};
+
+    let mut hook = shell_hook("editable-hook");
+    hook.trigger_rules = Some(TriggerRules {
+        payload_filters: Some(vec![PayloadFilter {
+            field: "tag".into(),
+            operator: FilterOperator::Contains,
+            value: Some("release".into()),
+        }]),
+        time_windows: None,
+        cooldown: None,
+        rate_limit: None,
+    });
+
+    let config = AppConfig {
+        hooks: vec![hook],
+        ..AppConfig::default()
+    };
+    let (url, token) = spawn_authed_server(config).await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .get(format!("{url}/hooks/editable-hook/edit"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+
+    assert!(body.contains("tag:contains:release"), "edit form should repopulate filter field");
+}
+
+#[tokio::test]
+async fn edit_hook_to_add_trigger_filter() {
+    let initial_toml = r#"
+[server]
+port = 8080
+
+[[hooks]]
+name = "Plain Hook"
+slug = "plain-hook"
+[hooks.executor]
+type = "shell"
+command = "echo ok"
+"#;
+    let (url, token, config_path, _dir) = spawn_file_backed_server(initial_toml).await;
+    let client = client_no_redirect();
+
+    let resp = client
+        .post(format!("{url}/hooks/plain-hook/edit"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body(
+            "name=Plain+Hook&slug=plain-hook&command=echo+ok&enabled=true\
+             &description=&cwd=&timeout=&env_text=\
+             &retry_count=0&retry_backoff=exponential\
+             &retry_initial_delay=&retry_max_delay=\
+             &auth_mode=none\
+             &trigger_filters_text=status%3Aequals%3Asuccess\
+             &trigger_windows_text=&trigger_cooldown=&trigger_rate_max=&trigger_rate_window="
+        )
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 303, "expected redirect after edit");
+
+    let toml_content = std::fs::read_to_string(&config_path).unwrap();
+    assert!(toml_content.contains("\"status\""), "TOML should have status filter field");
+    assert!(toml_content.contains("\"equals\""), "TOML should have equals operator");
+    assert!(toml_content.contains("\"success\""), "TOML should have success value");
+}
+
+#[tokio::test]
+async fn edit_hook_to_remove_trigger_rules() {
+    let initial_toml = r#"
+[server]
+port = 8080
+
+[[hooks]]
+name = "Ruled Hook"
+slug = "ruled-hook"
+[hooks.executor]
+type = "shell"
+command = "echo ok"
+
+[hooks.trigger_rules]
+cooldown = "5m"
+"#;
+    let (url, token, config_path, _dir) = spawn_file_backed_server(initial_toml).await;
+    let client = client_no_redirect();
+
+    let resp = client
+        .post(format!("{url}/hooks/ruled-hook/edit"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body(
+            "name=Ruled+Hook&slug=ruled-hook&command=echo+ok&enabled=true\
+             &description=&cwd=&timeout=&env_text=\
+             &retry_count=0&retry_backoff=exponential\
+             &retry_initial_delay=&retry_max_delay=\
+             &auth_mode=none\
+             &trigger_filters_text=&trigger_windows_text=&trigger_cooldown=\
+             &trigger_rate_max=&trigger_rate_window="
+        )
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 303, "expected redirect after edit");
+
+    let toml_content = std::fs::read_to_string(&config_path).unwrap();
+    assert!(!toml_content.contains("trigger_rules"), "TOML should not contain trigger_rules when cleared");
+    assert!(!toml_content.contains("cooldown"), "TOML should not contain cooldown when cleared");
+}
+
+#[tokio::test]
+async fn invalid_filter_line_returns_error() {
+    let (url, token, _config_path, _dir) = spawn_file_backed_server("[server]\nport = 8080\n").await;
+    let client = client_no_redirect();
+
+    let resp = client
+        .post(format!("{url}/hooks/new"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body(
+            "name=Bad+Hook&slug=bad-hook&command=echo+ok&enabled=true\
+             &description=&cwd=&timeout=&env_text=\
+             &retry_count=0&retry_backoff=exponential\
+             &retry_initial_delay=&retry_max_delay=\
+             &auth_mode=none\
+             &trigger_filters_text=nooperator\
+             &trigger_windows_text=&trigger_cooldown=&trigger_rate_max=&trigger_rate_window="
+        )
+        .send()
+        .await
+        .unwrap();
+
+    // Should redirect back with error query param
+    assert_eq!(resp.status(), 303, "invalid filter should cause redirect with error");
+    let location = resp.headers().get("location").unwrap().to_str().unwrap();
+    assert!(location.contains("error="), "redirect should contain error param");
+}
+
+#[tokio::test]
+async fn exists_filter_requires_no_value() {
+    let (url, token, config_path, _dir) = spawn_file_backed_server("[server]\nport = 8080\n").await;
+    let client = client_no_redirect();
+
+    let resp = client
+        .post(format!("{url}/hooks/new"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body(
+            "name=Exists+Hook&slug=exists-hook&command=echo+ok&enabled=true\
+             &description=&cwd=&timeout=&env_text=\
+             &retry_count=0&retry_backoff=exponential\
+             &retry_initial_delay=&retry_max_delay=\
+             &auth_mode=none\
+             &trigger_filters_text=tag%3Aexists\
+             &trigger_windows_text=&trigger_cooldown=&trigger_rate_max=&trigger_rate_window="
+        )
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 303, "exists filter should succeed");
+
+    let toml_content = std::fs::read_to_string(&config_path).unwrap();
+    assert!(toml_content.contains("\"tag\""), "TOML should contain field 'tag'");
+    assert!(toml_content.contains("\"exists\""), "TOML should contain operator 'exists'");
+    // exists filter should not write a value key
+    assert!(!toml_content.contains("value = "), "exists filter should not write value");
+}
