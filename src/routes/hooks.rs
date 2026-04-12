@@ -26,6 +26,7 @@ use crate::models::trigger_attempt::{NewTriggerAttempt, TriggerAttemptStatus};
 use crate::retry;
 use crate::server::AppState;
 use crate::templates::context;
+use crate::trigger_rules::{self, cooldown, payload_filter, rate_limit, time_window};
 
 const EXECUTIONS_PER_PAGE: i64 = 20;
 
@@ -63,13 +64,33 @@ fn extract_source_ip(headers: &HeaderMap, peer: &SocketAddr) -> String {
     peer.ip().to_string()
 }
 
+async fn log_rejection(
+    pool: &sqlx::SqlitePool,
+    hook_slug: &str,
+    source_ip: &str,
+    status: TriggerAttemptStatus,
+    reason: &str,
+) {
+    let _ = trigger_attempt::insert(
+        pool,
+        &NewTriggerAttempt {
+            hook_slug,
+            source_ip,
+            status,
+            reason,
+            execution_id: None,
+        },
+    )
+    .await;
+}
+
 async fn trigger_hook(
     State(state): State<Arc<AppState>>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Path(slug): Path<String>,
     headers: HeaderMap,
     body: Bytes,
-) -> Result<Json<TriggerResponse>, Response> {
+) -> Result<Response, Response> {
     let source_ip = extract_source_ip(&headers, &peer);
     let config = state.config.load();
 
@@ -190,6 +211,75 @@ async fn trigger_hook(
 
     let retry_config = retry::resolve_retry_config(hook, &config.defaults.retries);
 
+    // Evaluate trigger rules before creating the execution record.
+    if let Some(rules) = &hook.trigger_rules {
+        let payload_value: serde_json::Value = serde_json::from_str(&payload_str)
+            .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+
+        // 1. Payload filters
+        if let Some(filters) = &rules.payload_filters {
+            if !filters.is_empty() {
+                if let trigger_rules::EvalOutcome::Reject { status, reason } =
+                    payload_filter::evaluate(filters, &payload_value)
+                {
+                    log_rejection(pool, &slug, &source_ip, status.clone(), &reason).await;
+                    return Ok(Json(serde_json::json!({
+                        "status": status.to_string(),
+                        "reason": reason,
+                    }))
+                    .into_response());
+                }
+            }
+        }
+
+        // 2. Time windows
+        if let Some(windows) = &rules.time_windows {
+            if !windows.is_empty() {
+                if let trigger_rules::EvalOutcome::Reject { status, reason } =
+                    time_window::evaluate(windows)
+                {
+                    log_rejection(pool, &slug, &source_ip, status.clone(), &reason).await;
+                    return Ok(Json(serde_json::json!({
+                        "status": status.to_string(),
+                        "reason": reason,
+                    }))
+                    .into_response());
+                }
+            }
+        }
+
+        // 3. Cooldown
+        if let Some(cd) = rules.cooldown {
+            if let trigger_rules::EvalOutcome::Reject { status, reason } =
+                cooldown::evaluate(pool, &slug, cd).await
+            {
+                log_rejection(pool, &slug, &source_ip, status.clone(), &reason).await;
+                return Ok(Json(serde_json::json!({
+                    "status": status.to_string(),
+                    "reason": reason,
+                }))
+                .into_response());
+            }
+        }
+
+        // 4. Rate limit (returns 429, not 200)
+        if let Some(rl) = &rules.rate_limit {
+            if let trigger_rules::EvalOutcome::Reject { status, reason } =
+                rate_limit::evaluate(pool, &slug, rl).await
+            {
+                log_rejection(pool, &slug, &source_ip, status.clone(), &reason).await;
+                return Err((
+                    StatusCode::TOO_MANY_REQUESTS,
+                    Json(serde_json::json!({
+                        "status": status.to_string(),
+                        "reason": reason,
+                    })),
+                )
+                    .into_response());
+            }
+        }
+    }
+
     // Pre-generate the execution ID so we can set the correct log_path
     let exec_id = crate::id::new_id();
     let log_path = format!("{logs_dir}/{exec_id}");
@@ -245,7 +335,8 @@ async fn trigger_hook(
 
     Ok(Json(TriggerResponse {
         execution_id: exec.id,
-    }))
+    })
+    .into_response())
 }
 
 #[derive(Deserialize)]

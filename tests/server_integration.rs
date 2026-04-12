@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
-use sendword::config::{AppConfig, ExecutorConfig, HookAuthConfig, HmacAlgorithm, HookConfig};
+use sendword::config::{
+    AppConfig, ExecutorConfig, FilterOperator, HmacAlgorithm, HookAuthConfig, HookConfig,
+    PayloadFilter, TriggerRateLimit, TriggerRules,
+};
 use sendword::db::Db;
 use sendword::models::trigger_attempt::{self, TriggerAttemptStatus};
 use sendword::payload::{FieldType, PayloadField, PayloadSchema};
@@ -2866,4 +2869,184 @@ async fn exists_filter_requires_no_value() {
     assert!(toml_content.contains("\"exists\""), "TOML should contain operator 'exists'");
     // exists filter should not write a value key
     assert!(!toml_content.contains("value = "), "exists filter should not write value");
+}
+
+// --- Trigger rule pipeline integration tests ---
+
+#[tokio::test]
+async fn trigger_no_rules_fires_normally() {
+    let hook = shell_hook("no-rules");
+    let url = spawn_server(test_state(config_with_hook(hook)).await).await;
+
+    let resp = reqwest::Client::new()
+        .post(format!("{url}/hook/no-rules"))
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert!(body["execution_id"].is_string(), "should return execution_id");
+}
+
+#[tokio::test]
+async fn trigger_payload_filter_rejects_non_matching() {
+    let mut hook = shell_hook("filtered-hook");
+    hook.trigger_rules = Some(TriggerRules {
+        payload_filters: Some(vec![PayloadFilter {
+            field: "action".into(),
+            operator: FilterOperator::Equals,
+            value: Some("released".into()),
+        }]),
+        time_windows: None,
+        cooldown: None,
+        rate_limit: None,
+    });
+
+    let url = spawn_server(test_state(config_with_hook(hook)).await).await;
+
+    let resp = reqwest::Client::new()
+        .post(format!("{url}/hook/filtered-hook"))
+        .json(&serde_json::json!({"action": "push"}))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["status"], "filtered");
+    assert!(body["reason"].is_string());
+}
+
+#[tokio::test]
+async fn trigger_payload_filter_allows_matching() {
+    let mut hook = shell_hook("filtered-hook-allow");
+    hook.trigger_rules = Some(TriggerRules {
+        payload_filters: Some(vec![PayloadFilter {
+            field: "action".into(),
+            operator: FilterOperator::Equals,
+            value: Some("released".into()),
+        }]),
+        time_windows: None,
+        cooldown: None,
+        rate_limit: None,
+    });
+
+    let url = spawn_server(test_state(config_with_hook(hook)).await).await;
+
+    let resp = reqwest::Client::new()
+        .post(format!("{url}/hook/filtered-hook-allow"))
+        .json(&serde_json::json!({"action": "released"}))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert!(body["execution_id"].is_string(), "matching payload should fire");
+}
+
+#[tokio::test]
+async fn trigger_cooldown_rejects_within_window() {
+    let mut hook = shell_hook("cooldown-hook");
+    hook.trigger_rules = Some(TriggerRules {
+        payload_filters: None,
+        time_windows: None,
+        cooldown: Some(std::time::Duration::from_secs(300)), // 5 minutes
+        rate_limit: None,
+    });
+
+    let url = spawn_server(test_state(config_with_hook(hook)).await).await;
+    let client = reqwest::Client::new();
+
+    // First trigger fires normally
+    let r1 = client
+        .post(format!("{url}/hook/cooldown-hook"))
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r1.status(), 200);
+    let b1: serde_json::Value = r1.json().await.unwrap();
+    assert!(b1["execution_id"].is_string(), "first trigger should fire");
+
+    // Wait for the spawned executor to call mark_running (sets started_at).
+    // Cooldown only applies to executions that have actually started.
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    // Second trigger within cooldown should be rejected
+    let r2 = client
+        .post(format!("{url}/hook/cooldown-hook"))
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r2.status(), 200);
+    let b2: serde_json::Value = r2.json().await.unwrap();
+    assert_eq!(b2["status"], "cooldown_skipped");
+    assert!(b2["reason"].as_str().unwrap().contains("remaining"));
+}
+
+#[tokio::test]
+async fn trigger_rate_limit_rejects_over_limit() {
+    let mut hook = shell_hook("rate-limited-hook");
+    hook.trigger_rules = Some(TriggerRules {
+        payload_filters: None,
+        time_windows: None,
+        cooldown: None,
+        rate_limit: Some(TriggerRateLimit {
+            max_requests: 2,
+            window: std::time::Duration::from_secs(60),
+        }),
+    });
+
+    let url = spawn_server(test_state(config_with_hook(hook)).await).await;
+    let client = reqwest::Client::new();
+
+    let r1 = client.post(format!("{url}/hook/rate-limited-hook")).json(&serde_json::json!({})).send().await.unwrap();
+    let r2 = client.post(format!("{url}/hook/rate-limited-hook")).json(&serde_json::json!({})).send().await.unwrap();
+    let r3 = client.post(format!("{url}/hook/rate-limited-hook")).json(&serde_json::json!({})).send().await.unwrap();
+
+    assert_eq!(r1.status(), 200, "first request allowed");
+    assert_eq!(r2.status(), 200, "second request allowed");
+    assert_eq!(r3.status(), 429, "third request rate limited");
+
+    let b3: serde_json::Value = r3.json().await.unwrap();
+    assert_eq!(b3["status"], "rate_limited");
+}
+
+#[tokio::test]
+async fn trigger_attempts_logged_for_rejections() {
+    let mut hook = shell_hook("log-test-hook");
+    hook.trigger_rules = Some(TriggerRules {
+        payload_filters: Some(vec![PayloadFilter {
+            field: "env".into(),
+            operator: FilterOperator::Equals,
+            value: Some("prod".into()),
+        }]),
+        time_windows: None,
+        cooldown: None,
+        rate_limit: None,
+    });
+
+    let state = test_state(config_with_hook(hook)).await;
+    let url = spawn_server(state.clone()).await;
+
+    // Trigger with non-matching payload
+    let resp = reqwest::Client::new()
+        .post(format!("{url}/hook/log-test-hook"))
+        .json(&serde_json::json!({"env": "staging"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    // Verify trigger_attempt was logged with filtered status
+    let pool = state.db.pool();
+    let attempts = trigger_attempt::list_by_hook(pool, "log-test-hook", 10, 0).await.unwrap();
+    assert_eq!(attempts.len(), 1);
+    assert_eq!(attempts[0].status, TriggerAttemptStatus::Filtered);
+    assert!(!attempts[0].reason.is_empty());
+    assert!(attempts[0].execution_id.is_none());
 }
