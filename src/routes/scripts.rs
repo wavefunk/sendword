@@ -153,6 +153,7 @@ struct FlashParams {
 async fn list_scripts(
     auth: AuthUser,
     State(state): State<Arc<AppState>>,
+    Query(flash): Query<FlashParams>,
 ) -> Result<Html<String>, AppError> {
     let scripts_dir = ensure_scripts_dir(&state).await;
 
@@ -164,6 +165,8 @@ async fn list_scripts(
                 "scripts.html",
                 context! {
                     scripts => Vec::<()>::new(),
+                    success => flash.success,
+                    error => flash.error,
                     username => auth.username,
                     nav_active => "scripts",
                 },
@@ -214,6 +217,8 @@ async fn list_scripts(
         "scripts.html",
         context! {
             scripts => scripts,
+            success => flash.success,
+            error => flash.error,
             username => auth.username,
             nav_active => "scripts",
         },

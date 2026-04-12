@@ -103,8 +103,42 @@ document.addEventListener('htmx:afterOnLoad', (e: Event) => {
   }
 });
 
+// --- Timestamp formatting ---
+
+function formatRelativeTime(iso: string): string {
+  const date = new Date(iso);
+  const now = Date.now();
+  const diffMs = now - date.getTime();
+  const diffSec = Math.floor(diffMs / 1000);
+
+  if (diffSec < 60) return 'just now';
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h ago`;
+  const diffDays = Math.floor(diffHr / 24);
+  if (diffDays < 30) return `${diffDays}d ago`;
+  // Fall back to locale date for older timestamps
+  return date.toLocaleDateString();
+}
+
+function formatTimestamps() {
+  document.querySelectorAll<HTMLElement>('[data-timestamp]').forEach((el) => {
+    const iso = el.dataset.timestamp;
+    if (!iso) return;
+    el.textContent = formatRelativeTime(iso);
+    el.title = iso;
+  });
+}
+
+// Re-format timestamps after HTMX swaps inject new content.
+document.addEventListener('htmx:afterSettle', () => {
+  formatTimestamps();
+});
+
 // --- Init ---
 
 document.addEventListener('DOMContentLoaded', () => {
   initLogStream();
+  formatTimestamps();
 });

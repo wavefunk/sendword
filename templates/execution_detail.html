@@ -46,13 +46,13 @@
     <h2 class="text-lg font-semibold mb-3">Timing</h2>
     <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
       <dt class="text-gray-500">Triggered at</dt>
-      <dd class="font-mono">{{ triggered_at }}</dd>
+      <dd class="font-mono"><span data-timestamp="{{ triggered_at }}">{{ triggered_at }}</span></dd>
 
       <dt class="text-gray-500">Started at</dt>
-      <dd class="font-mono">{{ started_at if started_at else "-" }}</dd>
+      <dd class="font-mono">{% if started_at %}<span data-timestamp="{{ started_at }}">{{ started_at }}</span>{% else %}-{% endif %}</dd>
 
       <dt class="text-gray-500">Completed at</dt>
-      <dd class="font-mono">{{ completed_at if completed_at else "-" }}</dd>
+      <dd class="font-mono">{% if completed_at %}<span data-timestamp="{{ completed_at }}">{{ completed_at }}</span>{% else %}-{% endif %}</dd>
 
       <dt class="text-gray-500">Duration</dt>
       <dd class="font-mono">{{ duration if duration else "-" }}</dd>

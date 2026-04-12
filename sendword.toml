@@ -42,6 +42,8 @@ name = "Deploy App"
 slug = "deploy-app"
 description = "Triggers app deployment"
 enabled = true
+cwd = "/opt/app"
+timeout = "60s"
 
 [hooks.executor]
 type = "shell"
@@ -49,9 +51,6 @@ command = "echo 'deployed!'"
 
 [hooks.env]
 APP_ENV = "production"
-
-cwd = "/opt/app"
-timeout = "60s"
 
 [hooks.retries]
 count = 2

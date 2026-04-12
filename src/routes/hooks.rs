@@ -482,6 +482,7 @@ async fn hook_detail(
     auth: AuthUser,
     State(state): State<Arc<AppState>>,
     Path(slug): Path<String>,
+    Query(flash): Query<FlashParams>,
 ) -> Result<Html<String>, AppError> {
     let config = state.config.load();
 
@@ -636,6 +637,8 @@ async fn hook_detail(
             page => 1,
             total_pages => total_pages,
             has_more => has_more,
+            success => flash.success,
+            error => flash.error,
             username => auth.username,
             nav_active => "hooks",
         },
@@ -1274,7 +1277,7 @@ async fn create_hook(
         tracing::error!(error = %e, "failed to reload config after hook creation");
     }
 
-    Redirect::to(&format!("/hooks/{slug}")).into_response()
+    Redirect::to(&format!("/hooks/{slug}?success=Hook+created")).into_response()
 }
 
 // ---------------------------------------------------------------------------
@@ -1474,7 +1477,7 @@ async fn update_hook(
         tracing::error!(error = %e, "failed to reload config after hook update");
     }
 
-    Redirect::to(&format!("/hooks/{slug}")).into_response()
+    Redirect::to(&format!("/hooks/{slug}?success=Changes+saved")).into_response()
 }
 
 // ---------------------------------------------------------------------------
@@ -1497,7 +1500,7 @@ async fn delete_hook(
         tracing::error!(error = %e, "failed to reload config after hook deletion");
     }
 
-    Redirect::to("/").into_response()
+    Redirect::to("/?success=Hook+deleted").into_response()
 }
 
 /// Convert a `WriteError` into a user-facing message.
@@ -1684,7 +1687,7 @@ mod tests {
 
         assert_eq!(resp.status(), StatusCode::SEE_OTHER);
         let location = resp.headers().get("location").unwrap().to_str().unwrap();
-        assert_eq!(location, "/hooks/deploy");
+        assert_eq!(location, "/hooks/deploy?success=Hook+created");
 
         // Verify config was hot-reloaded
         let config = state.config.load();
@@ -1874,7 +1877,7 @@ command = "echo old"
 
         assert_eq!(resp.status(), StatusCode::SEE_OTHER);
         let location = resp.headers().get("location").unwrap().to_str().unwrap();
-        assert_eq!(location, "/hooks/my-hook");
+        assert_eq!(location, "/hooks/my-hook?success=Changes+saved");
 
         // Verify config was updated and reloaded
         let config = state.config.load();
@@ -1946,7 +1949,7 @@ command = "echo delete"
 
         assert_eq!(resp.status(), StatusCode::SEE_OTHER);
         let location = resp.headers().get("location").unwrap().to_str().unwrap();
-        assert_eq!(location, "/");
+        assert_eq!(location, "/?success=Hook+deleted");
 
         // Verify config was updated
         assert!(state.config.load().hooks.is_empty());

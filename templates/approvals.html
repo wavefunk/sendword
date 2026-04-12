@@ -23,7 +23,7 @@
           <td class="px-4 py-3">
             <a href="/executions/{{ exec.id }}" class="font-mono text-blue-600 hover:underline">{{ exec.hook_slug }}</a>
           </td>
-          <td class="px-4 py-3 text-gray-600">{{ exec.triggered_at }}</td>
+          <td class="px-4 py-3 text-gray-600"><span data-timestamp="{{ exec.triggered_at }}">{{ exec.triggered_at }}</span></td>
           <td class="px-4 py-3 text-gray-500 font-mono text-xs">{{ exec.trigger_source }}</td>
           <td class="px-4 py-3 text-right space-x-2">
             <form method="post" action="/executions/{{ exec.id }}/approve" class="inline">

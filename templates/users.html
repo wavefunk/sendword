@@ -43,6 +43,7 @@
           maxlength="32"
           pattern="[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9]"
           placeholder="3-32 chars, alphanumeric + hyphens"
+          autocomplete="off"
           class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
         >
       </div>
@@ -86,7 +87,7 @@
             <span class="ml-1 text-xs text-gray-400">(you)</span>
             {% endif %}
           </td>
-          <td class="px-4 py-2 text-gray-500">{{ user.created_at }}</td>
+          <td class="px-4 py-2 text-gray-500"><span data-timestamp="{{ user.created_at }}">{{ user.created_at }}</span></td>
           <td class="px-4 py-2 text-right">
             {% if user.is_self %}
             <button

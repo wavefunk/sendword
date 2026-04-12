@@ -2,8 +2,11 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
-use axum::extract::connect_info::IntoMakeServiceWithConnectInfo;
+use axum::extract::{connect_info::IntoMakeServiceWithConnectInfo, State};
+use axum::http::StatusCode;
+use axum::response::{Html, IntoResponse};
 use axum::Router;
+use minijinja::context;
 use tokio::net::TcpListener;
 use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
@@ -59,8 +62,22 @@ pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
         .merge(crate::routes::router())
         .nest_service("/static", static_dir)
+        .fallback(fallback_404)
         .layer(TraceLayer::new_for_http())
         .with_state(state)
+}
+
+async fn fallback_404(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let html = state
+        .templates
+        .render(
+            "404.html",
+            context! {
+                nav_active => "",
+            },
+        )
+        .unwrap_or_else(|_| "404 — page not found".to_owned());
+    (StatusCode::NOT_FOUND, Html(html))
 }
 
 /// Build the router as a service that provides `ConnectInfo<SocketAddr>` to
