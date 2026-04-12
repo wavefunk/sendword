@@ -3197,3 +3197,456 @@ async fn trigger_attempts_logged_for_rejections() {
     assert!(!attempts[0].reason.is_empty());
     assert!(attempts[0].execution_id.is_none());
 }
+
+// ---------------------------------------------------------------------------
+// Approval integration tests (Group C)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn approve_execution_transitions_and_runs() {
+    use sendword::config::ApprovalConfig;
+    use sendword::models::execution::{self, NewExecution};
+    use sendword::models::ExecutionStatus;
+
+    let mut hook = shell_hook("approve-run-hook");
+    hook.approval = Some(ApprovalConfig { required: true, timeout: None });
+    let config = config_with_hook(hook);
+
+    let state = test_state(config).await;
+    let token = create_test_session(&state).await;
+    let url = spawn_server(Arc::clone(&state)).await;
+
+    // Create a pending_approval execution directly (simulating a trigger that hit the approval barrier)
+    let exec = execution::create(
+        state.db.pool(),
+        &NewExecution {
+            id: None,
+            hook_slug: "approve-run-hook",
+            log_path: "/tmp/approve-run-logs",
+            trigger_source: "127.0.0.1",
+            request_payload: "{}",
+            retry_of: None,
+            status: Some(ExecutionStatus::PendingApproval),
+        },
+    )
+    .await
+    .unwrap();
+
+    let client = client_no_redirect();
+    let resp = client
+        .post(format!("{url}/executions/{}/approve", exec.id))
+        .header("Cookie", format!("sendword_session={token}"))
+        .send()
+        .await
+        .unwrap();
+
+    // Expect 303 redirect back to execution detail
+    assert_eq!(resp.status(), 303);
+    let location = resp.headers().get("location").unwrap().to_str().unwrap();
+    assert!(location.contains(&exec.id));
+
+    // Poll until execution reaches a terminal state
+    let pool = state.db.pool();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let updated = execution::get_by_id(pool, &exec.id).await.unwrap();
+        if updated.status.is_terminal() {
+            assert_eq!(updated.status, ExecutionStatus::Success);
+            break;
+        }
+        if std::time::Instant::now() > deadline {
+            panic!("execution did not complete within 10 seconds");
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+}
+
+#[tokio::test]
+async fn reject_execution_marks_rejected() {
+    use sendword::config::ApprovalConfig;
+    use sendword::models::execution::{self, NewExecution};
+    use sendword::models::ExecutionStatus;
+
+    let mut hook = shell_hook("reject-hook");
+    hook.approval = Some(ApprovalConfig { required: true, timeout: None });
+    let config = config_with_hook(hook);
+
+    let state = test_state(config).await;
+    let token = create_test_session(&state).await;
+    let url = spawn_server(Arc::clone(&state)).await;
+
+    let exec = execution::create(
+        state.db.pool(),
+        &NewExecution {
+            id: None,
+            hook_slug: "reject-hook",
+            log_path: "/tmp/reject-logs",
+            trigger_source: "127.0.0.1",
+            request_payload: "{}",
+            retry_of: None,
+            status: Some(ExecutionStatus::PendingApproval),
+        },
+    )
+    .await
+    .unwrap();
+
+    let client = client_no_redirect();
+    let resp = client
+        .post(format!("{url}/executions/{}/reject", exec.id))
+        .header("Cookie", format!("sendword_session={token}"))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 303);
+
+    let updated = execution::get_by_id(state.db.pool(), &exec.id).await.unwrap();
+    assert_eq!(updated.status, ExecutionStatus::Rejected);
+    assert!(updated.completed_at.is_some());
+}
+
+#[tokio::test]
+async fn approve_wrong_status_returns_409() {
+    use sendword::models::execution::{self, NewExecution};
+
+    let hook = shell_hook("approve-409-hook");
+    let state = test_state(config_with_hook(hook)).await;
+    let token = create_test_session(&state).await;
+    let url = spawn_server(Arc::clone(&state)).await;
+
+    // Execution in default pending status (not pending_approval)
+    let exec = execution::create(
+        state.db.pool(),
+        &NewExecution {
+            id: None,
+            hook_slug: "approve-409-hook",
+            log_path: "/tmp/test-logs",
+            trigger_source: "127.0.0.1",
+            request_payload: "{}",
+            retry_of: None,
+            status: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let client = client_no_redirect();
+    let resp = client
+        .post(format!("{url}/executions/{}/approve", exec.id))
+        .header("Cookie", format!("sendword_session={token}"))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 409);
+}
+
+#[tokio::test]
+async fn pending_approvals_page_lists_pending() {
+    use sendword::config::ApprovalConfig;
+    use sendword::models::execution::{self, NewExecution};
+    use sendword::models::ExecutionStatus;
+
+    let mut hook = shell_hook("approvals-page-hook");
+    hook.approval = Some(ApprovalConfig { required: true, timeout: None });
+    let config = config_with_hook(hook);
+
+    let state = test_state(config).await;
+    let token = create_test_session(&state).await;
+
+    let exec = execution::create(
+        state.db.pool(),
+        &NewExecution {
+            id: Some("pending-approval-exec-id"),
+            hook_slug: "approvals-page-hook",
+            log_path: "/tmp/pa-logs",
+            trigger_source: "10.0.0.1",
+            request_payload: "{}",
+            retry_of: None,
+            status: Some(ExecutionStatus::PendingApproval),
+        },
+    )
+    .await
+    .unwrap();
+
+    let url = spawn_server(state).await;
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("{url}/approvals"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains(&exec.id), "approvals page should list execution id");
+    assert!(body.contains("approvals-page-hook"), "approvals page should list hook slug");
+}
+
+// ---------------------------------------------------------------------------
+// Barrier pipeline integration tests (Group D)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn mutex_blocks_concurrent_execution() {
+    use sendword::config::{ConcurrencyConfig, ConcurrencyMode};
+
+    let mut hook = shell_hook("mutex-hook");
+    hook.executor = ExecutorConfig::Shell { command: "sleep 3".to_owned() };
+    hook.concurrency = Some(ConcurrencyConfig { mode: ConcurrencyMode::Mutex, queue_depth: 0 });
+    let url = spawn_server(test_state(config_with_hook(hook)).await).await;
+
+    let client = reqwest::Client::new();
+
+    // First trigger acquires the lock and starts executing
+    let r1 = client
+        .post(format!("{url}/hook/mutex-hook"))
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r1.status(), 200);
+
+    // Give the executor a moment to acquire the lock
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    // Second trigger should be rejected with 503
+    let r2 = client
+        .post(format!("{url}/hook/mutex-hook"))
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r2.status(), 503);
+    let b2: serde_json::Value = r2.json().await.unwrap();
+    assert_eq!(b2["status"], "concurrency_rejected");
+}
+
+#[tokio::test]
+async fn queue_defers_and_processes() {
+    use sendword::config::{ConcurrencyConfig, ConcurrencyMode};
+    use sendword::models::execution;
+    use sendword::models::ExecutionStatus;
+
+    let mut hook = shell_hook("queue-hook");
+    hook.executor = ExecutorConfig::Shell { command: "sleep 1".to_owned() };
+    hook.concurrency = Some(ConcurrencyConfig {
+        mode: ConcurrencyMode::Queue,
+        queue_depth: 5,
+    });
+    let state = test_state(config_with_hook(hook)).await;
+    let url = spawn_server(Arc::clone(&state)).await;
+
+    let client = reqwest::Client::new();
+
+    // First trigger fires immediately
+    let r1 = client
+        .post(format!("{url}/hook/queue-hook"))
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r1.status(), 200);
+    let b1: serde_json::Value = r1.json().await.unwrap();
+    let first_id = b1["execution_id"].as_str().unwrap().to_owned();
+
+    // Give executor time to start and acquire the lock
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    // Second trigger queues
+    let r2 = client
+        .post(format!("{url}/hook/queue-hook"))
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r2.status(), 200);
+    let b2: serde_json::Value = r2.json().await.unwrap();
+    assert_eq!(b2["status"], "queued", "second request should be queued");
+    let queued_id = b2["execution_id"].as_str().unwrap().to_owned();
+
+    // Wait for both executions to finish
+    let pool = state.db.pool();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    for id in [&first_id, &queued_id] {
+        loop {
+            let exec = execution::get_by_id(pool, id).await.unwrap();
+            if exec.status.is_terminal() {
+                assert_eq!(exec.status, ExecutionStatus::Success);
+                break;
+            }
+            if std::time::Instant::now() > deadline {
+                panic!("execution {id} did not complete within 15 seconds");
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    }
+}
+
+#[tokio::test]
+async fn approval_defers_execution() {
+    use sendword::config::ApprovalConfig;
+    use sendword::models::execution;
+    use sendword::models::ExecutionStatus;
+
+    let mut hook = shell_hook("approval-defer-hook");
+    hook.approval = Some(ApprovalConfig { required: true, timeout: None });
+    let state = test_state(config_with_hook(hook)).await;
+    let url = spawn_server(Arc::clone(&state)).await;
+
+    let resp = reqwest::Client::new()
+        .post(format!("{url}/hook/approval-defer-hook"))
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["status"], "pending_approval");
+    let exec_id = body["execution_id"].as_str().unwrap();
+
+    // Execution should be in pending_approval state, not running
+    let exec = execution::get_by_id(state.db.pool(), exec_id).await.unwrap();
+    assert_eq!(exec.status, ExecutionStatus::PendingApproval);
+}
+
+#[tokio::test]
+async fn approval_reject_prevents_execution() {
+    use sendword::config::ApprovalConfig;
+    use sendword::models::execution;
+    use sendword::models::ExecutionStatus;
+
+    let mut hook = shell_hook("approval-reject-hook");
+    hook.approval = Some(ApprovalConfig { required: true, timeout: None });
+    let state = test_state(config_with_hook(hook)).await;
+    let token = create_test_session(&state).await;
+    let url = spawn_server(Arc::clone(&state)).await;
+
+    // Trigger creates a pending_approval execution
+    let r1 = reqwest::Client::new()
+        .post(format!("{url}/hook/approval-reject-hook"))
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    let b1: serde_json::Value = r1.json().await.unwrap();
+    let exec_id = b1["execution_id"].as_str().unwrap().to_owned();
+
+    // Reject it
+    let client = client_no_redirect();
+    let resp = client
+        .post(format!("{url}/executions/{exec_id}/reject"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 303);
+
+    // Execution should be rejected, never ran
+    let exec = execution::get_by_id(state.db.pool(), &exec_id).await.unwrap();
+    assert_eq!(exec.status, ExecutionStatus::Rejected);
+}
+
+#[tokio::test]
+async fn mutex_plus_approval_holds_lock_until_approved() {
+    use sendword::config::{ApprovalConfig, ConcurrencyConfig, ConcurrencyMode};
+    use sendword::barriers::execution_lock;
+    use sendword::models::execution;
+
+    let mut hook = shell_hook("mutex-approval-hook");
+    hook.concurrency = Some(ConcurrencyConfig {
+        mode: ConcurrencyMode::Mutex,
+        queue_depth: 0,
+    });
+    hook.approval = Some(ApprovalConfig { required: true, timeout: None });
+    let state = test_state(config_with_hook(hook)).await;
+    let token = create_test_session(&state).await;
+    let url = spawn_server(Arc::clone(&state)).await;
+
+    // Trigger: acquires lock, then hits approval barrier
+    let resp = reqwest::Client::new()
+        .post(format!("{url}/hook/mutex-approval-hook"))
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["status"], "pending_approval");
+    let exec_id = body["execution_id"].as_str().unwrap().to_owned();
+
+    // Lock should still be held (execution is awaiting approval)
+    let pool = state.db.pool();
+    let holder = execution_lock::get_holder(pool, "mutex-approval-hook")
+        .await
+        .unwrap();
+    assert_eq!(holder.as_deref(), Some(exec_id.as_str()), "lock should be held by pending_approval execution");
+
+    // Approve the execution
+    let client = client_no_redirect();
+    client
+        .post(format!("{url}/executions/{exec_id}/approve"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .send()
+        .await
+        .unwrap();
+
+    // Poll until execution completes and lock is released
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let exec = execution::get_by_id(pool, &exec_id).await.unwrap();
+        if exec.status.is_terminal() {
+            break;
+        }
+        if std::time::Instant::now() > deadline {
+            panic!("execution did not complete after approval");
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+}
+
+#[tokio::test]
+async fn recovery_cleans_orphaned_locks() {
+    use sendword::barriers::{self, execution_lock};
+    use sendword::models::execution::{self, NewExecution};
+    use sendword::models::ExecutionStatus;
+
+    let state = test_state(AppConfig::default()).await;
+    let pool = state.db.pool();
+
+    // Create an execution that is already in a terminal state
+    let exec = execution::create(
+        pool,
+        &NewExecution {
+            id: Some("orphan-exec"),
+            hook_slug: "any-hook",
+            log_path: "/tmp/orphan-logs",
+            trigger_source: "127.0.0.1",
+            request_payload: "{}",
+            retry_of: None,
+            status: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    // Manually transition to a terminal state (simulating crash after completion)
+    execution::mark_running(pool, &exec.id).await.unwrap();
+    execution::mark_completed(pool, &exec.id, ExecutionStatus::Success, Some(0))
+        .await
+        .unwrap();
+
+    // Manually insert an orphaned lock pointing to this terminal execution
+    execution_lock::try_acquire(pool, "any-hook", &exec.id).await.unwrap();
+    let holder = execution_lock::get_holder(pool, "any-hook").await.unwrap();
+    assert!(holder.is_some(), "orphaned lock should exist before recovery");
+
+    // Run recovery
+    barriers::recover_barriers(pool).await;
+
+    // Lock should be gone
+    let holder_after = execution_lock::get_holder(pool, "any-hook").await.unwrap();
+    assert!(holder_after.is_none(), "orphaned lock should be cleaned up by recovery");
+}
