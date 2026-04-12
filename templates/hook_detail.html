@@ -246,6 +246,38 @@
         hx-on:click="setActiveFilter(this)">
         Validation Failed
       </button>
+      <button
+        hx-get="/hooks/{{ slug }}/attempts?status=filtered"
+        hx-target="#attempt-list"
+        hx-swap="innerHTML"
+        class="attempt-filter px-3 py-1 text-sm rounded border font-medium bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
+        hx-on:click="setActiveFilter(this)">
+        Filtered
+      </button>
+      <button
+        hx-get="/hooks/{{ slug }}/attempts?status=rate_limited"
+        hx-target="#attempt-list"
+        hx-swap="innerHTML"
+        class="attempt-filter px-3 py-1 text-sm rounded border font-medium bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
+        hx-on:click="setActiveFilter(this)">
+        Rate Limited
+      </button>
+      <button
+        hx-get="/hooks/{{ slug }}/attempts?status=schedule_skipped"
+        hx-target="#attempt-list"
+        hx-swap="innerHTML"
+        class="attempt-filter px-3 py-1 text-sm rounded border font-medium bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
+        hx-on:click="setActiveFilter(this)">
+        Schedule Skipped
+      </button>
+      <button
+        hx-get="/hooks/{{ slug }}/attempts?status=cooldown_skipped"
+        hx-target="#attempt-list"
+        hx-swap="innerHTML"
+        class="attempt-filter px-3 py-1 text-sm rounded border font-medium bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
+        hx-on:click="setActiveFilter(this)">
+        Cooldown Skipped
+      </button>
     </div>
 
     <script>

@@ -2475,6 +2475,112 @@ async fn hook_detail_contains_trigger_attempts_section() {
         body.contains("status=validation_failed"),
         "hook detail should have validation_failed filter button"
     );
+    assert!(
+        body.contains("status=filtered"),
+        "hook detail should have filtered filter button"
+    );
+    assert!(
+        body.contains("status=rate_limited"),
+        "hook detail should have rate_limited filter button"
+    );
+    assert!(
+        body.contains("status=schedule_skipped"),
+        "hook detail should have schedule_skipped filter button"
+    );
+    assert!(
+        body.contains("status=cooldown_skipped"),
+        "hook detail should have cooldown_skipped filter button"
+    );
+}
+
+#[tokio::test]
+async fn attempt_list_filtered_by_new_m4_statuses() {
+    use sendword::models::trigger_attempt::{self, NewTriggerAttempt};
+
+    let config = AppConfig {
+        hooks: vec![make_test_hook("Filter Hook", "m4-filter-hook", "echo hi")],
+        ..AppConfig::default()
+    };
+    let state = test_state(config).await;
+    let token = create_test_session(&state).await;
+    let pool = state.db.pool();
+
+    // Insert one attempt for each new M4 status
+    for (status, slug) in [
+        (TriggerAttemptStatus::Filtered, "m4-filter-hook"),
+        (TriggerAttemptStatus::RateLimited, "m4-filter-hook"),
+        (TriggerAttemptStatus::ScheduleSkipped, "m4-filter-hook"),
+        (TriggerAttemptStatus::CooldownSkipped, "m4-filter-hook"),
+        (TriggerAttemptStatus::Fired, "m4-filter-hook"),
+    ] {
+        trigger_attempt::insert(pool, &NewTriggerAttempt {
+            hook_slug: slug,
+            source_ip: "127.0.0.1",
+            status,
+            reason: "test",
+            execution_id: None,
+        }).await.unwrap();
+    }
+
+    let url = spawn_server(state).await;
+    let client = reqwest::Client::new();
+
+    // Filtered status filter returns only filtered attempts
+    let resp = client
+        .get(format!("{url}/hooks/m4-filter-hook/attempts?status=filtered"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("filtered"), "filtered status should appear");
+    assert!(!body.contains("fired"), "fired status should not appear when filtering by filtered");
+
+    // Rate limited filter
+    let resp = client
+        .get(format!("{url}/hooks/m4-filter-hook/attempts?status=rate_limited"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("rate_limited"), "rate_limited status should appear");
+
+    // Schedule skipped filter
+    let resp = client
+        .get(format!("{url}/hooks/m4-filter-hook/attempts?status=schedule_skipped"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("schedule_skipped"), "schedule_skipped status should appear");
+
+    // Cooldown skipped filter
+    let resp = client
+        .get(format!("{url}/hooks/m4-filter-hook/attempts?status=cooldown_skipped"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("cooldown_skipped"), "cooldown_skipped status should appear");
+
+    // Unfiltered returns all
+    let resp = client
+        .get(format!("{url}/hooks/m4-filter-hook/attempts"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("fired"), "all attempts should appear unfiltered");
+    assert!(body.contains("filtered"), "filtered attempt should appear unfiltered");
 }
 
 #[tokio::test]
