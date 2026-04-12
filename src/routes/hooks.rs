@@ -12,6 +12,7 @@ use axum::{Form, Json, Router};
 use serde::{Deserialize, Serialize};
 
 use crate::auth::AuthUser;
+use crate::executor::ResolvedExecutor;
 use crate::interpolation::interpolate_command;
 use crate::payload::{FieldType, PayloadField, PayloadSchema};
 use crate::config::{
@@ -193,16 +194,18 @@ async fn trigger_hook(
 
     let timeout = hook.timeout.unwrap_or(config.defaults.timeout);
 
-    let command = match &hook.executor {
-        ExecutorConfig::Shell { command } => command.clone(),
-    };
-
-    // Interpolate payload fields into command template
-    let command = if let Ok(payload_value) = serde_json::from_str::<serde_json::Value>(&payload_str)
-    {
-        interpolate_command(&command, &payload_value).into_owned()
-    } else {
-        command
+    let resolved_executor = match &hook.executor {
+        ExecutorConfig::Shell { command } => {
+            // Interpolate payload fields into command template
+            let interpolated = if let Ok(payload_value) =
+                serde_json::from_str::<serde_json::Value>(&payload_str)
+            {
+                interpolate_command(command, &payload_value).into_owned()
+            } else {
+                command.clone()
+            };
+            ResolvedExecutor::Shell { command: interpolated }
+        }
     };
 
     let env = hook.env.clone();
@@ -315,7 +318,7 @@ async fn trigger_hook(
     let ctx = crate::executor::ExecutionContext {
         execution_id: exec.id.clone(),
         hook_slug: slug,
-        command,
+        executor: resolved_executor,
         env,
         cwd,
         timeout,

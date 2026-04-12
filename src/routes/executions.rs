@@ -2,14 +2,17 @@ use std::path::Path as FsPath;
 use std::sync::Arc;
 
 use axum::extract::{Path, State};
-use axum::response::Html;
+use axum::http::StatusCode;
+use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Serialize;
 
 use crate::auth::AuthUser;
+use crate::barriers::{self, execution_lock, execution_queue};
 use crate::config::ExecutorConfig;
-use crate::error::AppError;
+use crate::error::{AppError, DbError};
+use crate::executor::ResolvedExecutor;
 use crate::interpolation::interpolate_command;
 use crate::masking::mask_secrets;
 use crate::models::execution;
@@ -21,6 +24,9 @@ pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/executions/{id}", get(execution_detail))
         .route("/executions/{id}/replay", post(replay_execution))
+        .route("/executions/{id}/approve", post(approve_execution))
+        .route("/executions/{id}/reject", post(reject_execution))
+        .route("/approvals", get(list_pending_approvals))
 }
 
 /// Read a log file, returning its contents or a fallback message.
@@ -145,17 +151,17 @@ async fn replay_execution(
 
     // 3. Prepare execution parameters from hook config
     let timeout = hook.timeout.unwrap_or(config.defaults.timeout);
-    let command = match &hook.executor {
-        ExecutorConfig::Shell { command } => command.clone(),
+    let resolved_executor = match &hook.executor {
+        ExecutorConfig::Shell { command } => {
+            let interpolated =
+                if let Ok(payload_value) = serde_json::from_str::<serde_json::Value>(&original.request_payload) {
+                    interpolate_command(command, &payload_value).into_owned()
+                } else {
+                    command.clone()
+                };
+            ResolvedExecutor::Shell { command: interpolated }
+        }
     };
-
-    // Interpolate payload fields from the original request into the command template
-    let command =
-        if let Ok(payload_value) = serde_json::from_str::<serde_json::Value>(&original.request_payload) {
-            interpolate_command(&command, &payload_value).into_owned()
-        } else {
-            command
-        };
 
     let env = hook.env.clone();
     let cwd = hook.cwd.clone();
@@ -185,7 +191,7 @@ async fn replay_execution(
     let ctx = crate::executor::ExecutionContext {
         execution_id: exec.id.clone(),
         hook_slug: original.hook_slug,
-        command,
+        executor: resolved_executor,
         env,
         cwd,
         timeout,
@@ -207,4 +213,158 @@ async fn replay_execution(
     Ok(Json(ReplayResponse {
         execution_id: exec.id,
     }))
+}
+
+/// Approve a pending_approval execution. Transitions to approved, then spawns execution.
+async fn approve_execution(
+    user: AuthUser,
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Response, Response> {
+    let pool = state.db.pool();
+
+    let exec = execution::mark_approved(pool, &id, &user.username)
+        .await
+        .map_err(|e| match e {
+            DbError::Conflict(_) => StatusCode::CONFLICT.into_response(),
+            DbError::NotFound(_) => StatusCode::NOT_FOUND.into_response(),
+            _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        })?;
+
+    let config = state.config.load();
+    let hook = config.hooks.iter().find(|h| h.slug == exec.hook_slug);
+
+    if let Some(hook) = hook {
+        let timeout = hook.timeout.unwrap_or(config.defaults.timeout);
+        let resolved_executor = match &hook.executor {
+            ExecutorConfig::Shell { command } => {
+                let interpolated = if let Ok(payload_value) =
+                    serde_json::from_str::<serde_json::Value>(&exec.request_payload)
+                {
+                    interpolate_command(command, &payload_value).into_owned()
+                } else {
+                    command.clone()
+                };
+                ResolvedExecutor::Shell { command: interpolated }
+            }
+        };
+
+        let env = hook.env.clone();
+        let cwd = hook.cwd.clone();
+        let logs_dir = config.logs.dir.clone();
+        let retry_config = retry::resolve_retry_config(hook, &config.defaults.retries);
+        let concurrency_config = hook.concurrency.clone();
+        let approval_config = hook.approval.clone();
+        let hook_slug = exec.hook_slug.clone();
+        let state_clone = Arc::clone(&state);
+
+        // Reset to pending so executor can transition pending -> running
+        let _ = sqlx::query(
+            "UPDATE executions SET status = 'pending' WHERE id = ? AND status = 'approved'",
+        )
+        .bind(&exec.id)
+        .execute(pool)
+        .await;
+
+        let ctx = crate::executor::ExecutionContext {
+            execution_id: exec.id.clone(),
+            hook_slug: exec.hook_slug.clone(),
+            executor: resolved_executor,
+            env,
+            cwd,
+            timeout,
+            logs_dir,
+            payload_json: exec.request_payload.clone(),
+        };
+
+        let pool_clone = pool.clone();
+        tokio::spawn(async move {
+            let result = retry::run_with_retries(&pool_clone, ctx, &retry_config).await;
+            tracing::info!(
+                log_dir = %result.log_dir,
+                status = %result.status,
+                "approved execution completed"
+            );
+            if concurrency_config.is_some() {
+                barriers::on_execution_complete(
+                    &state_clone,
+                    &hook_slug,
+                    concurrency_config,
+                    approval_config,
+                )
+                .await;
+            }
+        });
+    }
+
+    Ok(Redirect::to(&format!("/executions/{id}")).into_response())
+}
+
+/// Reject a pending_approval execution.
+async fn reject_execution(
+    user: AuthUser,
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Response, Response> {
+    let pool = state.db.pool();
+
+    let exec = execution::mark_rejected(pool, &id, &user.username)
+        .await
+        .map_err(|e| match e {
+            DbError::Conflict(_) => StatusCode::CONFLICT.into_response(),
+            DbError::NotFound(_) => StatusCode::NOT_FOUND.into_response(),
+            _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        })?;
+
+    // Expire any queue entry for the rejected execution
+    let _ = execution_queue::expire_for_execution(pool, &exec.id).await;
+
+    // If this execution held a lock, hand off to next queued or release
+    let config = state.config.load();
+    if let Some(hook) = config.hooks.iter().find(|h| h.slug == exec.hook_slug) {
+        if let Ok(Some(holder)) = execution_lock::get_holder(pool, &exec.hook_slug).await {
+            if holder == id {
+                barriers::on_execution_complete(
+                    &state,
+                    &exec.hook_slug,
+                    hook.concurrency.clone(),
+                    hook.approval.clone(),
+                ).await;
+            }
+        }
+    }
+
+    Ok(Redirect::to(&format!("/executions/{id}")).into_response())
+}
+
+/// List all pending_approval executions.
+async fn list_pending_approvals(
+    user: AuthUser,
+    State(state): State<Arc<AppState>>,
+) -> Result<Html<String>, AppError> {
+    let pool = state.db.pool();
+    let executions = execution::list_pending_approval(pool).await?;
+
+    let exec_list: Vec<serde_json::Value> = executions
+        .iter()
+        .map(|e| {
+            serde_json::json!({
+                "id": e.id,
+                "hook_slug": e.hook_slug,
+                "triggered_at": e.triggered_at,
+                "trigger_source": e.trigger_source,
+            })
+        })
+        .collect();
+
+    let html = state.templates.render(
+        "approvals.html",
+        context! {
+            executions => exec_list,
+            username => user.username,
+            nav_active => "approvals",
+        },
+    )?;
+
+    Ok(Html(html))
 }

@@ -327,6 +327,8 @@ mod tests {
             rate_limit: None,
             payload: None,
             trigger_rules: None,
+            concurrency: None,
+            approval: None,
         }
     }
 
@@ -405,6 +407,7 @@ mod tests {
                 trigger_source: "127.0.0.1",
                 request_payload: "{}",
                 retry_of: None,
+                status: None,
             },
         )
         .await
@@ -413,7 +416,7 @@ mod tests {
         ExecutionContext {
             execution_id: exec.id,
             hook_slug: "test-hook".into(),
-            command: command.into(),
+            executor: crate::executor::ResolvedExecutor::Shell { command: command.into() },
             env: HashMap::new(),
             cwd: None,
             timeout: Duration::from_secs(10),
