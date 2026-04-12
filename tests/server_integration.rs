@@ -3197,3 +3197,76 @@ async fn trigger_attempts_logged_for_rejections() {
     assert!(!attempts[0].reason.is_empty());
     assert!(attempts[0].execution_id.is_none());
 }
+
+/// Verifies that the SSE log stream endpoint sends a `done` event immediately
+/// for an execution that is already in a terminal state (e.g. success or failed).
+/// The event payload must include a `status` field with the terminal status string.
+#[tokio::test]
+async fn sse_returns_done_for_terminal_execution() {
+    use sendword::models::execution::{self, ExecutionStatus, NewExecution};
+
+    let state = test_state(AppConfig::default()).await;
+    let token = create_test_session(&state).await;
+
+    // Create an execution and transition it to a terminal state.
+    let exec = execution::create(
+        state.db.pool(),
+        &NewExecution {
+            id: None,
+            hook_slug: "sse-test-hook",
+            log_path: "/tmp/sse-test-logs",
+            trigger_source: "127.0.0.1",
+            request_payload: "{}",
+            retry_of: None,
+            status: None,
+        },
+    )
+    .await
+    .expect("create execution");
+
+    execution::mark_running(state.db.pool(), &exec.id)
+        .await
+        .expect("mark running");
+    execution::mark_completed(state.db.pool(), &exec.id, ExecutionStatus::Success, Some(0))
+        .await
+        .expect("mark completed");
+
+    let url = spawn_server(state).await;
+
+    // SSE endpoint uses text/event-stream; we read the body as text.
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("{url}/executions/{}/logs/stream", exec.id))
+        .header("Cookie", format!("sendword_session={token}"))
+        .send()
+        .await
+        .expect("request SSE endpoint");
+
+    assert_eq!(resp.status(), 200, "SSE endpoint should return 200");
+
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(
+        content_type.contains("text/event-stream"),
+        "should be event-stream, got: {content_type}"
+    );
+
+    // For a terminal execution the server sends events then closes the stream.
+    // Read the full body (the server closes after the done event).
+    let body = resp.text().await.expect("read SSE body");
+
+    // The body must contain a `done` event line.
+    assert!(
+        body.contains("event: done"),
+        "SSE body should contain a done event; got:\n{body}"
+    );
+
+    // The done event data must include the execution status.
+    assert!(
+        body.contains("success"),
+        "done event data should contain the terminal status; got:\n{body}"
+    );
+}
