@@ -179,6 +179,9 @@ async fn run_dequeued(
         }
     };
 
+    let notification_config = hook.notification.clone();
+    let hook_snapshot = hook.clone();
+
     let ctx = crate::executor::ExecutionContext {
         execution_id: exec.id.clone(),
         hook_slug: exec.hook_slug.clone(),
@@ -193,6 +196,7 @@ async fn run_dequeued(
 
     let retry_config = crate::retry::resolve_retry_config(hook, &app_config.defaults.retries);
     let pool_clone = pool.clone();
+    let execution_id_clone = exec.id.clone();
 
     let result = crate::retry::run_with_retries(&pool_clone, ctx, &retry_config).await;
     tracing::info!(
@@ -200,6 +204,21 @@ async fn run_dequeued(
         status = %result.status,
         "dequeued execution completed"
     );
+
+    if let Some(ref nc) = notification_config {
+        if let Ok(exec_record) =
+            crate::models::execution::get_by_id(&pool_clone, &execution_id_clone).await
+        {
+            crate::notification::send_notification(
+                &state.http_client,
+                nc,
+                &hook_snapshot,
+                &result,
+                &exec_record,
+            )
+            .await;
+        }
+    }
 
     // After the execution finishes, hand off to the next queue item (or release the lock).
     // Calling on_execution_complete here is safe because run_dequeued is only ever called

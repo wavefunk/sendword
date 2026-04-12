@@ -184,6 +184,8 @@ async fn replay_execution(
     let env = hook.env.clone();
     let cwd = hook.cwd.clone();
     let logs_dir = config.logs.dir.clone();
+    let notification_config = hook.notification.clone();
+    let hook_snapshot = hook.clone();
 
     let retry_config = retry::resolve_retry_config(hook, &config.defaults.retries);
 
@@ -219,6 +221,8 @@ async fn replay_execution(
     };
 
     let pool = pool.clone();
+    let state_clone = Arc::clone(&state);
+    let execution_id = exec.id.clone();
     tokio::spawn(async move {
         let result = retry::run_with_retries(&pool, ctx, &retry_config).await;
         tracing::info!(
@@ -227,6 +231,20 @@ async fn replay_execution(
             exit_code = ?result.exit_code,
             "replay execution completed"
         );
+        if let Some(ref nc) = notification_config {
+            if let Ok(exec_record) =
+                crate::models::execution::get_by_id(&pool, &execution_id).await
+            {
+                crate::notification::send_notification(
+                    &state_clone.http_client,
+                    nc,
+                    &hook_snapshot,
+                    &result,
+                    &exec_record,
+                )
+                .await;
+            }
+        }
     });
 
     Ok(Json(ReplayResponse {
@@ -292,6 +310,8 @@ async fn approve_execution(
         let retry_config = retry::resolve_retry_config(hook, &config.defaults.retries);
         let concurrency_config = hook.concurrency.clone();
         let approval_config = hook.approval.clone();
+        let notification_config = hook.notification.clone();
+        let hook_snapshot = hook.clone();
         let hook_slug = exec.hook_slug.clone();
         let state_clone = Arc::clone(&state);
 
@@ -315,6 +335,7 @@ async fn approve_execution(
             http_client: Some(state.http_client.clone()),
         };
 
+        let execution_id = exec.id.clone();
         let pool_clone = pool.clone();
         tokio::spawn(async move {
             let result = retry::run_with_retries(&pool_clone, ctx, &retry_config).await;
@@ -323,6 +344,20 @@ async fn approve_execution(
                 status = %result.status,
                 "approved execution completed"
             );
+            if let Some(ref nc) = notification_config {
+                if let Ok(exec_record) =
+                    crate::models::execution::get_by_id(&pool_clone, &execution_id).await
+                {
+                    crate::notification::send_notification(
+                        &state_clone.http_client,
+                        nc,
+                        &hook_snapshot,
+                        &result,
+                        &exec_record,
+                    )
+                    .await;
+                }
+            }
             if concurrency_config.is_some() {
                 barriers::on_execution_complete(
                     &state_clone,
