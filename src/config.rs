@@ -278,6 +278,19 @@ impl AppConfig {
                         }
                     }
                 }
+
+                if let Some(rl) = &rules.rate_limit {
+                    if rl.max_requests == 0 {
+                        errors.push(format!(
+                            "{prefix}.trigger_rules.rate_limit.max_requests must be greater than 0"
+                        ));
+                    }
+                    if rl.window.is_zero() {
+                        errors.push(format!(
+                            "{prefix}.trigger_rules.rate_limit.window must be greater than 0"
+                        ));
+                    }
+                }
             }
         }
 

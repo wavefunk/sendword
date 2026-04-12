@@ -4,6 +4,10 @@ use tokio::task::JoinHandle;
 
 use crate::models::session;
 
+/// Threshold for cleaning up stale rate limit counters. 48 hours is safely
+/// past any realistic rate limit window a user would configure.
+const RATE_LIMIT_COUNTER_TTL_HOURS: i64 = 48;
+
 /// Interval between expired session sweeps.
 const SWEEP_INTERVAL: Duration = Duration::from_secs(60 * 60); // 1 hour
 
@@ -28,6 +32,26 @@ pub fn spawn_session_sweep(pool: SqlitePool) -> JoinHandle<()> {
                 Err(err) => {
                     tracing::error!(error = %err, "session sweep: failed to delete expired sessions");
                 }
+            }
+
+            // Clean up stale rate limit counters (older than 48 hours).
+            let cutoff = (chrono::Utc::now()
+                - chrono::Duration::hours(RATE_LIMIT_COUNTER_TTL_HOURS))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string();
+            match sqlx::query("DELETE FROM rate_limit_counters WHERE window_start < ?")
+                .bind(&cutoff)
+                .execute(&pool)
+                .await
+            {
+                Ok(r) if r.rows_affected() > 0 => {
+                    tracing::debug!(
+                        deleted = r.rows_affected(),
+                        "session sweep: cleaned stale rate limit counters"
+                    );
+                }
+                Err(e) => tracing::warn!("session sweep: failed to clean rate limit counters: {e}"),
+                _ => {}
             }
         }
     })
