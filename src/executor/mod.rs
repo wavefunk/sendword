@@ -1,3 +1,4 @@
+pub mod script;
 pub mod shell;
 
 use std::collections::HashMap;
@@ -13,6 +14,7 @@ use crate::models::ExecutionStatus;
 #[derive(Clone)]
 pub enum ResolvedExecutor {
     Shell { command: String },
+    Script { path: PathBuf },
 }
 
 /// Everything the executor needs to run a command.
@@ -96,6 +98,7 @@ pub(crate) fn system_env_vars() -> HashMap<String, String> {
 pub async fn run(pool: &SqlitePool, ctx: ExecutionContext) -> ExecutionResult {
     match &ctx.executor {
         ResolvedExecutor::Shell { command } => shell::run_shell(pool, &ctx, command).await,
+        ResolvedExecutor::Script { path } => script::run_script(pool, &ctx, path).await,
     }
 }
 

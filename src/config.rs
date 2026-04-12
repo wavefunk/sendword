@@ -292,6 +292,24 @@ impl AppConfig {
                     }
                 }
             }
+
+            if let Some(concurrency) = &hook.concurrency {
+                if concurrency.mode == ConcurrencyMode::Queue && concurrency.queue_depth == 0 {
+                    errors.push(format!(
+                        "{prefix}.concurrency.queue_depth must be greater than 0 in queue mode"
+                    ));
+                }
+            }
+
+            if let Some(approval) = &hook.approval {
+                if let Some(timeout) = approval.timeout {
+                    if timeout.is_zero() {
+                        errors.push(format!(
+                            "{prefix}.approval.timeout must be greater than 0 if set"
+                        ));
+                    }
+                }
+            }
         }
 
         if errors.is_empty() {
@@ -478,6 +496,7 @@ impl Default for DefaultsConfig {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ExecutorConfig {
     Shell { command: String },
+    Script { path: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -553,6 +572,33 @@ pub struct TriggerRules {
     pub rate_limit: Option<TriggerRateLimit>,
 }
 
+// --- Execution barriers ---
+
+fn default_queue_depth() -> u32 {
+    10
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConcurrencyMode {
+    Mutex,
+    Queue,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ConcurrencyConfig {
+    pub mode: ConcurrencyMode,
+    #[serde(default = "default_queue_depth")]
+    pub queue_depth: u32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ApprovalConfig {
+    pub required: bool,
+    #[serde(default, with = "humantime_serde::option")]
+    pub timeout: Option<Duration>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct HookConfig {
     pub name: String,
@@ -573,6 +619,10 @@ pub struct HookConfig {
     pub payload: Option<PayloadSchema>,
     #[serde(default)]
     pub trigger_rules: Option<TriggerRules>,
+    #[serde(default)]
+    pub concurrency: Option<ConcurrencyConfig>,
+    #[serde(default)]
+    pub approval: Option<ApprovalConfig>,
 }
 
 #[cfg(test)]
@@ -694,7 +744,9 @@ mod tests {
             assert_eq!(hook.cwd.as_deref(), Some("/opt/app"));
             assert_eq!(hook.timeout, Some(Duration::from_secs(120)));
 
-            let ExecutorConfig::Shell { command } = &hook.executor;
+            let ExecutorConfig::Shell { command } = &hook.executor else {
+                panic!("expected Shell executor");
+            };
             assert_eq!(command, "make deploy");
 
             assert_eq!(hook.env.get("APP_ENV").map(String::as_str), Some("production"));
@@ -879,6 +931,8 @@ mod tests {
             rate_limit: None,
             payload: None,
             trigger_rules: None,
+            concurrency: None,
+            approval: None,
         }
     }
 

@@ -12,6 +12,7 @@ use axum::{Form, Json, Router};
 use serde::{Deserialize, Serialize};
 
 use crate::auth::AuthUser;
+use crate::barriers::{self, BarrierOutcome};
 use crate::executor::ResolvedExecutor;
 use crate::interpolation::interpolate_command;
 use crate::payload::{FieldType, PayloadField, PayloadSchema};
@@ -22,7 +23,7 @@ use crate::config::{
 use crate::webhook_auth;
 use crate::config_writer::{self, HookFormData, RetryFormData, WriteError};
 use crate::error::AppError;
-use crate::models::{execution, trigger_attempt};
+use crate::models::{execution, trigger_attempt, ExecutionStatus};
 use crate::models::trigger_attempt::{NewTriggerAttempt, TriggerAttemptStatus};
 use crate::retry;
 use crate::server::AppState;
@@ -206,6 +207,9 @@ async fn trigger_hook(
             };
             ResolvedExecutor::Shell { command: interpolated }
         }
+        ExecutorConfig::Script { path } => {
+            ResolvedExecutor::Script { path: std::path::PathBuf::from(path) }
+        }
     };
 
     let env = hook.env.clone();
@@ -283,26 +287,108 @@ async fn trigger_hook(
         }
     }
 
-    // Pre-generate the execution ID so we can set the correct log_path
+    // Pre-generate the execution ID so barriers can reference it before the record is created
     let exec_id = crate::id::new_id();
     let log_path = format!("{logs_dir}/{exec_id}");
 
-    let exec = execution::create(
-        pool,
-        &execution::NewExecution {
-            id: Some(&exec_id),
-            hook_slug: &slug,
-            log_path: &log_path,
-            trigger_source: &source_ip,
-            request_payload: &payload_str,
-            retry_of: None,
-            status: None,
-        },
-    )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())?;
+    let new_exec = execution::NewExecution {
+        id: Some(&exec_id),
+        hook_slug: &slug,
+        log_path: &log_path,
+        trigger_source: &source_ip,
+        request_payload: &payload_str,
+        retry_of: None,
+        status: None,
+    };
 
-    // Log successful trigger attempt
+    // Concurrency barrier: evaluated before creating the execution record.
+    // Queue mode may create the record internally and return Defer.
+    if let Some(concurrency) = &hook.concurrency {
+        match barriers::concurrency::evaluate(pool, &slug, &exec_id, concurrency, &new_exec).await {
+            BarrierOutcome::Proceed => {
+                // Lock acquired, continue to approval check
+            }
+            BarrierOutcome::Reject { status, reason } => {
+                let _ = trigger_attempt::insert(
+                    pool,
+                    &NewTriggerAttempt {
+                        hook_slug: &slug,
+                        source_ip: &source_ip,
+                        status: status.clone(),
+                        reason: &reason,
+                        execution_id: None,
+                    },
+                )
+                .await;
+                return Ok(Json(serde_json::json!({
+                    "status": status.to_string(),
+                    "reason": reason,
+                }))
+                .into_response());
+            }
+            BarrierOutcome::Defer { execution_id, reason, .. } => {
+                let _ = trigger_attempt::insert(
+                    pool,
+                    &NewTriggerAttempt {
+                        hook_slug: &slug,
+                        source_ip: &source_ip,
+                        status: TriggerAttemptStatus::Fired,
+                        reason: &reason,
+                        execution_id: Some(&execution_id),
+                    },
+                )
+                .await;
+                return Ok(Json(serde_json::json!({
+                    "execution_id": execution_id,
+                    "status": "queued",
+                    "reason": reason,
+                }))
+                .into_response());
+            }
+        }
+    }
+
+    // Approval barrier: create record with pending_approval status and return early.
+    if barriers::approval::requires_approval(hook.approval.as_ref()) {
+        let exec = execution::create(
+            pool,
+            &execution::NewExecution {
+                id: Some(&exec_id),
+                hook_slug: &slug,
+                log_path: &log_path,
+                trigger_source: &source_ip,
+                request_payload: &payload_str,
+                retry_of: None,
+                status: Some(ExecutionStatus::PendingApproval),
+            },
+        )
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())?;
+
+        let _ = trigger_attempt::insert(
+            pool,
+            &NewTriggerAttempt {
+                hook_slug: &slug,
+                source_ip: &source_ip,
+                status: TriggerAttemptStatus::PendingApproval,
+                reason: "pending approval",
+                execution_id: Some(&exec.id),
+            },
+        )
+        .await;
+
+        return Ok(Json(serde_json::json!({
+            "execution_id": exec.id,
+            "status": "pending_approval",
+        }))
+        .into_response());
+    }
+
+    // No barriers (or all passed): create execution record and spawn.
+    let exec = execution::create(pool, &new_exec)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())?;
+
     let _ = trigger_attempt::insert(
         pool,
         &NewTriggerAttempt {
@@ -317,7 +403,7 @@ async fn trigger_hook(
 
     let ctx = crate::executor::ExecutionContext {
         execution_id: exec.id.clone(),
-        hook_slug: slug,
+        hook_slug: slug.clone(),
         executor: resolved_executor,
         env,
         cwd,
@@ -327,6 +413,9 @@ async fn trigger_hook(
     };
 
     let pool = pool.clone();
+    let state_clone = Arc::clone(&state);
+    let concurrency_config = hook.concurrency.clone();
+    let approval_config = hook.approval.clone();
     tokio::spawn(async move {
         let result = retry::run_with_retries(&pool, ctx, &retry_config).await;
         tracing::info!(
@@ -335,6 +424,15 @@ async fn trigger_hook(
             exit_code = ?result.exit_code,
             "execution completed"
         );
+        if concurrency_config.is_some() {
+            barriers::on_execution_complete(
+                &state_clone,
+                &slug,
+                concurrency_config,
+                approval_config,
+            )
+            .await;
+        }
     });
 
     Ok(Json(TriggerResponse {
@@ -370,6 +468,7 @@ async fn hook_detail(
 
     let (executor_command, executor_type) = match &hook.executor {
         ExecutorConfig::Shell { command } => (command.as_str(), "shell"),
+        ExecutorConfig::Script { path } => (path.as_str(), "script"),
     };
 
     // Check if the command references a script in the managed scripts directory.
@@ -1147,6 +1246,7 @@ async fn edit_hook_form(
 
     let (command, _) = match &hook.executor {
         ExecutorConfig::Shell { command } => (command.as_str(), "shell"),
+        ExecutorConfig::Script { path } => (path.as_str(), "script"),
     };
 
     let timeout_str = hook
@@ -1728,7 +1828,9 @@ command = "echo old"
         let config = state.config.load();
         assert_eq!(config.hooks[0].name, "New Name");
         assert_eq!(config.hooks[0].description, "updated");
-        let ExecutorConfig::Shell { command } = &config.hooks[0].executor;
+        let ExecutorConfig::Shell { command } = &config.hooks[0].executor else {
+            panic!("expected Shell executor");
+        };
         assert_eq!(command, "echo new");
     }
 
