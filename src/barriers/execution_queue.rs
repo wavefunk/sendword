@@ -235,4 +235,39 @@ mod tests {
         assert_eq!(count_waiting(&pool, "hook-a").await.unwrap(), 1);
         assert_eq!(count_waiting(&pool, "hook-b").await.unwrap(), 1);
     }
+
+    #[tokio::test]
+    async fn concurrent_enqueue_positions_unique() {
+        use std::collections::HashSet;
+
+        let pool = test_pool().await;
+
+        // Pre-create execution records to satisfy FK constraints
+        for i in 1..=5u32 {
+            create_exec(&pool, &format!("exec-{i}")).await;
+        }
+
+        // Spawn 5 concurrent enqueue tasks
+        let handles: Vec<_> = (1..=5u32)
+            .map(|i| {
+                let pool = pool.clone();
+                tokio::spawn(async move {
+                    enqueue(&pool, "test-hook", &format!("exec-{i}")).await.unwrap()
+                })
+            })
+            .collect();
+
+        let mut positions: Vec<i64> = Vec::with_capacity(5);
+        for h in handles {
+            positions.push(h.await.expect("task panicked"));
+        }
+
+        // All positions must be unique and in range 1..=5
+        let unique: HashSet<i64> = positions.iter().copied().collect();
+        assert_eq!(unique.len(), 5, "positions must be unique: {positions:?}");
+        assert!(
+            unique.iter().all(|&p| (1..=5).contains(&p)),
+            "positions out of range: {positions:?}"
+        );
+    }
 }
