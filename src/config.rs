@@ -428,6 +428,59 @@ pub enum HookAuthConfig {
     },
 }
 
+// --- Trigger rules ---
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FilterOperator {
+    Equals,
+    NotEquals,
+    Contains,
+    Regex,
+    Exists,
+    Gt,
+    Lt,
+    Gte,
+    Lte,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PayloadFilter {
+    pub field: String,
+    pub operator: FilterOperator,
+    #[serde(default)]
+    pub value: Option<String>,
+}
+
+/// A time window during which a hook is allowed to execute.
+/// `days` is a list of day names (e.g. ["Mon", "Tue", "Wed"]).
+/// Times are UTC strings in "HH:MM" format.
+#[derive(Debug, Clone, Deserialize)]
+pub struct TimeWindow {
+    pub days: Vec<String>,
+    pub start_time: String,
+    pub end_time: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct TriggerRateLimit {
+    pub max_requests: u64,
+    #[serde(with = "humantime_serde")]
+    pub window: Duration,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct TriggerRules {
+    #[serde(default)]
+    pub payload_filters: Option<Vec<PayloadFilter>>,
+    #[serde(default)]
+    pub time_windows: Option<Vec<TimeWindow>>,
+    #[serde(default, with = "humantime_serde::option")]
+    pub cooldown: Option<Duration>,
+    #[serde(default)]
+    pub rate_limit: Option<TriggerRateLimit>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct HookConfig {
     pub name: String,
@@ -446,6 +499,8 @@ pub struct HookConfig {
     pub retries: Option<RetryConfig>,
     pub rate_limit: Option<RateLimitConfig>,
     pub payload: Option<PayloadSchema>,
+    #[serde(default)]
+    pub trigger_rules: Option<TriggerRules>,
 }
 
 #[cfg(test)]
@@ -751,6 +806,7 @@ mod tests {
             retries: None,
             rate_limit: None,
             payload: None,
+            trigger_rules: None,
         }
     }
 

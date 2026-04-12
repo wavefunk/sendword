@@ -10,7 +10,10 @@ use std::time::Duration;
 
 use toml_edit::{Array, DocumentMut, Formatted, InlineTable, Item, Table, Value};
 
-use crate::config::{AppConfig, BackoffStrategy, ConfigError, HmacAlgorithm, HookAuthConfig};
+use crate::config::{
+    AppConfig, BackoffStrategy, ConfigError, FilterOperator, HmacAlgorithm, HookAuthConfig,
+    PayloadFilter, TimeWindow, TriggerRateLimit, TriggerRules,
+};
 use crate::payload::{FieldType, PayloadSchema};
 
 // ---------------------------------------------------------------------------
@@ -53,6 +56,7 @@ pub struct HookFormData {
     pub retries: Option<RetryFormData>,
     pub auth: Option<HookAuthConfig>,
     pub payload: Option<PayloadSchema>,
+    pub trigger_rules: Option<TriggerRules>,
 }
 
 #[derive(Debug, Clone)]
@@ -322,6 +326,74 @@ fn apply_hook_fields(table: &mut Table, data: &HookFormData) {
             table.remove("payload");
         }
     }
+
+    // trigger_rules sub-table or remove
+    let has_trigger_rules = data.trigger_rules.as_ref().is_some_and(|r| {
+        r.payload_filters.as_ref().is_some_and(|f| !f.is_empty())
+            || r.time_windows.as_ref().is_some_and(|w| !w.is_empty())
+            || r.cooldown.is_some()
+            || r.rate_limit.is_some()
+    });
+
+    if has_trigger_rules {
+        let rules = data.trigger_rules.as_ref().unwrap();
+        let mut rules_table = Table::new();
+
+        if let Some(filters) = &rules.payload_filters {
+            if !filters.is_empty() {
+                let mut filters_array = Array::new();
+                for f in filters {
+                    let mut ft = InlineTable::new();
+                    ft.insert("field", f.field.as_str().into());
+                    ft.insert("operator", filter_operator_str(f.operator).into());
+                    if let Some(val) = &f.value {
+                        ft.insert("value", val.as_str().into());
+                    }
+                    filters_array.push(ft);
+                }
+                rules_table.insert(
+                    "payload_filters",
+                    Item::Value(Value::Array(filters_array)),
+                );
+            }
+        }
+
+        if let Some(windows) = &rules.time_windows {
+            if !windows.is_empty() {
+                let mut windows_array = Array::new();
+                for w in windows {
+                    let mut wt = InlineTable::new();
+                    let days_joined = w.days.join(",");
+                    wt.insert("days", days_joined.as_str().into());
+                    wt.insert("start_time", w.start_time.as_str().into());
+                    wt.insert("end_time", w.end_time.as_str().into());
+                    windows_array.push(wt);
+                }
+                rules_table.insert(
+                    "time_windows",
+                    Item::Value(Value::Array(windows_array)),
+                );
+            }
+        }
+
+        if let Some(cooldown) = rules.cooldown {
+            rules_table.insert("cooldown", toml_string(&format_duration(cooldown)));
+        }
+
+        if let Some(rl) = &rules.rate_limit {
+            let mut rl_table = Table::new();
+            rl_table.insert(
+                "max_requests",
+                Item::Value(Value::Integer(Formatted::new(i64::try_from(rl.max_requests).unwrap_or(i64::MAX)))),
+            );
+            rl_table.insert("window", toml_string(&format_duration(rl.window)));
+            rules_table.insert("rate_limit", Item::Table(rl_table));
+        }
+
+        table.insert("trigger_rules", Item::Table(rules_table));
+    } else {
+        table.remove("trigger_rules");
+    }
 }
 
 fn toml_string(s: &str) -> Item {
@@ -343,6 +415,20 @@ fn field_type_str(ft: FieldType) -> &'static str {
         FieldType::Boolean => "boolean",
         FieldType::Object => "object",
         FieldType::Array => "array",
+    }
+}
+
+pub fn filter_operator_str(op: FilterOperator) -> &'static str {
+    match op {
+        FilterOperator::Equals => "equals",
+        FilterOperator::NotEquals => "not_equals",
+        FilterOperator::Contains => "contains",
+        FilterOperator::Regex => "regex",
+        FilterOperator::Exists => "exists",
+        FilterOperator::Gt => "gt",
+        FilterOperator::Lt => "lt",
+        FilterOperator::Gte => "gte",
+        FilterOperator::Lte => "lte",
     }
 }
 
@@ -428,6 +514,7 @@ mod tests {
             retries: None,
             auth: None,
             payload: None,
+            trigger_rules: None,
         }
     }
 
@@ -513,6 +600,7 @@ command = "echo old"
             retries: None,
             auth: None,
             payload: None,
+            trigger_rules: None,
         };
 
         writer.update_hook("my-hook", &data).expect("update hook");

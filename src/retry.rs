@@ -326,6 +326,7 @@ mod tests {
             retries,
             rate_limit: None,
             payload: None,
+            trigger_rules: None,
         }
     }
 
