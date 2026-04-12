@@ -171,6 +171,25 @@ pub async fn mark_completed(
     Ok(())
 }
 
+/// Get the most recent execution for a hook that has actually started
+/// (started_at IS NOT NULL). Used by cooldown evaluation.
+pub async fn get_latest_started_by_hook(
+    pool: &SqlitePool,
+    hook_slug: &str,
+) -> DbResult<Option<Execution>> {
+    let row = sqlx::query_as::<_, Execution>(
+        "SELECT id, hook_slug, triggered_at, started_at, completed_at, \
+                status, exit_code, log_path, trigger_source, request_payload, \
+                retry_count, retry_of, approved_at, approved_by \
+         FROM executions WHERE hook_slug = ? AND started_at IS NOT NULL \
+         ORDER BY started_at DESC LIMIT 1",
+    )
+    .bind(hook_slug)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row)
+}
+
 /// Increment the retry count for an execution.
 pub async fn increment_retry_count(pool: &SqlitePool, id: &str) -> DbResult<()> {
     sqlx::query("UPDATE executions SET retry_count = retry_count + 1 WHERE id = ?")
