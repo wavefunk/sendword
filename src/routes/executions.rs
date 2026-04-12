@@ -176,6 +176,7 @@ async fn replay_execution(
             trigger_source: &original.trigger_source,
             request_payload: &original.request_payload,
             retry_of: Some(&original.id),
+            status: None,
         },
     )
     .await?;

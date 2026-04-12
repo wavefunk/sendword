@@ -110,6 +110,7 @@ mod tests {
                 trigger_source: "127.0.0.1",
                 request_payload: "{}",
                 retry_of: None,
+                status: None,
             },
         )
         .await

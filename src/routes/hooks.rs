@@ -293,6 +293,7 @@ async fn trigger_hook(
             trigger_source: &source_ip,
             request_payload: &payload_str,
             retry_of: None,
+            status: None,
         },
     )
     .await

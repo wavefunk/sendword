@@ -77,6 +77,8 @@ pub struct NewExecution<'a> {
     pub trigger_source: &'a str,
     pub request_payload: &'a str,
     pub retry_of: Option<&'a str>,
+    /// Optional initial status. Defaults to `pending` if None.
+    pub status: Option<ExecutionStatus>,
 }
 
 // --- Query functions ---
@@ -85,7 +87,11 @@ pub struct NewExecution<'a> {
 pub async fn create(pool: &SqlitePool, new: &NewExecution<'_>) -> DbResult<Execution> {
     let id = new.id.map(String::from).unwrap_or_else(id::new_id);
     let triggered_at = timestamp::now_utc();
-    let status = ExecutionStatus::Pending.to_string();
+    let status = new
+        .status
+        .as_ref()
+        .unwrap_or(&ExecutionStatus::Pending)
+        .to_string();
 
     sqlx::query(
         "INSERT INTO executions (id, hook_slug, triggered_at, status, log_path, trigger_source, request_payload, retry_of) \
@@ -263,6 +269,94 @@ pub async fn count_by_hook(pool: &SqlitePool, hook_slug: &str) -> DbResult<i64> 
     Ok(row.0)
 }
 
+/// Transition pending_approval -> approved, recording who approved and when.
+pub async fn mark_approved(pool: &SqlitePool, id: &str, approved_by: &str) -> DbResult<Execution> {
+    let approved_at = timestamp::now_utc();
+    let result = sqlx::query(
+        "UPDATE executions SET status = 'approved', approved_at = ?, approved_by = ? \
+         WHERE id = ? AND status = 'pending_approval'",
+    )
+    .bind(&approved_at)
+    .bind(approved_by)
+    .bind(id)
+    .execute(pool)
+    .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(DbError::Conflict(format!(
+            "execution {id} is not in pending_approval status"
+        )));
+    }
+    get_by_id(pool, id).await
+}
+
+/// Transition pending_approval -> rejected.
+pub async fn mark_rejected(pool: &SqlitePool, id: &str, rejected_by: &str) -> DbResult<Execution> {
+    let completed_at = timestamp::now_utc();
+    let result = sqlx::query(
+        "UPDATE executions SET status = 'rejected', completed_at = ?, approved_at = ?, approved_by = ? \
+         WHERE id = ? AND status = 'pending_approval'",
+    )
+    .bind(&completed_at)
+    .bind(&completed_at)
+    .bind(rejected_by)
+    .bind(id)
+    .execute(pool)
+    .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(DbError::Conflict(format!(
+            "execution {id} is not in pending_approval status"
+        )));
+    }
+    get_by_id(pool, id).await
+}
+
+/// Transition pending_approval -> expired (for timeout sweep).
+pub async fn mark_expired(pool: &SqlitePool, id: &str) -> DbResult<()> {
+    let completed_at = timestamp::now_utc();
+    sqlx::query(
+        "UPDATE executions SET status = 'expired', completed_at = ? \
+         WHERE id = ? AND status = 'pending_approval'",
+    )
+    .bind(&completed_at)
+    .bind(id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Transition pending -> pending_approval (for queued items that reach the front and need approval).
+pub async fn mark_pending_approval(pool: &SqlitePool, id: &str) -> DbResult<()> {
+    let result = sqlx::query(
+        "UPDATE executions SET status = 'pending_approval' WHERE id = ? AND status = 'pending'",
+    )
+    .bind(id)
+    .execute(pool)
+    .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(DbError::Conflict(format!(
+            "execution {id} is not in pending status"
+        )));
+    }
+    Ok(())
+}
+
+/// List all executions with pending_approval status, most recent first.
+pub async fn list_pending_approval(pool: &SqlitePool) -> DbResult<Vec<Execution>> {
+    let rows = sqlx::query_as::<_, Execution>(
+        "SELECT id, hook_slug, triggered_at, started_at, completed_at, \
+                status, exit_code, log_path, trigger_source, request_payload, \
+                retry_count, retry_of, approved_at, approved_by \
+         FROM executions WHERE status = 'pending_approval' \
+         ORDER BY triggered_at DESC",
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -282,6 +376,7 @@ mod tests {
             trigger_source: "127.0.0.1",
             request_payload: r#"{"action": "opened"}"#,
             retry_of: None,
+            status: None,
         }
     }
 
@@ -466,6 +561,7 @@ mod tests {
                 trigger_source: "127.0.0.1",
                 request_payload: "{}",
                 retry_of: None,
+                status: None,
             },
         )
         .await
@@ -490,6 +586,7 @@ mod tests {
                 trigger_source: "10.0.0.1",
                 request_payload: "{}",
                 retry_of: None,
+                status: None,
             },
         )
         .await
@@ -534,6 +631,7 @@ mod tests {
                 trigger_source: "127.0.0.1",
                 request_payload: r#"{"action": "opened"}"#,
                 retry_of: Some(&original.id),
+                status: None,
             },
         )
         .await
@@ -564,6 +662,7 @@ mod tests {
                 trigger_source: "127.0.0.1",
                 request_payload: "{}",
                 retry_of: None,
+                status: None,
             },
         )
         .await

@@ -203,6 +203,8 @@ async fn dashboard_renders_configured_hooks() {
                 rate_limit: None,
                 payload: None,
                 trigger_rules: None,
+            concurrency: None,
+            approval: None,
             },
             HookConfig {
                 name: "Run Tests".into(),
@@ -220,6 +222,8 @@ async fn dashboard_renders_configured_hooks() {
                 rate_limit: None,
                 payload: None,
                 trigger_rules: None,
+            concurrency: None,
+            approval: None,
             },
         ],
         ..AppConfig::default()
@@ -279,6 +283,8 @@ async fn dashboard_shows_last_execution_status() {
             rate_limit: None,
             payload: None,
             trigger_rules: None,
+        concurrency: None,
+        approval: None,
         }],
         ..AppConfig::default()
     };
@@ -296,6 +302,7 @@ async fn dashboard_shows_last_execution_status() {
             trigger_source: "127.0.0.1",
             request_payload: "{}",
             retry_of: None,
+        status: None,
         },
     )
     .await
@@ -348,6 +355,8 @@ async fn dashboard_shows_no_executions_for_new_hook() {
             rate_limit: None,
             payload: None,
             trigger_rules: None,
+        concurrency: None,
+        approval: None,
         }],
         ..AppConfig::default()
     };
@@ -390,6 +399,8 @@ fn make_test_hook(name: &str, slug: &str, command: &str) -> sendword::config::Ho
         rate_limit: None,
         payload: None,
         trigger_rules: None,
+        concurrency: None,
+        approval: None,
     }
 }
 
@@ -487,6 +498,8 @@ async fn hook_detail_shows_disabled_hook() {
             rate_limit: None,
             payload: None,
             trigger_rules: None,
+        concurrency: None,
+        approval: None,
         }],
         ..AppConfig::default()
     };
@@ -528,6 +541,7 @@ async fn hook_detail_shows_execution_history() {
             trigger_source: "127.0.0.1",
             request_payload: "{}",
             retry_of: None,
+        status: None,
         },
     )
     .await
@@ -548,6 +562,7 @@ async fn hook_detail_shows_execution_history() {
             trigger_source: "10.0.0.1",
             request_payload: "{}",
             retry_of: None,
+        status: None,
         },
     )
     .await
@@ -672,6 +687,7 @@ async fn replay_returns_404_when_hook_no_longer_exists() {
             trigger_source: "127.0.0.1",
             request_payload: r#"{"key": "value"}"#,
             retry_of: None,
+        status: None,
         },
     )
     .await
@@ -713,6 +729,8 @@ async fn replay_creates_new_execution_linked_to_original() {
             rate_limit: None,
             payload: None,
             trigger_rules: None,
+        concurrency: None,
+        approval: None,
         }],
         ..AppConfig::default()
     };
@@ -731,6 +749,7 @@ async fn replay_creates_new_execution_linked_to_original() {
             trigger_source: "10.0.0.1",
             request_payload: r#"{"action": "deploy"}"#,
             retry_of: None,
+        status: None,
         },
     )
     .await
@@ -795,6 +814,8 @@ async fn replay_spawns_executor_and_runs_command() {
             rate_limit: None,
             payload: None,
             trigger_rules: None,
+        concurrency: None,
+        approval: None,
         }],
         ..AppConfig::default()
     };
@@ -813,6 +834,7 @@ async fn replay_spawns_executor_and_runs_command() {
             trigger_source: "127.0.0.1",
             request_payload: "{}",
             retry_of: None,
+        status: None,
         },
     )
     .await
@@ -894,6 +916,7 @@ async fn execution_detail_renders_metadata() {
             trigger_source: "10.0.0.5",
             request_payload: r#"{"key": "value"}"#,
             retry_of: None,
+        status: None,
         },
     )
     .await
@@ -977,6 +1000,7 @@ async fn execution_detail_shows_failed_status_with_red_badge() {
             trigger_source: "127.0.0.1",
             request_payload: "{}",
             retry_of: None,
+        status: None,
         },
     )
     .await
@@ -1045,6 +1069,7 @@ async fn execution_detail_reads_log_files() {
             trigger_source: "127.0.0.1",
             request_payload: "{}",
             retry_of: None,
+        status: None,
         },
     )
     .await
@@ -1102,6 +1127,7 @@ async fn execution_detail_shows_fallback_when_logs_missing() {
             trigger_source: "127.0.0.1",
             request_payload: "{}",
             retry_of: None,
+        status: None,
         },
     )
     .await
@@ -1151,6 +1177,7 @@ async fn execution_detail_shows_retry_info_when_replay() {
             trigger_source: "127.0.0.1",
             request_payload: "{}",
             retry_of: None,
+        status: None,
         },
     )
     .await
@@ -1177,6 +1204,7 @@ async fn execution_detail_shows_retry_info_when_replay() {
             trigger_source: "replay",
             request_payload: "{}",
             retry_of: Some(&original.id),
+        status: None,
         },
     )
     .await
@@ -1229,6 +1257,7 @@ async fn execution_detail_hides_retry_section_when_not_applicable() {
             trigger_source: "127.0.0.1",
             request_payload: "{}",
             retry_of: None,
+        status: None,
         },
     )
     .await
@@ -1275,6 +1304,7 @@ async fn execution_detail_shows_pending_status_with_yellow_badge() {
             trigger_source: "127.0.0.1",
             request_payload: "{}",
             retry_of: None,
+        status: None,
         },
     )
     .await
@@ -1644,6 +1674,8 @@ fn shell_hook(slug: &str) -> HookConfig {
         rate_limit: None,
         payload: None,
         trigger_rules: None,
+        concurrency: None,
+        approval: None,
     }
 }
 
