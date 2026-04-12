@@ -259,6 +259,27 @@ pub async fn get_latest_by_hook(
     Ok(row)
 }
 
+/// Get the last N executions for a given hook slug, most recent first.
+/// Used by the dashboard to render per-hook status indicators.
+pub async fn list_recent_by_hook(
+    pool: &SqlitePool,
+    hook_slug: &str,
+    limit: i64,
+) -> DbResult<Vec<Execution>> {
+    let rows = sqlx::query_as::<_, Execution>(
+        "SELECT id, hook_slug, triggered_at, started_at, completed_at, \
+                status, exit_code, log_path, trigger_source, request_payload, \
+                retry_count, retry_of, approved_at, approved_by \
+         FROM executions WHERE hook_slug = ? \
+         ORDER BY triggered_at DESC LIMIT ?",
+    )
+    .bind(hook_slug)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
 /// Count total executions for a hook (for pagination).
 pub async fn count_by_hook(pool: &SqlitePool, hook_slug: &str) -> DbResult<i64> {
     let row: (i64,) =
@@ -267,6 +288,127 @@ pub async fn count_by_hook(pool: &SqlitePool, hook_slug: &str) -> DbResult<i64> 
             .fetch_one(pool)
             .await?;
     Ok(row.0)
+}
+
+/// Filters for the execution list. All fields are optional; omitted fields are not applied.
+pub struct ExecutionFilters<'a> {
+    /// Filter by status string (e.g. "success", "failed"). None = all statuses.
+    pub status: Option<&'a str>,
+    /// Inclusive lower bound on triggered_at (ISO8601). None = no lower bound.
+    pub from_date: Option<&'a str>,
+    /// Inclusive upper bound on triggered_at (ISO8601). None = no upper bound.
+    pub to_date: Option<&'a str>,
+}
+
+/// List executions for a hook with optional filters, ordered by triggered_at DESC.
+///
+/// Status filter is pushed into SQL. Date range filters are applied in Rust
+/// (triggered_at is an ISO8601 string so lexicographic comparison is correct).
+pub async fn list_by_hook_filtered(
+    pool: &SqlitePool,
+    hook_slug: &str,
+    filters: &ExecutionFilters<'_>,
+    limit: i64,
+    offset: i64,
+) -> DbResult<Vec<Execution>> {
+    let rows = match (filters.status, filters.from_date, filters.to_date) {
+        (None, None, None) => list_by_hook(pool, hook_slug, limit, offset).await?,
+        (Some(s), None, None) => sqlx::query_as::<_, Execution>(
+                "SELECT id, hook_slug, triggered_at, started_at, completed_at, \
+                        status, exit_code, log_path, trigger_source, request_payload, \
+                        retry_count, retry_of, approved_at, approved_by \
+                 FROM executions WHERE hook_slug = ? AND status = ? \
+                 ORDER BY triggered_at DESC LIMIT ? OFFSET ?",
+            )
+            .bind(hook_slug).bind(s).bind(limit).bind(offset)
+            .fetch_all(pool).await?,
+        (status, from_date, to_date) => {
+            // Fetch with status filter only, then apply dates in Rust.
+            let candidates = if let Some(s) = status {
+                sqlx::query_as::<_, Execution>(
+                    "SELECT id, hook_slug, triggered_at, started_at, completed_at, \
+                            status, exit_code, log_path, trigger_source, request_payload, \
+                            retry_count, retry_of, approved_at, approved_by \
+                     FROM executions WHERE hook_slug = ? AND status = ? \
+                     ORDER BY triggered_at DESC LIMIT ? OFFSET ?",
+                )
+                .bind(hook_slug)
+                .bind(s)
+                .bind(limit + offset) // fetch enough to satisfy offset
+                .bind(0i64)
+                .fetch_all(pool)
+                .await?
+            } else {
+                sqlx::query_as::<_, Execution>(
+                    "SELECT id, hook_slug, triggered_at, started_at, completed_at, \
+                            status, exit_code, log_path, trigger_source, request_payload, \
+                            retry_count, retry_of, approved_at, approved_by \
+                     FROM executions WHERE hook_slug = ? \
+                     ORDER BY triggered_at DESC LIMIT ? OFFSET ?",
+                )
+                .bind(hook_slug)
+                .bind(limit + offset)
+                .bind(0i64)
+                .fetch_all(pool)
+                .await?
+            };
+
+            // Apply date range post-filter.
+            let filtered: Vec<Execution> = candidates
+                .into_iter()
+                .filter(|e| {
+                    if from_date.is_some_and(|from| e.triggered_at.as_str() < from) {
+                        return false;
+                    }
+                    if let Some(to) = to_date {
+                        // Include everything up to and including the to_date day.
+                        // triggered_at is an ISO8601 timestamp; compare prefix.
+                        let day = &e.triggered_at[..to.len().min(e.triggered_at.len())];
+                        if day > to { return false; }
+                    }
+                    true
+                })
+                .skip(offset as usize)
+                .take(limit as usize)
+                .collect();
+            filtered
+        }
+    };
+    Ok(rows)
+}
+
+/// Count executions for a hook with optional filters (for pagination).
+pub async fn count_by_hook_filtered(
+    pool: &SqlitePool,
+    hook_slug: &str,
+    filters: &ExecutionFilters<'_>,
+) -> DbResult<i64> {
+    match (filters.status, filters.from_date, filters.to_date) {
+        (None, None, None) => count_by_hook(pool, hook_slug).await,
+        (Some(s), None, None) => {
+            let row: (i64,) = sqlx::query_as(
+                "SELECT COUNT(*) FROM executions WHERE hook_slug = ? AND status = ?",
+            )
+            .bind(hook_slug)
+            .bind(s)
+            .fetch_one(pool)
+            .await?;
+            Ok(row.0)
+        }
+        (status, from_date, to_date) => {
+            // For date-range queries, count by fetching all filtered rows.
+            // This is less efficient but avoids dynamic SQL for a rarely-used path.
+            let all = list_by_hook_filtered(
+                pool,
+                hook_slug,
+                &ExecutionFilters { status, from_date, to_date },
+                i64::MAX / 2,
+                0,
+            )
+            .await?;
+            Ok(all.len() as i64)
+        }
+    }
 }
 
 /// Transition pending_approval -> approved, recording who approved and when.

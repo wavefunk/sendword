@@ -470,6 +470,12 @@ async fn trigger_hook(
 #[derive(Deserialize)]
 struct PaginationParams {
     page: Option<i64>,
+    /// Filter by execution status (e.g. "success", "failed", "running").
+    status: Option<String>,
+    /// Inclusive start date for triggered_at filter (ISO8601, e.g. "2026-01-01").
+    from_date: Option<String>,
+    /// Inclusive end date for triggered_at filter (ISO8601, e.g. "2026-12-31").
+    to_date: Option<String>,
 }
 
 async fn hook_detail(
@@ -656,14 +662,29 @@ async fn execution_list(
     let page = params.page.unwrap_or(1).max(1);
     let offset = (page - 1) * EXECUTIONS_PER_PAGE;
 
+    let status_filter = params.status.as_deref().filter(|s| !s.is_empty());
+    let from_date_filter = params.from_date.as_deref().filter(|s| !s.is_empty());
+    let to_date_filter = params.to_date.as_deref().filter(|s| !s.is_empty());
+
+    let filters = execution::ExecutionFilters {
+        status: status_filter,
+        from_date: from_date_filter,
+        to_date: to_date_filter,
+    };
+
     let pool = state.db.pool();
-    let total = execution::count_by_hook(pool, &slug).await?;
-    let executions = execution::list_by_hook(pool, &slug, EXECUTIONS_PER_PAGE, offset).await?;
+    let total = execution::count_by_hook_filtered(pool, &slug, &filters).await?;
+    let executions =
+        execution::list_by_hook_filtered(pool, &slug, &filters, EXECUTIONS_PER_PAGE, offset).await?;
 
     let total_pages = (total + EXECUTIONS_PER_PAGE - 1) / EXECUTIONS_PER_PAGE;
     let has_more = page < total_pages;
 
     let execution_rows = build_execution_rows(&executions);
+
+    let active_status = params.status.as_deref().unwrap_or("");
+    let active_from = params.from_date.as_deref().unwrap_or("");
+    let active_to = params.to_date.as_deref().unwrap_or("");
 
     let html = state.templates.render(
         "partials/execution_list.html",
@@ -674,6 +695,9 @@ async fn execution_list(
             page => page,
             total_pages => total_pages,
             has_more => has_more,
+            active_status => active_status,
+            active_from => active_from,
+            active_to => active_to,
         },
     )?;
 

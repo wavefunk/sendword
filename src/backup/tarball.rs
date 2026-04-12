@@ -49,7 +49,6 @@ pub fn extract_tarball(tarball_path: &Path, output_dir: &Path) -> io::Result<()>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
 
     #[test]
     fn create_and_extract_roundtrip() {
@@ -74,5 +73,44 @@ mod tests {
 
         let extracted_db = fs::read(extract_dir.join("sendword.db")).expect("read db");
         assert_eq!(extracted_db, b"SQLITE_FAKE_DB");
+    }
+
+    /// A tarball that doesn't include sendword.json (no JSON config overlay) should
+    /// extract without error. The caller is responsible for deciding if the absence
+    /// of config.json is acceptable — the extraction step itself must not fail.
+    #[test]
+    fn extract_handles_missing_json_config() {
+        let tmp = tempfile::TempDir::new().expect("temp dir");
+
+        // Build a tarball that contains only the TOML config and the DB snapshot.
+        // There is no sendword.json in this archive.
+        let config_path = tmp.path().join("sendword.toml");
+        let db_path = tmp.path().join("sendword.db");
+        fs::write(&config_path, b"[server]\nport = 9090\n").expect("write config");
+        fs::write(&db_path, b"DB_BYTES").expect("write db");
+
+        let tarball_path = tmp.path().join("no-json-backup.tar.gz");
+        create_tarball(&config_path, &db_path, &tarball_path).expect("create tarball");
+
+        // Extracting the tarball must succeed even though sendword.json is absent.
+        let extract_dir = tmp.path().join("extracted");
+        let result = extract_tarball(&tarball_path, &extract_dir);
+        assert!(result.is_ok(), "extraction should succeed without sendword.json: {result:?}");
+
+        // The TOML config and DB snapshot are present.
+        assert!(
+            extract_dir.join("sendword.toml").exists(),
+            "sendword.toml should be extracted"
+        );
+        assert!(
+            extract_dir.join("sendword.db").exists(),
+            "sendword.db should be extracted"
+        );
+
+        // The JSON overlay is absent — that's the point of this test.
+        assert!(
+            !extract_dir.join("sendword.json").exists(),
+            "sendword.json should not exist in this archive"
+        );
     }
 }

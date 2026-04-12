@@ -1,3 +1,56 @@
+{# Filter bar — passes current filters through on pagination requests #}
+<div class="flex flex-wrap gap-2 mb-3 items-end">
+  <div>
+    <label class="block text-xs text-gray-500 mb-0.5">Status</label>
+    <select
+      id="exec-status-filter"
+      class="text-sm border rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
+      hx-get="/hooks/{{ slug }}/executions"
+      hx-target="#execution-list"
+      hx-swap="innerHTML"
+      hx-include="#exec-from-filter, #exec-to-filter"
+      name="status">
+      <option value="" {% if not active_status %}selected{% endif %}>All statuses</option>
+      <option value="success"          {% if active_status == 'success' %}selected{% endif %}>Success</option>
+      <option value="failed"           {% if active_status == 'failed' %}selected{% endif %}>Failed</option>
+      <option value="timed_out"        {% if active_status == 'timed_out' %}selected{% endif %}>Timed out</option>
+      <option value="running"          {% if active_status == 'running' %}selected{% endif %}>Running</option>
+      <option value="pending"          {% if active_status == 'pending' %}selected{% endif %}>Pending</option>
+      <option value="pending_approval" {% if active_status == 'pending_approval' %}selected{% endif %}>Pending approval</option>
+      <option value="rejected"         {% if active_status == 'rejected' %}selected{% endif %}>Rejected</option>
+      <option value="expired"          {% if active_status == 'expired' %}selected{% endif %}>Expired</option>
+    </select>
+  </div>
+  <div>
+    <label class="block text-xs text-gray-500 mb-0.5">From</label>
+    <input
+      id="exec-from-filter"
+      type="date"
+      name="from_date"
+      value="{{ active_from }}"
+      class="text-sm border rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
+      hx-get="/hooks/{{ slug }}/executions"
+      hx-target="#execution-list"
+      hx-swap="innerHTML"
+      hx-include="#exec-status-filter, #exec-to-filter"
+      hx-trigger="change">
+  </div>
+  <div>
+    <label class="block text-xs text-gray-500 mb-0.5">To</label>
+    <input
+      id="exec-to-filter"
+      type="date"
+      name="to_date"
+      value="{{ active_to }}"
+      class="text-sm border rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
+      hx-get="/hooks/{{ slug }}/executions"
+      hx-target="#execution-list"
+      hx-swap="innerHTML"
+      hx-include="#exec-status-filter, #exec-from-filter"
+      hx-trigger="change">
+  </div>
+</div>
+
 {% if executions %}
 <div class="overflow-x-auto">
   <table class="w-full text-sm">
@@ -39,7 +92,7 @@
 {% if has_more %}
 <div class="mt-4 text-center">
   <button
-    hx-get="/hooks/{{ slug }}/executions?page={{ page + 1 }}"
+    hx-get="/hooks/{{ slug }}/executions?page={{ page + 1 }}&status={{ active_status }}&from_date={{ active_from }}&to_date={{ active_to }}"
     hx-target="#execution-list"
     hx-swap="innerHTML"
     class="text-sm text-blue-600 hover:underline">
