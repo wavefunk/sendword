@@ -220,6 +220,65 @@ impl AppConfig {
                     }
                 }
             }
+
+            if let Some(rules) = &hook.trigger_rules {
+                if let Some(filters) = &rules.payload_filters {
+                    for (j, filter) in filters.iter().enumerate() {
+                        if filter.operator == FilterOperator::Regex {
+                            match &filter.value {
+                                Some(pattern) => {
+                                    if regex::Regex::new(pattern).is_err() {
+                                        errors.push(format!(
+                                            "{prefix}.trigger_rules.payload_filters[{j}].value \
+                                             is not a valid regex"
+                                        ));
+                                    }
+                                }
+                                None => {
+                                    errors.push(format!(
+                                        "{prefix}.trigger_rules.payload_filters[{j}].value \
+                                         is required for regex operator"
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if let Some(windows) = &rules.time_windows {
+                    for (j, window) in windows.iter().enumerate() {
+                        let prefix_w =
+                            format!("{prefix}.trigger_rules.time_windows[{j}]");
+                        if chrono::NaiveTime::parse_from_str(&window.start_time, "%H:%M").is_err()
+                        {
+                            errors.push(format!("{prefix_w}.start_time must be HH:MM format"));
+                        }
+                        if chrono::NaiveTime::parse_from_str(&window.end_time, "%H:%M").is_err() {
+                            errors.push(format!("{prefix_w}.end_time must be HH:MM format"));
+                        }
+                        if let (Ok(start), Ok(end)) = (
+                            chrono::NaiveTime::parse_from_str(&window.start_time, "%H:%M"),
+                            chrono::NaiveTime::parse_from_str(&window.end_time, "%H:%M"),
+                        ) {
+                            if start >= end {
+                                errors.push(format!(
+                                    "{prefix_w}.start_time must be before end_time"
+                                ));
+                            }
+                        }
+                        const VALID_DAYS: &[&str] =
+                            &["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+                        for day in &window.days {
+                            if !VALID_DAYS.iter().any(|d| d.eq_ignore_ascii_case(day)) {
+                                errors.push(format!(
+                                    "{prefix_w}.days contains invalid day '{day}' \
+                                     (expected Mon-Sun)"
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         if errors.is_empty() {
