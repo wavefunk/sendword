@@ -1,5 +1,6 @@
 use clap::{Parser, Subcommand};
 use sendword::config::AppConfig;
+use serde_json;
 
 #[derive(Parser)]
 #[command(name = "sendword", about = "HTTP webhook to command runner sidecar")]
@@ -12,6 +13,13 @@ struct Cli {
 enum Command {
     /// Start the web server (default)
     Serve,
+    /// Export current config as JSON to stdout
+    Export,
+    /// Import config from a JSON file, validate, write to sendword.toml, and reload
+    Import {
+        /// Path to the JSON config file to import
+        path: std::path::PathBuf,
+    },
     /// User management commands
     User {
         #[command(subcommand)]
@@ -35,6 +43,8 @@ async fn main() -> eyre::Result<()> {
 
     match cli.command {
         None | Some(Command::Serve) => serve().await,
+        Some(Command::Export) => config_export().await,
+        Some(Command::Import { path }) => config_import(&path).await,
         Some(Command::User { action }) => match action {
             UserAction::Create { username } => user_create(&username).await,
         },
@@ -85,6 +95,26 @@ async fn serve() -> eyre::Result<()> {
 
     sendword::server::run(state).await?;
 
+    Ok(())
+}
+
+async fn config_export() -> eyre::Result<()> {
+    let config = AppConfig::load()?;
+    let json = serde_json::to_string_pretty(&config)?;
+    println!("{json}");
+    Ok(())
+}
+
+async fn config_import(path: &std::path::Path) -> eyre::Result<()> {
+    let contents = std::fs::read_to_string(path)?;
+    let config: AppConfig = serde_json::from_str(&contents)?;
+    if let Err(e) = config.validate() {
+        eprintln!("error: {e}");
+        std::process::exit(1);
+    }
+    let toml_str = toml_edit::ser::to_string_pretty(&config)?;
+    std::fs::write("sendword.toml", toml_str.as_bytes())?;
+    eprintln!("config imported and written to sendword.toml");
     Ok(())
 }
 
