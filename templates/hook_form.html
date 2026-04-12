@@ -238,6 +238,79 @@
       </div>
     </div>
 
+    {# --- Trigger rules --- #}
+    <div class="border rounded-lg p-4">
+      <h2 class="text-lg font-semibold mb-4">Trigger rules</h2>
+
+      {# Payload filters #}
+      <div class="mb-4">
+        <label for="trigger_filters_text" class="block text-sm font-medium text-gray-700 mb-1">Payload filters</label>
+        <textarea
+          id="trigger_filters_text"
+          name="trigger_filters_text"
+          rows="3"
+          placeholder="action:equals:deploy&#10;env:contains:prod&#10;count:gt:0&#10;tag:exists"
+          class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono leading-relaxed focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+          spellcheck="false"
+        >{{ form_trigger_filters_text }}</textarea>
+        <p class="mt-1 text-xs text-gray-400">One filter per line: field:operator:value. Operators: equals, not_equals, contains, regex, gt, lt, gte, lte, exists. The exists operator needs no value.</p>
+      </div>
+
+      {# Time windows #}
+      <div class="mb-4">
+        <label for="trigger_windows_text" class="block text-sm font-medium text-gray-700 mb-1">Time windows (UTC)</label>
+        <textarea
+          id="trigger_windows_text"
+          name="trigger_windows_text"
+          rows="2"
+          placeholder="Mon,Tue,Wed,Thu,Fri:09:00-17:00&#10;Sat:10:00-14:00"
+          class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono leading-relaxed focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+          spellcheck="false"
+        >{{ form_trigger_windows_text }}</textarea>
+        <p class="mt-1 text-xs text-gray-400">One window per line: Days:HH:MM-HH:MM. Leave blank to allow at any time. Day names: Mon, Tue, Wed, Thu, Fri, Sat, Sun.</p>
+      </div>
+
+      {# Cooldown and rate limit #}
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <label for="trigger_cooldown" class="block text-sm font-medium text-gray-700 mb-1">Cooldown</label>
+          <input
+            type="text"
+            id="trigger_cooldown"
+            name="trigger_cooldown"
+            value="{{ form_trigger_cooldown }}"
+            placeholder="5m (optional)"
+            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+          >
+          <p class="mt-1 text-xs text-gray-400">Minimum time between executions. Examples: 30s, 5m, 1h.</p>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Rate limit</label>
+          <div class="flex items-center gap-2">
+            <input
+              type="number"
+              id="trigger_rate_max"
+              name="trigger_rate_max"
+              value="{{ form_trigger_rate_max }}"
+              min="1"
+              placeholder="10"
+              class="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            >
+            <span class="text-sm text-gray-500">requests per</span>
+            <input
+              type="text"
+              id="trigger_rate_window"
+              name="trigger_rate_window"
+              value="{{ form_trigger_rate_window }}"
+              placeholder="1h"
+              class="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            >
+          </div>
+          <p class="mt-1 text-xs text-gray-400">Leave both blank to disable rate limiting. Window examples: 1m, 1h, 24h.</p>
+        </div>
+      </div>
+    </div>
+
     {# --- Retry configuration --- #}
     <div class="border rounded-lg p-4">
       <h2 class="text-lg font-semibold mb-4">Retry configuration</h2>

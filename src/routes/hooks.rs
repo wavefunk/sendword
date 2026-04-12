@@ -14,7 +14,10 @@ use serde::{Deserialize, Serialize};
 use crate::auth::AuthUser;
 use crate::interpolation::interpolate_command;
 use crate::payload::{FieldType, PayloadField, PayloadSchema};
-use crate::config::{BackoffStrategy, ExecutorConfig, HmacAlgorithm, HookAuthConfig};
+use crate::config::{
+    BackoffStrategy, ExecutorConfig, FilterOperator, HmacAlgorithm, HookAuthConfig, PayloadFilter,
+    TimeWindow, TriggerRateLimit, TriggerRules,
+};
 use crate::webhook_auth;
 use crate::config_writer::{self, HookFormData, RetryFormData, WriteError};
 use crate::error::AppError;
@@ -329,6 +332,56 @@ async fn hook_detail(
         _ => ("none", "", ""),
     };
 
+    let trigger_filter_rows: Vec<serde_json::Value> = hook
+        .trigger_rules
+        .as_ref()
+        .and_then(|r| r.payload_filters.as_ref())
+        .map(|filters| {
+            filters
+                .iter()
+                .map(|f| {
+                    serde_json::json!({
+                        "field": f.field,
+                        "operator": config_writer::filter_operator_str(f.operator),
+                        "value": f.value.as_deref().unwrap_or(""),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let trigger_window_rows: Vec<serde_json::Value> = hook
+        .trigger_rules
+        .as_ref()
+        .and_then(|r| r.time_windows.as_ref())
+        .map(|windows| {
+            windows
+                .iter()
+                .map(|w| {
+                    serde_json::json!({
+                        "days": w.days.join(", "),
+                        "start_time": w.start_time,
+                        "end_time": w.end_time,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let trigger_cooldown = hook
+        .trigger_rules
+        .as_ref()
+        .and_then(|r| r.cooldown)
+        .map(config_writer::format_duration)
+        .unwrap_or_default();
+
+    let (trigger_rate_max, trigger_rate_window) = hook
+        .trigger_rules
+        .as_ref()
+        .and_then(|r| r.rate_limit.as_ref())
+        .map(|rl| (rl.max_requests.to_string(), config_writer::format_duration(rl.window)))
+        .unwrap_or_default();
+
     let html = state.templates.render(
         "hook_detail.html",
         context! {
@@ -346,6 +399,11 @@ async fn hook_detail(
             auth_header => auth_header,
             auth_algorithm => auth_algorithm,
             payload_fields => payload_fields,
+            trigger_filter_rows => trigger_filter_rows,
+            trigger_window_rows => trigger_window_rows,
+            trigger_cooldown => trigger_cooldown,
+            trigger_rate_max => trigger_rate_max,
+            trigger_rate_window => trigger_rate_window,
             executions => execution_rows,
             total => total,
             page => 1,
@@ -517,6 +575,21 @@ struct HookForm {
     /// One field per line: name:type[:required]
     #[serde(default)]
     payload_text: String,
+    /// Trigger rules: payload filters as "field:operator:value" per line
+    #[serde(default)]
+    trigger_filters_text: String,
+    /// Trigger rules: time windows as "Mon,Tue:09:00-17:00" per line
+    #[serde(default)]
+    trigger_windows_text: String,
+    /// Trigger rules: cooldown duration string (e.g. "5m")
+    #[serde(default)]
+    trigger_cooldown: String,
+    /// Trigger rules: rate limit max_requests count
+    #[serde(default)]
+    trigger_rate_max: Option<String>,
+    /// Trigger rules: rate limit window duration string (e.g. "1h")
+    #[serde(default)]
+    trigger_rate_window: String,
 }
 
 /// Parse a human-readable duration string (e.g., "30s", "5m", "2h") into a `Duration`.
@@ -599,6 +672,142 @@ fn parse_payload_text(text: &str) -> Result<Option<PayloadSchema>, String> {
         Ok(None)
     } else {
         Ok(Some(PayloadSchema { fields }))
+    }
+}
+
+/// Parse payload filter definitions from textarea.
+///
+/// Each non-empty line is `field:operator` or `field:operator:value`.
+/// The `exists` operator does not require a value.
+fn parse_filters_text(text: &str) -> Result<Option<Vec<PayloadFilter>>, String> {
+    let mut filters = Vec::new();
+
+    for (i, line) in text.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        let parts: Vec<&str> = line.splitn(3, ':').collect();
+        if parts.len() < 2 {
+            return Err(format!(
+                "filter line {}: expected 'field:operator' or 'field:operator:value', got '{line}'",
+                i + 1,
+            ));
+        }
+
+        let field = parts[0].trim();
+        if field.is_empty() {
+            return Err(format!("filter line {}: field name cannot be empty", i + 1));
+        }
+
+        let op_str = parts[1].trim();
+        let operator = match op_str {
+            "equals" => FilterOperator::Equals,
+            "not_equals" => FilterOperator::NotEquals,
+            "contains" => FilterOperator::Contains,
+            "regex" => FilterOperator::Regex,
+            "exists" => FilterOperator::Exists,
+            "gt" => FilterOperator::Gt,
+            "lt" => FilterOperator::Lt,
+            "gte" => FilterOperator::Gte,
+            "lte" => FilterOperator::Lte,
+            other => {
+                return Err(format!(
+                    "filter line {}: unknown operator '{other}' (expected equals, not_equals, contains, regex, exists, gt, lt, gte, lte)",
+                    i + 1,
+                ));
+            }
+        };
+
+        let value = if operator == FilterOperator::Exists {
+            None
+        } else if parts.len() == 3 {
+            let v = parts[2].trim();
+            if v.is_empty() {
+                return Err(format!(
+                    "filter line {}: value required for operator '{op_str}'",
+                    i + 1,
+                ));
+            }
+            Some(v.to_owned())
+        } else {
+            return Err(format!(
+                "filter line {}: operator '{op_str}' requires a value",
+                i + 1,
+            ));
+        };
+
+        filters.push(PayloadFilter {
+            field: field.to_owned(),
+            operator,
+            value,
+        });
+    }
+
+    if filters.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(filters))
+    }
+}
+
+/// Parse time window definitions from textarea.
+///
+/// Each non-empty line is `Mon,Tue,Wed:09:00-17:00`.
+/// Days are comma-separated, followed by `:`, then `HH:MM-HH:MM`.
+fn parse_windows_text(text: &str) -> Result<Option<Vec<TimeWindow>>, String> {
+    let mut windows = Vec::new();
+
+    for (i, line) in text.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        // Format: "Mon,Tue:09:00-17:00" — split on first colon to get days and time range
+        let colon_idx = line.find(':').ok_or_else(|| {
+            format!("window line {}: expected 'Days:HH:MM-HH:MM', got '{line}'", i + 1)
+        })?;
+
+        let days_part = &line[..colon_idx];
+        let time_part = &line[colon_idx + 1..];
+
+        let days: Vec<String> = days_part
+            .split(',')
+            .map(|d| d.trim().to_owned())
+            .filter(|d| !d.is_empty())
+            .collect();
+
+        if days.is_empty() {
+            return Err(format!("window line {}: at least one day is required", i + 1));
+        }
+
+        // time_part should be "HH:MM-HH:MM"
+        let dash_idx = time_part.find('-').ok_or_else(|| {
+            format!(
+                "window line {}: expected time range 'HH:MM-HH:MM', got '{time_part}'",
+                i + 1,
+            )
+        })?;
+
+        let start_time = time_part[..dash_idx].trim().to_owned();
+        let end_time = time_part[dash_idx + 1..].trim().to_owned();
+
+        if start_time.is_empty() || end_time.is_empty() {
+            return Err(format!(
+                "window line {}: start and end times must not be empty",
+                i + 1,
+            ));
+        }
+
+        windows.push(TimeWindow { days, start_time, end_time });
+    }
+
+    if windows.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(windows))
     }
 }
 
@@ -691,6 +900,34 @@ fn parse_hook_form(form: &HookForm) -> Result<HookFormData, String> {
 
     let payload = parse_payload_text(&form.payload_text)?;
 
+    let payload_filters = parse_filters_text(&form.trigger_filters_text)?;
+    let time_windows = parse_windows_text(&form.trigger_windows_text)?;
+    let cooldown = parse_duration_field(form.trigger_cooldown.trim())?;
+
+    let rate_limit = {
+        let max_str = form.trigger_rate_max.as_deref().unwrap_or("").trim();
+        let window_str = form.trigger_rate_window.trim();
+        let max: u64 = max_str.parse().unwrap_or(0);
+        if max > 0 && !window_str.is_empty() {
+            let window = parse_duration_field(window_str)?.ok_or_else(|| {
+                "trigger rate window must be a valid duration".to_owned()
+            })?;
+            Some(TriggerRateLimit { max_requests: max, window })
+        } else {
+            None
+        }
+    };
+
+    let trigger_rules = if payload_filters.is_some()
+        || time_windows.is_some()
+        || cooldown.is_some()
+        || rate_limit.is_some()
+    {
+        Some(TriggerRules { payload_filters, time_windows, cooldown, rate_limit })
+    } else {
+        None
+    };
+
     Ok(HookFormData {
         name: form.name.trim().to_owned(),
         slug: form.slug.trim().to_owned(),
@@ -703,6 +940,7 @@ fn parse_hook_form(form: &HookForm) -> Result<HookFormData, String> {
         retries,
         auth,
         payload,
+        trigger_rules,
     })
 }
 
@@ -747,6 +985,11 @@ async fn new_hook_form(
             form_auth_algorithm => "sha256",
             form_auth_secret => "",
             form_payload_text => "",
+            form_trigger_filters_text => "",
+            form_trigger_windows_text => "",
+            form_trigger_cooldown => "",
+            form_trigger_rate_max => "",
+            form_trigger_rate_window => "",
             success => flash.success,
             error => flash.error,
             username => auth.username,
@@ -870,6 +1113,54 @@ async fn edit_hook_form(
         })
         .unwrap_or_default();
 
+    let (trigger_filters_text, trigger_windows_text, trigger_cooldown, trigger_rate_max, trigger_rate_window) =
+        if let Some(rules) = &hook.trigger_rules {
+            let filters_text = rules
+                .payload_filters
+                .as_ref()
+                .map(|filters| {
+                    filters
+                        .iter()
+                        .map(|f| {
+                            let op = config_writer::filter_operator_str(f.operator);
+                            match &f.value {
+                                Some(v) => format!("{}:{}:{}", f.field, op, v),
+                                None => format!("{}:{}", f.field, op),
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                })
+                .unwrap_or_default();
+
+            let windows_text = rules
+                .time_windows
+                .as_ref()
+                .map(|windows| {
+                    windows
+                        .iter()
+                        .map(|w| format!("{}:{}-{}", w.days.join(","), w.start_time, w.end_time))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                })
+                .unwrap_or_default();
+
+            let cooldown_str = rules
+                .cooldown
+                .map(config_writer::format_duration)
+                .unwrap_or_default();
+
+            let (rate_max, rate_window) = rules
+                .rate_limit
+                .as_ref()
+                .map(|rl| (rl.max_requests.to_string(), config_writer::format_duration(rl.window)))
+                .unwrap_or_default();
+
+            (filters_text, windows_text, cooldown_str, rate_max, rate_window)
+        } else {
+            (String::new(), String::new(), String::new(), String::new(), String::new())
+        };
+
     let html = state.templates.render(
         "hook_form.html",
         context! {
@@ -893,6 +1184,11 @@ async fn edit_hook_form(
             form_auth_algorithm => auth_algorithm,
             form_auth_secret => auth_secret,
             form_payload_text => payload_text,
+            form_trigger_filters_text => trigger_filters_text,
+            form_trigger_windows_text => trigger_windows_text,
+            form_trigger_cooldown => trigger_cooldown,
+            form_trigger_rate_max => trigger_rate_max,
+            form_trigger_rate_window => trigger_rate_window,
             success => flash.success,
             error => flash.error,
             username => auth.username,
