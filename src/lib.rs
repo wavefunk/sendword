@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod barriers;
 pub mod config;
 pub mod config_writer;
 pub mod db;

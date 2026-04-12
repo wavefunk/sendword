@@ -64,7 +64,10 @@ async fn serve() -> eyre::Result<()> {
     db.migrate().await?;
     tracing::info!("database ready");
 
-    let _sweep_handle = sendword::tasks::spawn_session_sweep(db.pool().clone());
+    sendword::barriers::recover_barriers(db.pool()).await;
+    tracing::info!("barrier state recovered");
+
+    let _session_sweep = sendword::tasks::spawn_session_sweep(db.pool().clone());
     tracing::info!("session sweep task started");
 
     let templates = sendword::templates::Templates::new(
@@ -73,6 +76,13 @@ async fn serve() -> eyre::Result<()> {
     tracing::info!("templates loaded");
 
     let state = sendword::server::AppState::new(config, "sendword.toml", db, templates);
+
+    let _approval_sweep = sendword::tasks::spawn_approval_sweep(
+        state.db.pool().clone(),
+        std::sync::Arc::clone(&state),
+    );
+    tracing::info!("approval sweep task started");
+
     sendword::server::run(state).await?;
 
     Ok(())

@@ -161,6 +161,9 @@ async fn replay_execution(
                 };
             ResolvedExecutor::Shell { command: interpolated }
         }
+        ExecutorConfig::Script { path } => {
+            ResolvedExecutor::Script { path: std::path::PathBuf::from(path) }
+        }
     };
 
     let env = hook.env.clone();
@@ -246,6 +249,9 @@ async fn approve_execution(
                     command.clone()
                 };
                 ResolvedExecutor::Shell { command: interpolated }
+            }
+            ExecutorConfig::Script { path } => {
+                ResolvedExecutor::Script { path: std::path::PathBuf::from(path) }
             }
         };
 

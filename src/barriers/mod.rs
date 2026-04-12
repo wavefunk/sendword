@@ -159,6 +159,9 @@ async fn run_dequeued(
             };
             ResolvedExecutor::Shell { command: interpolated }
         }
+        ExecutorConfig::Script { path } => {
+            ResolvedExecutor::Script { path: std::path::PathBuf::from(path) }
+        }
     };
 
     let ctx = crate::executor::ExecutionContext {
