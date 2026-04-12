@@ -682,4 +682,137 @@ mod tests {
         assert!(ExecutionStatus::Rejected.is_terminal());
         assert!(ExecutionStatus::Expired.is_terminal());
     }
+
+    #[tokio::test]
+    async fn create_with_status_pending_approval_persists() {
+        let pool = test_pool().await;
+        let exec = create(
+            &pool,
+            &NewExecution {
+                status: Some(ExecutionStatus::PendingApproval),
+                ..test_new_execution()
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(exec.status, ExecutionStatus::PendingApproval);
+    }
+
+    #[tokio::test]
+    async fn mark_approved_transitions_to_approved() {
+        let pool = test_pool().await;
+        let exec = create(
+            &pool,
+            &NewExecution {
+                status: Some(ExecutionStatus::PendingApproval),
+                ..test_new_execution()
+            },
+        )
+        .await
+        .unwrap();
+
+        let approved = mark_approved(&pool, &exec.id, "admin").await.unwrap();
+
+        assert_eq!(approved.status, ExecutionStatus::Approved);
+        assert!(approved.approved_at.is_some());
+        assert_eq!(approved.approved_by.as_deref(), Some("admin"));
+    }
+
+    #[tokio::test]
+    async fn mark_approved_wrong_status_returns_conflict() {
+        let pool = test_pool().await;
+        // Default status is Pending, not PendingApproval
+        let exec = create(&pool, &test_new_execution()).await.unwrap();
+
+        let result = mark_approved(&pool, &exec.id, "admin").await;
+        assert!(matches!(result, Err(DbError::Conflict(_))));
+    }
+
+    #[tokio::test]
+    async fn mark_rejected_transitions_to_rejected() {
+        let pool = test_pool().await;
+        let exec = create(
+            &pool,
+            &NewExecution {
+                status: Some(ExecutionStatus::PendingApproval),
+                ..test_new_execution()
+            },
+        )
+        .await
+        .unwrap();
+
+        let rejected = mark_rejected(&pool, &exec.id, "admin").await.unwrap();
+
+        assert_eq!(rejected.status, ExecutionStatus::Rejected);
+        assert!(rejected.completed_at.is_some());
+        assert_eq!(rejected.approved_by.as_deref(), Some("admin"));
+    }
+
+    #[tokio::test]
+    async fn mark_expired_transitions_to_expired() {
+        let pool = test_pool().await;
+        let exec = create(
+            &pool,
+            &NewExecution {
+                status: Some(ExecutionStatus::PendingApproval),
+                ..test_new_execution()
+            },
+        )
+        .await
+        .unwrap();
+
+        mark_expired(&pool, &exec.id).await.unwrap();
+
+        let updated = get_by_id(&pool, &exec.id).await.unwrap();
+        assert_eq!(updated.status, ExecutionStatus::Expired);
+        assert!(updated.completed_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn list_pending_approval_filters_correctly() {
+        let pool = test_pool().await;
+
+        // One pending_approval execution
+        let pa_exec = create(
+            &pool,
+            &NewExecution {
+                id: Some("pa-exec"),
+                status: Some(ExecutionStatus::PendingApproval),
+                ..test_new_execution()
+            },
+        )
+        .await
+        .unwrap();
+
+        // One regular pending execution
+        create(
+            &pool,
+            &NewExecution {
+                id: Some("pending-exec"),
+                status: None,
+                ..test_new_execution()
+            },
+        )
+        .await
+        .unwrap();
+
+        // One running execution
+        let running = create(
+            &pool,
+            &NewExecution {
+                id: Some("running-exec"),
+                status: None,
+                ..test_new_execution()
+            },
+        )
+        .await
+        .unwrap();
+        mark_running(&pool, &running.id).await.unwrap();
+
+        let pending = list_pending_approval(&pool).await.unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].id, pa_exec.id);
+        assert_eq!(pending[0].status, ExecutionStatus::PendingApproval);
+    }
 }
