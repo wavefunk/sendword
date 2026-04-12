@@ -9,6 +9,7 @@ pub mod id;
 pub mod interpolation;
 pub mod masking;
 pub mod models;
+pub mod notification;
 pub mod payload;
 pub mod retry;
 pub mod routes;

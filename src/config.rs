@@ -619,6 +619,32 @@ pub struct ApprovalConfig {
     pub timeout: Option<Duration>,
 }
 
+// --- Completion notifications ---
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NotifyOutcome {
+    Success,
+    Failure,
+    Timeout,
+}
+
+fn default_notify_on() -> Vec<NotifyOutcome> {
+    vec![NotifyOutcome::Failure, NotifyOutcome::Timeout]
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct NotificationConfig {
+    pub url: String,
+    #[serde(default = "default_notify_on")]
+    pub on: Vec<NotifyOutcome>,
+    #[serde(default)]
+    pub headers: HashMap<String, String>,
+    pub body: String,
+}
+
+// ---
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct HookConfig {
     pub name: String,
@@ -643,6 +669,8 @@ pub struct HookConfig {
     pub concurrency: Option<ConcurrencyConfig>,
     #[serde(default)]
     pub approval: Option<ApprovalConfig>,
+    #[serde(default)]
+    pub notification: Option<NotificationConfig>,
 }
 
 #[cfg(test)]
@@ -953,6 +981,7 @@ mod tests {
             trigger_rules: None,
             concurrency: None,
             approval: None,
+            notification: None,
         }
     }
 

@@ -205,6 +205,7 @@ async fn dashboard_renders_configured_hooks() {
                 trigger_rules: None,
             concurrency: None,
             approval: None,
+            notification: None,
             },
             HookConfig {
                 name: "Run Tests".into(),
@@ -224,6 +225,7 @@ async fn dashboard_renders_configured_hooks() {
                 trigger_rules: None,
             concurrency: None,
             approval: None,
+            notification: None,
             },
         ],
         ..AppConfig::default()
@@ -285,6 +287,7 @@ async fn dashboard_shows_last_execution_status() {
             trigger_rules: None,
         concurrency: None,
         approval: None,
+        notification: None,
         }],
         ..AppConfig::default()
     };
@@ -357,6 +360,7 @@ async fn dashboard_shows_no_executions_for_new_hook() {
             trigger_rules: None,
         concurrency: None,
         approval: None,
+        notification: None,
         }],
         ..AppConfig::default()
     };
@@ -401,6 +405,7 @@ fn make_test_hook(name: &str, slug: &str, command: &str) -> sendword::config::Ho
         trigger_rules: None,
         concurrency: None,
         approval: None,
+        notification: None,
     }
 }
 
@@ -500,6 +505,7 @@ async fn hook_detail_shows_disabled_hook() {
             trigger_rules: None,
         concurrency: None,
         approval: None,
+        notification: None,
         }],
         ..AppConfig::default()
     };
@@ -731,6 +737,7 @@ async fn replay_creates_new_execution_linked_to_original() {
             trigger_rules: None,
         concurrency: None,
         approval: None,
+        notification: None,
         }],
         ..AppConfig::default()
     };
@@ -816,6 +823,7 @@ async fn replay_spawns_executor_and_runs_command() {
             trigger_rules: None,
         concurrency: None,
         approval: None,
+        notification: None,
         }],
         ..AppConfig::default()
     };
@@ -1676,6 +1684,7 @@ fn shell_hook(slug: &str) -> HookConfig {
         trigger_rules: None,
         concurrency: None,
         approval: None,
+        notification: None,
     }
 }
 

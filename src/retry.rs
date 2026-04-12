@@ -329,6 +329,7 @@ mod tests {
             trigger_rules: None,
             concurrency: None,
             approval: None,
+            notification: None,
         }
     }
 
