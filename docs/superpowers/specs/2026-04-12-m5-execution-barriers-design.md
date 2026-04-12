@@ -128,12 +128,14 @@ Concurrency and approval are top-level hook fields, not nested under `trigger_ru
 ```sql
 CREATE TABLE execution_locks (
     hook_slug    TEXT PRIMARY KEY NOT NULL,
-    execution_id TEXT NOT NULL REFERENCES executions(id),
+    execution_id TEXT NOT NULL,
     acquired_at  TEXT NOT NULL
 );
 ```
 
 One row per hook. `PRIMARY KEY` on `hook_slug` enforces the mutex invariant -- at most one active lock per hook. SQLite's write serialization means concurrent `INSERT` attempts are safe: one succeeds, the rest get `UNIQUE constraint failed`.
+
+**No FK on `execution_id`:** In the Proceed path, `try_acquire` is called before the execution record is created (the lock must be claimed before the normal `execution::create` call at step 5 of the pipeline). A `REFERENCES executions(id)` constraint would cause the INSERT to fail when `PRAGMA foreign_keys = ON`. The lock table is cleaned up by recovery logic (`DELETE` orphaned locks on startup), so the FK is unnecessary. The queue table retains its FK because the execution record is always created by the barrier code before the queue row is inserted.
 
 ### Database schema: execution_queue
 
@@ -168,9 +170,17 @@ Attempts `INSERT INTO execution_locks`. Returns `true` if the row was inserted (
 pub async fn release(pool: &SqlitePool, hook_slug: &str) -> DbResult<()>
 ```
 
-`DELETE FROM execution_locks WHERE hook_slug = ?`. Called when an execution reaches a terminal state.
+`DELETE FROM execution_locks WHERE hook_slug = ?`. Called only when no queued item exists to hand off to.
 
-**The lock is held through retries.** When `run_with_retries` retries a failed command, the lock remains held. Release happens only when the entire retry sequence completes (success, final failure, or timeout).
+**Handing off the lock to a queued execution:**
+
+```rust
+pub async fn hand_off(pool: &SqlitePool, hook_slug: &str, next_execution_id: &str) -> DbResult<()>
+```
+
+`UPDATE execution_locks SET execution_id = ?, acquired_at = ? WHERE hook_slug = ?`. Replaces the current lock holder atomically without ever releasing the lock row. This prevents a new incoming trigger from stealing the lock between a release and re-acquire.
+
+**The lock is held through retries.** When `run_with_retries` retries a failed command, the lock remains held. Release (or hand-off) happens only when the entire retry sequence completes (success, final failure, or timeout).
 
 ### Mutex mode evaluation
 
@@ -194,21 +204,45 @@ Note: in case 3c, `execution::create` is called inside the barrier logic, not at
 When an execution completes and its lock is released, the completion path checks for queued items:
 
 ```rust
-pub async fn on_execution_complete(pool: &SqlitePool, hook_slug: &str, concurrency: &ConcurrencyConfig) {
-    // 1. Release the lock
-    execution_lock::release(pool, hook_slug).await;
+pub async fn on_execution_complete(
+    pool: &SqlitePool,
+    hook_slug: &str,
+    concurrency: &ConcurrencyConfig,
+    approval: Option<&ApprovalConfig>,
+) {
+    // 1. Peek at the queue first (do not dequeue yet)
+    let next = execution_queue::peek_next(pool, hook_slug).await;
 
-    // 2. Dequeue next waiting item (if any)
-    if let Some(queued) = execution_queue::dequeue_next(pool, hook_slug).await {
-        // 3. Check if approval is also needed for this hook
-        //    This requires access to the current hook config. Pass it in or
-        //    look it up from state. If approval required, move execution to
-        //    pending_approval. Otherwise acquire lock and spawn execution.
+    // 2. If there's a queued item, update the lock row to the new execution ID
+    //    atomically (UPDATE existing lock row) before releasing.
+    //    If no queued item, just release.
+    match next {
+        None => {
+            execution_lock::release(pool, hook_slug).await;
+        }
+        Some(queued) => {
+            // Hand off the lock directly to the queued execution: UPDATE the row
+            // in-place so the lock is never absent, preventing new triggers from
+            // stealing it between release and re-acquire.
+            execution_lock::hand_off(pool, hook_slug, &queued.execution_id).await;
+            execution_queue::mark_ready(pool, &queued.id).await;
+
+            // Check if approval is needed before running
+            if approval.map_or(false, |a| a.required) {
+                let _ = execution::mark_pending_approval(pool, &queued.execution_id).await;
+            } else {
+                // spawn execution (caller is responsible for providing the spawn fn)
+            }
+        }
     }
 }
 ```
 
-`dequeue_next` finds the oldest `waiting` entry, marks it as `ready`, and returns it. This is event-driven, not polled -- the completion of one execution triggers the next.
+**Lock hand-off is atomic.** `execution_lock::hand_off` performs `UPDATE execution_locks SET execution_id = ? WHERE hook_slug = ?` -- a single write that replaces the current holder without ever releasing the lock row. This prevents a new incoming trigger from stealing the lock between the release and re-acquire that a naive release-then-acquire approach would create.
+
+`peek_next` finds the oldest `waiting` entry without changing its status. `mark_ready` transitions it to `ready`. Both are separate calls but the race between them is benign: if a new trigger arrives between peek and hand-off, it cannot acquire the lock (the row still exists). The hand-off is the only write that matters.
+
+This is event-driven, not polled -- the completion of one execution triggers the next.
 
 ```rust
 /// Dequeue the next waiting item for a hook. Returns None if the queue is empty.
@@ -222,7 +256,16 @@ pub async fn dequeue_next(pool: &SqlitePool, hook_slug: &str) -> DbResult<Option
 
 ### Queue position tracking
 
-Position is assigned at enqueue time as `MAX(position) + 1` for the hook. When an item is dequeued, its position is not rewritten -- positions are monotonically increasing, not compacted. The queue is ordered by `position ASC` for dequeue priority.
+Position is assigned at enqueue time using a single atomic INSERT-SELECT to avoid TOCTOU races:
+
+```sql
+INSERT INTO execution_queue (id, hook_slug, execution_id, position, queued_at, status)
+SELECT ?, ?, ?, COALESCE(MAX(position), 0) + 1, ?, 'waiting'
+FROM execution_queue
+WHERE hook_slug = ?
+```
+
+SQLite serializes writes so this is safe under concurrent enqueuers. Positions are monotonically increasing and never rewritten after assignment. The queue is ordered by `position ASC` for dequeue priority.
 
 ## 2. Approval Gates
 
@@ -390,7 +433,7 @@ One new migration: `20260412000005_create_execution_barriers.sql`
 ```sql
 CREATE TABLE execution_locks (
     hook_slug    TEXT PRIMARY KEY NOT NULL,
-    execution_id TEXT NOT NULL REFERENCES executions(id),
+    execution_id TEXT NOT NULL,  -- no FK: lock is inserted before execution record in Proceed path
     acquired_at  TEXT NOT NULL
 );
 
@@ -531,7 +574,10 @@ tokio::spawn(async move {
     // Release lock and process queue (if concurrency is configured)
     if let Some(ref concurrency_config) = concurrency_config {
         barriers::on_execution_complete(
-            &pool, &hook_slug, concurrency_config, approval_config.as_ref(),
+            &pool,
+            &hook_slug,
+            concurrency_config,
+            approval_config.as_deref(),
         ).await;
     }
 
@@ -584,12 +630,14 @@ Queue entries referencing executions in terminal states should be cleaned up:
 
 ```sql
 UPDATE execution_queue SET status = 'expired'
-WHERE status = 'waiting'
+WHERE status IN ('waiting', 'ready')
 AND execution_id IN (
     SELECT id FROM executions
-    WHERE status IN ('rejected', 'expired')
+    WHERE status IN ('rejected', 'expired', 'failed', 'success', 'timed_out')
 );
 ```
+
+**Stuck `ready` entries:** A queue entry is marked `ready` during the lock hand-off sequence. If the server crashes between `mark_ready` and actually spawning the dequeued execution, the entry is stuck in `ready` with the execution still in `pending` status. On startup, `recover_barriers()` scans for `ready` entries whose execution is still in `pending` (not terminal), re-acquires the lock for each, and spawns them.
 
 After cleanup, process any unblocked queue entries (dequeue and execute/gate).
 
