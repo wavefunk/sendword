@@ -1,3 +1,4 @@
+pub mod http;
 pub mod script;
 pub mod shell;
 
@@ -8,6 +9,7 @@ use std::time::Duration;
 use sqlx::SqlitePool;
 use tokio::fs;
 
+use crate::config::HttpMethod;
 use crate::models::ExecutionStatus;
 
 /// Which executor to use for a hook.
@@ -15,6 +17,13 @@ use crate::models::ExecutionStatus;
 pub enum ResolvedExecutor {
     Shell { command: String },
     Script { path: PathBuf },
+    Http {
+        method: HttpMethod,
+        url: String,
+        headers: HashMap<String, String>,
+        body: Option<String>,
+        follow_redirects: bool,
+    },
 }
 
 /// Everything the executor needs to run a command.
@@ -37,6 +46,9 @@ pub struct ExecutionContext {
     /// Raw JSON payload from the trigger request. Set as SENDWORD_PAYLOAD
     /// env var and written to payload.json in the log directory.
     pub payload_json: String,
+    /// Shared HTTP client for HTTP executor. Shell and script set this to None.
+    /// reqwest::Client is cheaply clonable (Arc internally).
+    pub http_client: Option<reqwest::Client>,
 }
 
 /// The outcome of an execution attempt.
@@ -99,6 +111,10 @@ pub async fn run(pool: &SqlitePool, ctx: ExecutionContext) -> ExecutionResult {
     match &ctx.executor {
         ResolvedExecutor::Shell { command } => shell::run_shell(pool, &ctx, command).await,
         ResolvedExecutor::Script { path } => script::run_script(pool, &ctx, path).await,
+        ResolvedExecutor::Http { .. } => {
+            let client = ctx.http_client.clone().unwrap_or_default();
+            http::run_http(pool, &ctx, &client).await
+        }
     }
 }
 
@@ -201,6 +217,7 @@ mod tests {
             timeout: Duration::from_secs(10),
             logs_dir: logs_dir.into(),
             payload_json: "{}".into(),
+            http_client: None,
         }
     }
 

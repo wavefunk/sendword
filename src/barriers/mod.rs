@@ -160,7 +160,22 @@ async fn run_dequeued(
             ResolvedExecutor::Shell { command: interpolated }
         }
         ExecutorConfig::Script { path } => {
-            ResolvedExecutor::Script { path: std::path::PathBuf::from(path) }
+            crate::executor::ResolvedExecutor::Script { path: std::path::PathBuf::from(path) }
+        }
+        ExecutorConfig::Http { method, url, headers, body, follow_redirects } => {
+            let payload_value: serde_json::Value =
+                serde_json::from_str(&exec.request_payload)
+                    .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+            let interpolated_url = interpolate_command(url, &payload_value).into_owned();
+            let interpolated_body = body.as_deref()
+                .map(|b| interpolate_command(b, &payload_value).into_owned());
+            crate::executor::ResolvedExecutor::Http {
+                method: *method,
+                url: interpolated_url,
+                headers: headers.clone(),
+                body: interpolated_body,
+                follow_redirects: *follow_redirects,
+            }
         }
     };
 
@@ -173,6 +188,7 @@ async fn run_dequeued(
         timeout,
         logs_dir: app_config.logs.dir.clone(),
         payload_json: exec.request_payload.clone(),
+        http_client: Some(state.http_client.clone()),
     };
 
     let retry_config = crate::retry::resolve_retry_config(hook, &app_config.defaults.retries);

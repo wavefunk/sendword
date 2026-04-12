@@ -164,6 +164,21 @@ async fn replay_execution(
         ExecutorConfig::Script { path } => {
             ResolvedExecutor::Script { path: std::path::PathBuf::from(path) }
         }
+        ExecutorConfig::Http { method, url, headers, body, follow_redirects } => {
+            let payload_value: serde_json::Value =
+                serde_json::from_str(&original.request_payload)
+                    .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+            let interpolated_url = interpolate_command(url, &payload_value).into_owned();
+            let interpolated_body = body.as_deref()
+                .map(|b| interpolate_command(b, &payload_value).into_owned());
+            ResolvedExecutor::Http {
+                method: *method,
+                url: interpolated_url,
+                headers: headers.clone(),
+                body: interpolated_body,
+                follow_redirects: *follow_redirects,
+            }
+        }
     };
 
     let env = hook.env.clone();
@@ -200,6 +215,7 @@ async fn replay_execution(
         timeout,
         logs_dir,
         payload_json: original.request_payload,
+        http_client: Some(state.http_client.clone()),
     };
 
     let pool = pool.clone();
@@ -253,6 +269,21 @@ async fn approve_execution(
             ExecutorConfig::Script { path } => {
                 ResolvedExecutor::Script { path: std::path::PathBuf::from(path) }
             }
+            ExecutorConfig::Http { method, url, headers, body, follow_redirects } => {
+                let payload_value: serde_json::Value =
+                    serde_json::from_str(&exec.request_payload)
+                        .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+                let interpolated_url = interpolate_command(url, &payload_value).into_owned();
+                let interpolated_body = body.as_deref()
+                    .map(|b| interpolate_command(b, &payload_value).into_owned());
+                ResolvedExecutor::Http {
+                    method: *method,
+                    url: interpolated_url,
+                    headers: headers.clone(),
+                    body: interpolated_body,
+                    follow_redirects: *follow_redirects,
+                }
+            }
         };
 
         let env = hook.env.clone();
@@ -281,6 +312,7 @@ async fn approve_execution(
             timeout,
             logs_dir,
             payload_json: exec.request_payload.clone(),
+            http_client: Some(state.http_client.clone()),
         };
 
         let pool_clone = pool.clone();

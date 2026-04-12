@@ -18,6 +18,7 @@ pub struct AppState {
     pub config_writer: ConfigWriter,
     pub db: Db,
     pub templates: Templates,
+    pub http_client: reqwest::Client,
 }
 
 impl AppState {
@@ -28,11 +29,15 @@ impl AppState {
         templates: Templates,
     ) -> Arc<Self> {
         let config_path = config_path.into();
+        let http_client = reqwest::Client::builder()
+            .build()
+            .unwrap_or_default();
         Arc::new(Self {
             config: ArcSwap::from_pointee(config),
             config_writer: ConfigWriter::new(config_path),
             db,
             templates,
+            http_client,
         })
     }
 
