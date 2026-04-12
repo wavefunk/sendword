@@ -357,8 +357,8 @@ pub async fn list_by_hook_filtered(
             let filtered: Vec<Execution> = candidates
                 .into_iter()
                 .filter(|e| {
-                    if let Some(from) = from_date {
-                        if e.triggered_at.as_str() < from { return false; }
+                    if from_date.is_some_and(|from| e.triggered_at.as_str() < from) {
+                        return false;
                     }
                     if let Some(to) = to_date {
                         // Include everything up to and including the to_date day.
