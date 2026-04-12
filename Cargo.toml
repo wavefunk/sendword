@@ -54,7 +54,6 @@ minijinja-embed = "2"
 [dev-dependencies]
 figment = { version = "0.10", features = ["test"] }
 reqwest = { version = "0.12", features = ["json"] }
-tempfile = "3.8"
 
 [profile.dev]
 incremental = true

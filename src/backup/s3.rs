@@ -3,7 +3,6 @@ use s3::creds::Credentials;
 use s3::region::Region;
 
 use crate::config::BackupConfig;
-use crate::error::DbError;
 
 /// A summary of an object stored in S3.
 #[derive(Debug, Clone)]
