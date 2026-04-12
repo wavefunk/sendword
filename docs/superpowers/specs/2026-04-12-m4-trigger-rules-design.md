@@ -131,7 +131,7 @@ payload_filters = [
 
 ### Regex compilation
 
-Regex patterns in payload filters are compiled once at config validation time (`AppConfig::validate()`). A filter with an invalid regex pattern causes a config validation error, not a runtime error. The compiled regex is stored alongside the config (separate from the serializable `PayloadFilter` — a `CompiledPayloadFilter` wrapper or a parallel vec of compiled regexes).
+Regex patterns in payload filters are compiled per-request inside `evaluate()`. A filter with an invalid regex pattern is detected at config validation time (`AppConfig::validate()`), which returns an error so the user never has a hook with a bad regex in production. At evaluation time, `Regex::new(&filter.value)` is called for each `regex` operator filter — this is safe because config validation already confirmed the pattern is valid, and `Regex::new` is fast enough for per-request use without a cache.
 
 ### Non-matching result
 
@@ -388,7 +388,7 @@ async fn log_rejection(
         hook_slug,
         source_ip,
         status,
-        reason: Some(reason),
+        reason,
         execution_id: None,
     }).await;
 }
