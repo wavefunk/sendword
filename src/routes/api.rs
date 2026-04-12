@@ -4,8 +4,11 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use serde::Deserialize;
 use serde_json::Value;
 
+use crate::auth::AuthUser;
+use crate::backup::BackupEntry;
 use crate::config::AppConfig;
 use crate::server::AppState;
 
@@ -13,6 +16,9 @@ pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/api/config/export", get(export_config))
         .route("/api/config/import", post(import_config))
+        .route("/api/backup/list", get(list_backups))
+        .route("/api/backup/create", post(create_backup))
+        .route("/api/backup/restore", post(restore_backup))
 }
 
 /// GET /api/config/export
@@ -79,6 +85,142 @@ async fn import_config(
     }
 
     Ok(StatusCode::OK)
+}
+
+// --- Backup endpoints ---
+
+#[derive(serde::Serialize)]
+struct BackupListItem {
+    key: String,
+    size: u64,
+    last_modified: String,
+}
+
+impl From<BackupEntry> for BackupListItem {
+    fn from(e: BackupEntry) -> Self {
+        Self {
+            key: e.key,
+            size: e.size,
+            last_modified: e.last_modified,
+        }
+    }
+}
+
+/// GET /api/backup/list
+///
+/// Lists available backups from S3. Returns 503 if backup is not configured.
+async fn list_backups(
+    _auth: AuthUser,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<BackupListItem>>, (StatusCode, Json<Value>)> {
+    let config = state.config.load();
+    let backup_config = config.backup.as_ref().ok_or_else(|| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({ "error": "backup is not configured" })),
+        )
+    })?;
+
+    match crate::backup::list_backups(backup_config).await {
+        Ok(entries) => Ok(Json(entries.into_iter().map(BackupListItem::from).collect())),
+        Err(e) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )),
+    }
+}
+
+/// POST /api/backup/create
+///
+/// Triggers an immediate backup. Returns the S3 key of the created backup.
+async fn create_backup(
+    _auth: AuthUser,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let config = state.config.load();
+    let backup_config = config.backup.as_ref().ok_or_else(|| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({ "error": "backup is not configured" })),
+        )
+    })?;
+
+    let config_path = state.config_writer.path().to_owned();
+    let pool = state.db.pool().clone();
+
+    match crate::backup::create_backup(&pool, backup_config, &config_path).await {
+        Ok(key) => Ok(Json(serde_json::json!({ "key": key }))),
+        Err(e) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )),
+    }
+}
+
+#[derive(Deserialize)]
+struct RestoreRequest {
+    key: String,
+    /// Must be `true` to proceed with restore (safety gate).
+    #[serde(default)]
+    confirm: bool,
+}
+
+/// POST /api/backup/restore
+///
+/// Downloads a backup and extracts it to a temporary directory. Returns the
+/// extracted file paths for manual application. Requires `{"key": "...", "confirm": true}`.
+async fn restore_backup(
+    _auth: AuthUser,
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<RestoreRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    if !body.confirm {
+        return Err((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(serde_json::json!({
+                "error": "restore requires confirm: true in request body"
+            })),
+        ));
+    }
+
+    let config = state.config.load();
+    let backup_config = config.backup.as_ref().ok_or_else(|| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({ "error": "backup is not configured" })),
+        )
+    })?;
+
+    let tmp = tempfile::TempDir::new().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+    })?;
+
+    let output_dir = tmp.path().to_path_buf();
+    if let Err(e) =
+        crate::backup::restore_backup(backup_config, &body.key, &output_dir).await
+    {
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        ));
+    }
+
+    // List extracted files
+    let mut files = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&output_dir) {
+        for entry in entries.flatten() {
+            files.push(entry.file_name().to_string_lossy().into_owned());
+        }
+    }
+
+    Ok(Json(serde_json::json!({
+        "key": body.key,
+        "files": files,
+        "message": "backup extracted. Apply manually from the extraction directory.",
+    })))
 }
 
 #[cfg(test)]

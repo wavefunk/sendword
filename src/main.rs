@@ -25,6 +25,20 @@ enum Command {
         #[command(subcommand)]
         action: UserAction,
     },
+    /// Backup management commands
+    Backup {
+        #[command(subcommand)]
+        action: BackupAction,
+    },
+    /// Restore from a backup
+    Restore {
+        /// S3 object key of the backup to restore
+        #[arg(long)]
+        from: String,
+        /// Directory to extract the backup into
+        #[arg(long, default_value = "restored")]
+        output: std::path::PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -35,6 +49,14 @@ enum UserAction {
         #[arg(long)]
         username: String,
     },
+}
+
+#[derive(Subcommand)]
+enum BackupAction {
+    /// Create a backup and upload to S3
+    Create,
+    /// List available backups
+    List,
 }
 
 #[tokio::main]
@@ -48,6 +70,11 @@ async fn main() -> eyre::Result<()> {
         Some(Command::User { action }) => match action {
             UserAction::Create { username } => user_create(&username).await,
         },
+        Some(Command::Backup { action }) => match action {
+            BackupAction::Create => backup_create().await,
+            BackupAction::List => backup_list().await,
+        },
+        Some(Command::Restore { from, output }) => backup_restore(&from, &output).await,
     }
 }
 
@@ -92,6 +119,13 @@ async fn serve() -> eyre::Result<()> {
         std::sync::Arc::clone(&state),
     );
     tracing::info!("approval sweep task started");
+
+    if state.config.load().backup.as_ref().and_then(|b| b.schedule.as_ref()).is_some() {
+        let _backup_scheduler = sendword::backup::scheduler::spawn_backup_scheduler(
+            std::sync::Arc::clone(&state),
+        );
+        tracing::info!("backup scheduler started");
+    }
 
     sendword::server::run(state).await?;
 
@@ -154,6 +188,76 @@ async fn user_create(username: &str) -> eyre::Result<()> {
         }
         Err(e) => {
             return Err(e.into());
+        }
+    }
+
+    Ok(())
+}
+
+async fn backup_create() -> eyre::Result<()> {
+    let config = AppConfig::load()?;
+    let backup_config = config.backup.as_ref().ok_or_else(|| {
+        eyre::eyre!("backup is not configured in sendword.toml")
+    })?;
+
+    let db = sendword::db::Db::new(&config.database).await?;
+    db.migrate().await?;
+
+    let config_path = std::path::Path::new("sendword.toml");
+    match sendword::backup::create_backup(db.pool(), backup_config, config_path).await {
+        Ok(key) => {
+            eprintln!("backup created: {key}");
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            std::process::exit(1);
+        }
+    }
+
+    Ok(())
+}
+
+async fn backup_list() -> eyre::Result<()> {
+    let config = AppConfig::load()?;
+    let backup_config = config.backup.as_ref().ok_or_else(|| {
+        eyre::eyre!("backup is not configured in sendword.toml")
+    })?;
+
+    match sendword::backup::list_backups(backup_config).await {
+        Ok(entries) => {
+            if entries.is_empty() {
+                eprintln!("no backups found");
+            } else {
+                for entry in &entries {
+                    println!("{}\t{}\t{}", entry.last_modified, entry.size, entry.key);
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            std::process::exit(1);
+        }
+    }
+
+    Ok(())
+}
+
+async fn backup_restore(key: &str, output: &std::path::Path) -> eyre::Result<()> {
+    let config = AppConfig::load()?;
+    let backup_config = config.backup.as_ref().ok_or_else(|| {
+        eyre::eyre!("backup is not configured in sendword.toml")
+    })?;
+
+    match sendword::backup::restore_backup(backup_config, key, output).await {
+        Ok(()) => {
+            eprintln!("backup extracted to: {}", output.display());
+            eprintln!(
+                "apply manually: copy sendword.toml and sendword.db from the output directory"
+            );
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            std::process::exit(1);
         }
     }
 

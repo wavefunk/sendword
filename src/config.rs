@@ -96,6 +96,8 @@ pub struct AppConfig {
     pub masking: MaskingConfig,
     #[serde(default)]
     pub hooks: Vec<HookConfig>,
+    #[serde(default)]
+    pub backup: Option<BackupConfig>,
 }
 
 impl AppConfig {
@@ -309,6 +311,24 @@ impl AppConfig {
                         ));
                     }
                 }
+            }
+        }
+
+        if let Some(backup) = &self.backup {
+            if let Some(schedule) = &backup.schedule {
+                use std::str::FromStr;
+                if cron::Schedule::from_str(schedule).is_err() {
+                    errors.push(format!(
+                        "backup.schedule '{}' is not a valid cron expression",
+                        schedule
+                    ));
+                }
+            }
+            if backup.bucket.is_empty() {
+                errors.push("backup.bucket must be non-empty".into());
+            }
+            if backup.endpoint.is_empty() {
+                errors.push("backup.endpoint must be non-empty".into());
             }
         }
 
@@ -641,6 +661,30 @@ pub struct NotificationConfig {
     #[serde(default)]
     pub headers: HashMap<String, String>,
     pub body: String,
+}
+
+// --- Backup ---
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct RetentionConfig {
+    pub max_count: Option<u32>,
+    #[serde(default, with = "humantime_serde::option")]
+    pub max_age: Option<std::time::Duration>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct BackupConfig {
+    pub endpoint: String,
+    pub bucket: String,
+    pub access_key: String,
+    pub secret_key: String,
+    #[serde(default)]
+    pub region: String,
+    #[serde(default)]
+    pub prefix: String,
+    pub schedule: Option<String>,
+    #[serde(default)]
+    pub retention: RetentionConfig,
 }
 
 // ---
