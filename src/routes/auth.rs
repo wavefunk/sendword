@@ -78,16 +78,14 @@ async fn logout(
     headers: axum::http::HeaderMap,
 ) -> Response {
     // Extract session token from cookie header
-    if let Some(cookie_header) = headers.get(axum::http::header::COOKIE) {
-        if let Ok(cookie_str) = cookie_header.to_str() {
-            if let Some(token) = extract_session_token(cookie_str) {
+    if let Some(cookie_header) = headers.get(axum::http::header::COOKIE)
+        && let Ok(cookie_str) = cookie_header.to_str()
+            && let Some(token) = extract_session_token(cookie_str) {
                 let pool = state.db.pool();
-                if let Err(e) = session::delete(pool, &token).await {
+                if let Err(e) = session::delete(pool, token).await {
                     tracing::warn!(error = %e, "failed to delete session during logout");
                 }
             }
-        }
-    }
 
     // Clear cookie and redirect
     let cookie_config = CookieConfig::from_app_state(&state);
@@ -132,6 +130,7 @@ async fn has_valid_session(state: &AppState, headers: &axum::http::HeaderMap) ->
 }
 
 /// Render the login template with an optional error message.
+#[allow(clippy::result_large_err)]
 fn render_login(state: &AppState, error: Option<&str>) -> Result<Response, Response> {
     let html = state
         .templates

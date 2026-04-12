@@ -53,16 +53,14 @@ struct TriggerResponse {
 /// Prefers the first address in `X-Forwarded-For` (set by reverse proxies),
 /// falls back to the peer socket address from `ConnectInfo`.
 fn extract_source_ip(headers: &HeaderMap, peer: &SocketAddr) -> String {
-    if let Some(forwarded) = headers.get("x-forwarded-for") {
-        if let Ok(val) = forwarded.to_str() {
-            if let Some(first) = val.split(',').next() {
+    if let Some(forwarded) = headers.get("x-forwarded-for")
+        && let Ok(val) = forwarded.to_str()
+            && let Some(first) = val.split(',').next() {
                 let trimmed = first.trim();
                 if !trimmed.is_empty() {
                     return trimmed.to_owned();
                 }
             }
-        }
-    }
     peer.ip().to_string()
 }
 
@@ -238,9 +236,9 @@ async fn trigger_hook(
             .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
 
         // 1. Payload filters
-        if let Some(filters) = &rules.payload_filters {
-            if !filters.is_empty() {
-                if let trigger_rules::EvalOutcome::Reject { status, reason } =
+        if let Some(filters) = &rules.payload_filters
+            && !filters.is_empty()
+                && let trigger_rules::EvalOutcome::Reject { status, reason } =
                     payload_filter::evaluate(filters, &payload_value)
                 {
                     log_rejection(pool, &slug, &source_ip, status.clone(), &reason).await;
@@ -250,13 +248,11 @@ async fn trigger_hook(
                     }))
                     .into_response());
                 }
-            }
-        }
 
         // 2. Time windows
-        if let Some(windows) = &rules.time_windows {
-            if !windows.is_empty() {
-                if let trigger_rules::EvalOutcome::Reject { status, reason } =
+        if let Some(windows) = &rules.time_windows
+            && !windows.is_empty()
+                && let trigger_rules::EvalOutcome::Reject { status, reason } =
                     time_window::evaluate(windows)
                 {
                     log_rejection(pool, &slug, &source_ip, status.clone(), &reason).await;
@@ -266,12 +262,10 @@ async fn trigger_hook(
                     }))
                     .into_response());
                 }
-            }
-        }
 
         // 3. Cooldown
-        if let Some(cd) = rules.cooldown {
-            if let trigger_rules::EvalOutcome::Reject { status, reason } =
+        if let Some(cd) = rules.cooldown
+            && let trigger_rules::EvalOutcome::Reject { status, reason } =
                 cooldown::evaluate(pool, &slug, cd).await
             {
                 log_rejection(pool, &slug, &source_ip, status.clone(), &reason).await;
@@ -281,11 +275,10 @@ async fn trigger_hook(
                 }))
                 .into_response());
             }
-        }
 
         // 4. Rate limit (returns 429, not 200)
-        if let Some(rl) = &rules.rate_limit {
-            if let trigger_rules::EvalOutcome::Reject { status, reason } =
+        if let Some(rl) = &rules.rate_limit
+            && let trigger_rules::EvalOutcome::Reject { status, reason } =
                 rate_limit::evaluate(pool, &slug, rl).await
             {
                 log_rejection(pool, &slug, &source_ip, status.clone(), &reason).await;
@@ -298,7 +291,6 @@ async fn trigger_hook(
                 )
                     .into_response());
             }
-        }
     }
 
     // Pre-generate the execution ID so barriers can reference it before the record is created
@@ -442,8 +434,8 @@ async fn trigger_hook(
             exit_code = ?result.exit_code,
             "execution completed"
         );
-        if let Some(ref nc) = notification_config {
-            if let Ok(exec_record) =
+        if let Some(ref nc) = notification_config
+            && let Ok(exec_record) =
                 crate::models::execution::get_by_id(&pool, &execution_id).await
             {
                 crate::notification::send_notification(
@@ -455,7 +447,6 @@ async fn trigger_hook(
                 )
                 .await;
             }
-        }
         if concurrency_config.is_some() {
             barriers::on_execution_complete(
                 &state_clone,

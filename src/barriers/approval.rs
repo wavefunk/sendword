@@ -2,7 +2,7 @@ use crate::config::ApprovalConfig;
 
 /// Returns true if the hook config requires human approval before execution.
 pub fn requires_approval(approval: Option<&ApprovalConfig>) -> bool {
-    approval.map_or(false, |a| a.required)
+    approval.is_some_and(|a| a.required)
 }
 
 #[cfg(test)]

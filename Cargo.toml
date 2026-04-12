@@ -47,6 +47,8 @@ flate2 = "1"
 tar = "0.4"
 cron = "0.12"
 tempfile = "3.8"
+async-stream = "0.3"
+futures-core = "0.3"
 
 [build-dependencies]
 minijinja-embed = "2"

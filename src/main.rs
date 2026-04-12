@@ -1,6 +1,5 @@
 use clap::{Parser, Subcommand};
 use sendword::config::AppConfig;
-use serde_json;
 
 #[derive(Parser)]
 #[command(name = "sendword", about = "HTTP webhook to command runner sidecar")]

@@ -1,8 +1,12 @@
+use std::convert::Infallible;
 use std::path::Path as FsPath;
 use std::sync::Arc;
 
+use async_stream::stream;
 use axum::extract::{Path, State};
+use futures_core::Stream;
 use axum::http::StatusCode;
+use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -23,6 +27,7 @@ use crate::templates::context;
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/executions/{id}", get(execution_detail))
+        .route("/executions/{id}/logs/stream", get(log_stream))
         .route("/executions/{id}/replay", post(replay_execution))
         .route("/executions/{id}/approve", post(approve_execution))
         .route("/executions/{id}/reject", post(reject_execution))
@@ -231,8 +236,8 @@ async fn replay_execution(
             exit_code = ?result.exit_code,
             "replay execution completed"
         );
-        if let Some(ref nc) = notification_config {
-            if let Ok(exec_record) =
+        if let Some(ref nc) = notification_config
+            && let Ok(exec_record) =
                 crate::models::execution::get_by_id(&pool, &execution_id).await
             {
                 crate::notification::send_notification(
@@ -244,7 +249,6 @@ async fn replay_execution(
                 )
                 .await;
             }
-        }
     });
 
     Ok(Json(ReplayResponse {
@@ -344,8 +348,8 @@ async fn approve_execution(
                 status = %result.status,
                 "approved execution completed"
             );
-            if let Some(ref nc) = notification_config {
-                if let Ok(exec_record) =
+            if let Some(ref nc) = notification_config
+                && let Ok(exec_record) =
                     crate::models::execution::get_by_id(&pool_clone, &execution_id).await
                 {
                     crate::notification::send_notification(
@@ -357,7 +361,6 @@ async fn approve_execution(
                     )
                     .await;
                 }
-            }
             if concurrency_config.is_some() {
                 barriers::on_execution_complete(
                     &state_clone,
@@ -394,9 +397,9 @@ async fn reject_execution(
 
     // If this execution held a lock, hand off to next queued or release
     let config = state.config.load();
-    if let Some(hook) = config.hooks.iter().find(|h| h.slug == exec.hook_slug) {
-        if let Ok(Some(holder)) = execution_lock::get_holder(pool, &exec.hook_slug).await {
-            if holder == id {
+    if let Some(hook) = config.hooks.iter().find(|h| h.slug == exec.hook_slug)
+        && let Ok(Some(holder)) = execution_lock::get_holder(pool, &exec.hook_slug).await
+            && holder == id {
                 barriers::on_execution_complete(
                     &state,
                     &exec.hook_slug,
@@ -404,8 +407,6 @@ async fn reject_execution(
                     hook.approval.clone(),
                 ).await;
             }
-        }
-    }
 
     Ok(Redirect::to(&format!("/executions/{id}")).into_response())
 }
@@ -440,4 +441,183 @@ async fn list_pending_approvals(
     )?;
 
     Ok(Html(html))
+}
+
+/// GET /executions/:id/logs/stream
+///
+/// Streams log output as Server-Sent Events. For terminal executions, sends the
+/// full log content then closes. For running executions, polls log files at 200ms
+/// intervals and sends new chunks until the execution reaches a terminal state.
+///
+/// Events emitted:
+/// - `stdout` — new stdout content
+/// - `stderr` — new stderr content
+/// - `done`   — JSON `{"status": "..."}` when terminal
+async fn log_stream(
+    _auth: AuthUser,
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, AppError> {
+    let pool = state.db.pool().clone();
+    let config = state.config.load();
+    let logs_dir = config.logs.dir.clone();
+    drop(config);
+
+    let exec = execution::get_by_id(&pool, &id)
+        .await
+        .map_err(|e| match e {
+            crate::error::DbError::NotFound(_) => AppError::not_found("execution"),
+            other => AppError::from(other),
+        })?;
+
+    let is_terminal = exec.status.is_terminal();
+    let log_dir = format!("{logs_dir}/{id}");
+
+    let s = stream! {
+        if is_terminal {
+            // Execution already done — send full log content then close.
+            let stdout = tokio::fs::read_to_string(format!("{log_dir}/stdout.log"))
+                .await
+                .unwrap_or_default();
+            let stderr = tokio::fs::read_to_string(format!("{log_dir}/stderr.log"))
+                .await
+                .unwrap_or_default();
+            if !stdout.is_empty() {
+                yield Ok::<Event, Infallible>(Event::default().event("stdout").data(stdout));
+            }
+            if !stderr.is_empty() {
+                yield Ok(Event::default().event("stderr").data(stderr));
+            }
+            let status = execution::get_by_id(&pool, &id)
+                .await
+                .map(|e| e.status.to_string())
+                .unwrap_or_else(|_| "unknown".into());
+            yield Ok(Event::default().event("done").data(
+                serde_json::json!({ "status": status }).to_string()
+            ));
+        } else {
+            // Execution is running — tail log files.
+            let stdout_path = format!("{log_dir}/stdout.log");
+            let stderr_path = format!("{log_dir}/stderr.log");
+            let mut stdout_offset: u64 = 0;
+            let mut stderr_offset: u64 = 0;
+
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+
+                // Read new stdout bytes.
+                if let Ok(content) = tokio::fs::read(&stdout_path).await
+                    && content.len() as u64 > stdout_offset {
+                        let new = &content[stdout_offset as usize..];
+                        stdout_offset = content.len() as u64;
+                        if let Ok(text) = std::str::from_utf8(new)
+                            && !text.is_empty() {
+                                yield Ok::<Event, Infallible>(
+                                    Event::default().event("stdout").data(text)
+                                );
+                            }
+                    }
+
+                // Read new stderr bytes.
+                if let Ok(content) = tokio::fs::read(&stderr_path).await
+                    && content.len() as u64 > stderr_offset {
+                        let new = &content[stderr_offset as usize..];
+                        stderr_offset = content.len() as u64;
+                        if let Ok(text) = std::str::from_utf8(new)
+                            && !text.is_empty() {
+                                yield Ok::<Event, Infallible>(
+                                    Event::default().event("stderr").data(text)
+                                );
+                            }
+                    }
+
+                // Check if execution has reached a terminal state.
+                match execution::get_by_id(&pool, &id).await {
+                    Ok(e) if e.status.is_terminal() => {
+                        yield Ok(Event::default().event("done").data(
+                            serde_json::json!({ "status": e.status.to_string() }).to_string()
+                        ));
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    };
+
+    Ok(Sse::new(s).keep_alive(KeepAlive::default()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::{Method, Request};
+    use axum::Router;
+    use tower::ServiceExt;
+
+    use crate::config::AppConfig;
+    use crate::db::Db;
+    use crate::models::execution::{ExecutionStatus, NewExecution};
+    use crate::server::AppState;
+
+    async fn test_state() -> (Arc<AppState>, tempfile::TempDir) {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let config_path = dir.path().join("sendword.toml");
+        std::fs::write(&config_path, "[server]\nport = 8080\n").unwrap();
+        let config = AppConfig::load_from(
+            config_path.to_str().unwrap(),
+            "nonexistent_overlay.json",
+        )
+        .expect("load config");
+        let db = Db::new_in_memory().await.expect("db");
+        db.migrate().await.expect("migrate");
+        let templates =
+            crate::templates::Templates::new(crate::templates::Templates::default_dir());
+        let state = AppState::new(config, &config_path, db, templates);
+        (state, dir)
+    }
+
+    #[tokio::test]
+    async fn sse_route_requires_auth() {
+        let (state, _dir) = test_state().await;
+
+        // Create a completed execution.
+        let exec = crate::models::execution::create(
+            state.db.pool(),
+            &NewExecution {
+                id: None,
+                hook_slug: "test-hook",
+                log_path: "/tmp/logs",
+                trigger_source: "test",
+                request_payload: "{}",
+                retry_of: None,
+                status: Some(ExecutionStatus::Success),
+            },
+        )
+        .await
+        .expect("create execution");
+
+        let app = Router::new()
+            .merge(router())
+            .with_state(Arc::clone(&state));
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(format!("/executions/{}/logs/stream", exec.id))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // Without auth cookie the auth middleware redirects to /login (3xx).
+        assert!(
+            resp.status().is_redirection() || resp.status() == StatusCode::UNAUTHORIZED,
+            "expected redirect or unauthorized, got {}",
+            resp.status()
+        );
+    }
 }

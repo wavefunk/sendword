@@ -261,13 +261,12 @@ impl AppConfig {
                         if let (Ok(start), Ok(end)) = (
                             chrono::NaiveTime::parse_from_str(&window.start_time, "%H:%M"),
                             chrono::NaiveTime::parse_from_str(&window.end_time, "%H:%M"),
-                        ) {
-                            if start >= end {
+                        )
+                            && start >= end {
                                 errors.push(format!(
                                     "{prefix_w}.start_time must be before end_time"
                                 ));
                             }
-                        }
                         const VALID_DAYS: &[&str] =
                             &["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
                         for day in &window.days {
@@ -295,23 +294,20 @@ impl AppConfig {
                 }
             }
 
-            if let Some(concurrency) = &hook.concurrency {
-                if concurrency.mode == ConcurrencyMode::Queue && concurrency.queue_depth == 0 {
+            if let Some(concurrency) = &hook.concurrency
+                && concurrency.mode == ConcurrencyMode::Queue && concurrency.queue_depth == 0 {
                     errors.push(format!(
                         "{prefix}.concurrency.queue_depth must be greater than 0 in queue mode"
                     ));
                 }
-            }
 
-            if let Some(approval) = &hook.approval {
-                if let Some(timeout) = approval.timeout {
-                    if timeout.is_zero() {
+            if let Some(approval) = &hook.approval
+                && let Some(timeout) = approval.timeout
+                    && timeout.is_zero() {
                         errors.push(format!(
                             "{prefix}.approval.timeout must be greater than 0 if set"
                         ));
                     }
-                }
-            }
         }
 
         if let Some(backup) = &self.backup {

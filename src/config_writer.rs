@@ -12,7 +12,7 @@ use toml_edit::{Array, DocumentMut, Formatted, InlineTable, Item, Table, Value};
 
 use crate::config::{
     AppConfig, BackoffStrategy, ConfigError, FilterOperator, HmacAlgorithm, HookAuthConfig,
-    PayloadFilter, TimeWindow, TriggerRateLimit, TriggerRules,
+    TriggerRules,
 };
 use crate::payload::{FieldType, PayloadSchema};
 
@@ -339,8 +339,8 @@ fn apply_hook_fields(table: &mut Table, data: &HookFormData) {
         let rules = data.trigger_rules.as_ref().unwrap();
         let mut rules_table = Table::new();
 
-        if let Some(filters) = &rules.payload_filters {
-            if !filters.is_empty() {
+        if let Some(filters) = &rules.payload_filters
+            && !filters.is_empty() {
                 let mut filters_array = Array::new();
                 for f in filters {
                     let mut ft = InlineTable::new();
@@ -356,10 +356,9 @@ fn apply_hook_fields(table: &mut Table, data: &HookFormData) {
                     Item::Value(Value::Array(filters_array)),
                 );
             }
-        }
 
-        if let Some(windows) = &rules.time_windows {
-            if !windows.is_empty() {
+        if let Some(windows) = &rules.time_windows
+            && !windows.is_empty() {
                 let mut windows_array = Array::new();
                 for w in windows {
                     let mut wt = InlineTable::new();
@@ -367,7 +366,7 @@ fn apply_hook_fields(table: &mut Table, data: &HookFormData) {
                     for day in &w.days {
                         days_arr.push(day.as_str());
                     }
-                    wt.insert("days", Value::Array(days_arr).into());
+                    wt.insert("days", Value::Array(days_arr));
                     wt.insert("start_time", w.start_time.as_str().into());
                     wt.insert("end_time", w.end_time.as_str().into());
                     windows_array.push(wt);
@@ -377,7 +376,6 @@ fn apply_hook_fields(table: &mut Table, data: &HookFormData) {
                     Item::Value(Value::Array(windows_array)),
                 );
             }
-        }
 
         if let Some(cooldown) = rules.cooldown {
             rules_table.insert("cooldown", toml_string(&format_duration(cooldown)));

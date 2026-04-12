@@ -80,8 +80,8 @@ async fn expire_pending_approvals(
                 let _ = execution_queue::expire_for_execution(pool, &id).await;
 
                 // If this execution held the lock, hand off or release
-                if let Ok(Some(holder)) = execution_lock::get_holder(pool, &hook.slug).await {
-                    if holder == id {
+                if let Ok(Some(holder)) = execution_lock::get_holder(pool, &hook.slug).await
+                    && holder == id {
                         barriers::on_execution_complete(
                             state,
                             &hook.slug,
@@ -90,7 +90,6 @@ async fn expire_pending_approvals(
                         )
                         .await;
                     }
-                }
             }
         }
     }

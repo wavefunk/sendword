@@ -205,8 +205,8 @@ async fn run_dequeued(
         "dequeued execution completed"
     );
 
-    if let Some(ref nc) = notification_config {
-        if let Ok(exec_record) =
+    if let Some(ref nc) = notification_config
+        && let Ok(exec_record) =
             crate::models::execution::get_by_id(&pool_clone, &execution_id_clone).await
         {
             crate::notification::send_notification(
@@ -218,7 +218,6 @@ async fn run_dequeued(
             )
             .await;
         }
-    }
 
     // After the execution finishes, hand off to the next queue item (or release the lock).
     // Calling on_execution_complete here is safe because run_dequeued is only ever called

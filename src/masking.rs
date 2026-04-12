@@ -74,11 +74,10 @@ pub fn mask_secrets(
             .cloned()
             .or_else(|| std::env::var(var_name).ok());
 
-        if let Some(val) = value {
-            if !val.is_empty() {
+        if let Some(val) = value
+            && !val.is_empty() {
                 result = result.replace(&val, MASK);
             }
-        }
     }
 
     // 2. Apply regex patterns
