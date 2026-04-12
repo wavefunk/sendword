@@ -2,7 +2,7 @@ use figment::{
     providers::{Env, Format, Json, Toml},
     Figment,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
@@ -78,7 +78,7 @@ fn default_scripts_dir() -> String {
 
 // --- Config types ---
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct AppConfig {
     #[serde(default)]
     pub server: ServerConfig,
@@ -117,7 +117,7 @@ impl AppConfig {
         Ok(config)
     }
 
-    fn validate(&self) -> Result<(), ConfigError> {
+    pub fn validate(&self) -> Result<(), ConfigError> {
         let mut errors = Vec::new();
 
         if self.server.port == 0 {
@@ -348,7 +348,7 @@ fn is_valid_slug(s: &str) -> bool {
     true
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ServerConfig {
     #[serde(default = "default_bind")]
     pub bind: String,
@@ -365,7 +365,7 @@ impl Default for ServerConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct DatabaseConfig {
     #[serde(default = "default_db_path")]
     pub path: String,
@@ -379,7 +379,7 @@ impl Default for DatabaseConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct LogsConfig {
     #[serde(default = "default_logs_dir")]
     pub dir: String,
@@ -393,7 +393,7 @@ impl Default for LogsConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AuthConfig {
     #[serde(default = "default_session_lifetime", with = "humantime_serde")]
     pub session_lifetime: Duration,
@@ -410,7 +410,7 @@ impl Default for AuthConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ScriptsConfig {
     #[serde(default = "default_scripts_dir")]
     pub dir: String,
@@ -424,7 +424,7 @@ impl Default for ScriptsConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RateLimitConfig {
     pub max_per_minute: u32,
 }
@@ -435,7 +435,7 @@ impl Default for RateLimitConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BackoffStrategy {
     None,
@@ -449,7 +449,7 @@ impl Default for BackoffStrategy {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RetryConfig {
     #[serde(default)]
     pub count: u32,
@@ -472,7 +472,7 @@ impl Default for RetryConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct DefaultsConfig {
     #[serde(default = "default_rate_limit")]
     pub rate_limit: RateLimitConfig,
@@ -492,7 +492,7 @@ impl Default for DefaultsConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum HttpMethod {
     Get,
@@ -502,7 +502,7 @@ pub enum HttpMethod {
     Delete,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ExecutorConfig {
     Shell { command: String },
@@ -519,13 +519,13 @@ pub enum ExecutorConfig {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HmacAlgorithm {
     Sha256,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum HookAuthConfig {
     None,
@@ -541,7 +541,7 @@ pub enum HookAuthConfig {
 
 // --- Trigger rules ---
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FilterOperator {
     Equals,
@@ -555,7 +555,7 @@ pub enum FilterOperator {
     Lte,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PayloadFilter {
     pub field: String,
     pub operator: FilterOperator,
@@ -566,21 +566,21 @@ pub struct PayloadFilter {
 /// A time window during which a hook is allowed to execute.
 /// `days` is a list of day names (e.g. ["Mon", "Tue", "Wed"]).
 /// Times are UTC strings in "HH:MM" format.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TimeWindow {
     pub days: Vec<String>,
     pub start_time: String,
     pub end_time: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TriggerRateLimit {
     pub max_requests: u64,
     #[serde(with = "humantime_serde")]
     pub window: Duration,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TriggerRules {
     #[serde(default)]
     pub payload_filters: Option<Vec<PayloadFilter>>,
@@ -598,28 +598,28 @@ fn default_queue_depth() -> u32 {
     10
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConcurrencyMode {
     Mutex,
     Queue,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ConcurrencyConfig {
     pub mode: ConcurrencyMode,
     #[serde(default = "default_queue_depth")]
     pub queue_depth: u32,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ApprovalConfig {
     pub required: bool,
     #[serde(default, with = "humantime_serde::option")]
     pub timeout: Option<Duration>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct HookConfig {
     pub name: String,
     pub slug: String,

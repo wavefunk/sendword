@@ -3,7 +3,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 /// The JSON type a payload field is expected to have.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum FieldType {
     String,
@@ -39,7 +39,7 @@ impl fmt::Display for FieldType {
 }
 
 /// A single field definition within a payload schema.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PayloadField {
     pub name: String,
     #[serde(rename = "type")]
@@ -49,7 +49,7 @@ pub struct PayloadField {
 }
 
 /// Per-hook payload schema: a list of expected fields.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PayloadSchema {
     pub fields: Vec<PayloadField>,
 }

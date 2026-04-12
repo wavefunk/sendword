@@ -1,3 +1,4 @@
+mod api;
 mod auth;
 mod dashboard;
 mod executions;
@@ -14,6 +15,7 @@ use crate::server::AppState;
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
+        .merge(api::router())
         .merge(health::router())
         .merge(auth::router())
         .merge(dashboard::router())

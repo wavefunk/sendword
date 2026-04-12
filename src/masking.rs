@@ -1,5 +1,5 @@
 use regex::Regex;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Sentinel value used to replace secret content in displayed logs.
@@ -7,7 +7,7 @@ const MASK: &str = "***";
 
 /// Raw deserialized masking configuration.
 /// Patterns are strings that haven't been compiled yet.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct MaskingConfig {
     /// Env var names whose values should be masked in log output.
     #[serde(default)]
