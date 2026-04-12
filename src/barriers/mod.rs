@@ -160,7 +160,7 @@ async fn run_dequeued(
             ResolvedExecutor::Shell { command: interpolated }
         }
         ExecutorConfig::Script { path } => {
-            crate::executor::ResolvedExecutor::Script { path: std::path::PathBuf::from(path) }
+            ResolvedExecutor::Script { path: std::path::PathBuf::from(path) }
         }
         ExecutorConfig::Http { method, url, headers, body, follow_redirects } => {
             let payload_value: serde_json::Value =
@@ -169,7 +169,7 @@ async fn run_dequeued(
             let interpolated_url = interpolate_command(url, &payload_value).into_owned();
             let interpolated_body = body.as_deref()
                 .map(|b| interpolate_command(b, &payload_value).into_owned());
-            crate::executor::ResolvedExecutor::Http {
+            ResolvedExecutor::Http {
                 method: *method,
                 url: interpolated_url,
                 headers: headers.clone(),
