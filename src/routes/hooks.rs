@@ -326,11 +326,14 @@ async fn trigger_hook(
                     },
                 )
                 .await;
-                return Ok(Json(serde_json::json!({
-                    "status": status.to_string(),
-                    "reason": reason,
-                }))
-                .into_response());
+                return Ok((
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(serde_json::json!({
+                        "status": status.to_string(),
+                        "reason": reason,
+                    })),
+                )
+                    .into_response());
             }
             BarrierOutcome::Defer { execution_id, reason, .. } => {
                 let _ = trigger_attempt::insert(

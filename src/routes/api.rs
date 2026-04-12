@@ -24,7 +24,7 @@ pub fn router() -> Router<Arc<AppState>> {
 /// GET /api/config/export
 ///
 /// Returns the current loaded config as a JSON object.
-async fn export_config(State(state): State<Arc<AppState>>) -> Json<Value> {
+async fn export_config(_auth: AuthUser, State(state): State<Arc<AppState>>) -> Json<Value> {
     let config = state.config.load();
     let value = serde_json::to_value(&*config).unwrap_or(Value::Null);
     Json(value)
@@ -35,6 +35,7 @@ async fn export_config(State(state): State<Arc<AppState>>) -> Json<Value> {
 /// Accepts a JSON config object. Validates, writes to disk as TOML, and reloads.
 /// Returns 422 if validation fails, 500 on write/reload failure.
 async fn import_config(
+    _auth: AuthUser,
     State(state): State<Arc<AppState>>,
     Json(body): Json<Value>,
 ) -> Result<StatusCode, (StatusCode, Json<Value>)> {
@@ -233,6 +234,7 @@ mod tests {
 
     use crate::config::AppConfig;
     use crate::db::Db;
+    use crate::models::{user, session};
     use crate::server::AppState;
 
     async fn test_state_with_config(toml_content: &str) -> (Arc<AppState>, tempfile::TempDir) {
@@ -258,9 +260,18 @@ mod tests {
         Router::new().merge(router()).with_state(state)
     }
 
+    async fn create_test_session(state: &Arc<AppState>) -> String {
+        let pool = state.db.pool();
+        let u = user::create(pool, "admin", "password123").await.unwrap();
+        let session_lifetime = state.config.load().auth.session_lifetime;
+        let sess = session::create(pool, &u.id, session_lifetime).await.unwrap();
+        format!("sendword_session={}", sess.id)
+    }
+
     #[tokio::test]
     async fn export_roundtrip() {
         let (state, _dir) = test_state_with_config("[server]\nport = 8080\n").await;
+        let cookie = create_test_session(&state).await;
         let app = app(Arc::clone(&state));
 
         let resp = app
@@ -268,6 +279,7 @@ mod tests {
                 Request::builder()
                     .method(Method::GET)
                     .uri("/api/config/export")
+                    .header("cookie", &cookie)
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -287,6 +299,7 @@ mod tests {
     #[tokio::test]
     async fn import_invalid_rejects() {
         let (state, _dir) = test_state_with_config("[server]\nport = 8080\n").await;
+        let cookie = create_test_session(&state).await;
         let original_port = state.config.load().server.port;
         let app = app(Arc::clone(&state));
 
@@ -296,6 +309,7 @@ mod tests {
                     .method(Method::POST)
                     .uri("/api/config/import")
                     .header("content-type", "application/json")
+                    .header("cookie", &cookie)
                     .body(Body::from(r#"{"server": {"port": 0}}"#))
                     .unwrap(),
             )
@@ -310,6 +324,7 @@ mod tests {
     #[tokio::test]
     async fn import_valid_updates_and_reloads() {
         let (state, _dir) = test_state_with_config("[server]\nport = 8080\n").await;
+        let cookie = create_test_session(&state).await;
         let app = app(Arc::clone(&state));
 
         // Export current config, change the port, re-import
@@ -320,6 +335,7 @@ mod tests {
                 Request::builder()
                     .method(Method::GET)
                     .uri("/api/config/export")
+                    .header("cookie", &cookie)
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -335,6 +351,7 @@ mod tests {
                     .method(Method::POST)
                     .uri("/api/config/import")
                     .header("content-type", "application/json")
+                    .header("cookie", &cookie)
                     .body(Body::from(serde_json::to_string(&config).unwrap()))
                     .unwrap(),
             )
