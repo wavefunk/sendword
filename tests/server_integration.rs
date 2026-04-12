@@ -3198,6 +3198,135 @@ async fn trigger_attempts_logged_for_rejections() {
     assert!(attempts[0].execution_id.is_none());
 }
 
+/// Verifies that the dashboard renders colored status dots for each hook based on
+/// the last 5 executions. Hooks with no executions should show the "No executions yet"
+/// message. This exercises the per-hook recent execution query and template rendering.
+#[tokio::test]
+async fn dashboard_shows_status_indicators() {
+    use sendword::config::{ExecutorConfig, HookConfig};
+    use sendword::models::execution::{self, ExecutionStatus, NewExecution};
+    use std::collections::HashMap;
+
+    let config = AppConfig {
+        hooks: vec![
+            HookConfig {
+                name: "Active Hook".into(),
+                slug: "active-hook".into(),
+                description: String::new(),
+                enabled: true,
+                auth: None,
+                executor: ExecutorConfig::Shell { command: "echo ok".into() },
+                env: HashMap::new(),
+                cwd: None,
+                timeout: None,
+                retries: None,
+                rate_limit: None,
+                payload: None,
+                trigger_rules: None,
+                concurrency: None,
+                approval: None,
+                notification: None,
+            },
+            HookConfig {
+                name: "Empty Hook".into(),
+                slug: "empty-hook".into(),
+                description: String::new(),
+                enabled: true,
+                auth: None,
+                executor: ExecutorConfig::Shell { command: "echo hi".into() },
+                env: HashMap::new(),
+                cwd: None,
+                timeout: None,
+                retries: None,
+                rate_limit: None,
+                payload: None,
+                trigger_rules: None,
+                concurrency: None,
+                approval: None,
+                notification: None,
+            },
+        ],
+        ..AppConfig::default()
+    };
+
+    let state = test_state(config).await;
+    let token = create_test_session(&state).await;
+    let pool = state.db.pool();
+
+    // Create two executions for "active-hook" with different statuses.
+    let exec1 = execution::create(
+        pool,
+        &NewExecution {
+            id: None,
+            hook_slug: "active-hook",
+            log_path: "data/logs/e1",
+            trigger_source: "127.0.0.1",
+            request_payload: "{}",
+            retry_of: None,
+            status: None,
+        },
+    )
+    .await
+    .unwrap();
+    execution::mark_running(pool, &exec1.id).await.unwrap();
+    execution::mark_completed(pool, &exec1.id, ExecutionStatus::Success, Some(0))
+        .await
+        .unwrap();
+
+    let exec2 = execution::create(
+        pool,
+        &NewExecution {
+            id: None,
+            hook_slug: "active-hook",
+            log_path: "data/logs/e2",
+            trigger_source: "127.0.0.1",
+            request_payload: "{}",
+            retry_of: None,
+            status: None,
+        },
+    )
+    .await
+    .unwrap();
+    execution::mark_running(pool, &exec2.id).await.unwrap();
+    execution::mark_completed(pool, &exec2.id, ExecutionStatus::Failed, Some(1))
+        .await
+        .unwrap();
+
+    let url = spawn_server(state).await;
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("{url}/"))
+        .header("Cookie", format!("sendword_session={token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+
+    // The hook names should appear.
+    assert!(body.contains("Active Hook"), "dashboard should show hook name");
+    assert!(body.contains("Empty Hook"), "dashboard should show empty hook name");
+
+    // "empty-hook" has no executions — the template shows the fallback text.
+    assert!(
+        body.contains("No executions yet"),
+        "hook with no executions should show fallback text"
+    );
+
+    // "active-hook" has executions — the dashboard should render status dots.
+    // The dots are <span> elements with color classes based on status.
+    // Green dot for success:
+    assert!(
+        body.contains("bg-green-500"),
+        "dashboard should render a green dot for a successful execution"
+    );
+    // Red dot for failed:
+    assert!(
+        body.contains("bg-red-500"),
+        "dashboard should render a red dot for a failed execution"
+    );
+}
+
 /// Verifies that the SSE log stream endpoint sends a `done` event immediately
 /// for an execution that is already in a terminal state (e.g. success or failed).
 /// The event payload must include a `status` field with the terminal status string.
