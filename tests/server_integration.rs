@@ -199,6 +199,7 @@ async fn dashboard_renders_configured_hooks() {
                 retries: None,
                 rate_limit: None,
                 payload: None,
+                trigger_rules: None,
             },
             HookConfig {
                 name: "Run Tests".into(),
@@ -215,6 +216,7 @@ async fn dashboard_renders_configured_hooks() {
                 retries: None,
                 rate_limit: None,
                 payload: None,
+                trigger_rules: None,
             },
         ],
         ..AppConfig::default()
@@ -273,6 +275,7 @@ async fn dashboard_shows_last_execution_status() {
             retries: None,
             rate_limit: None,
             payload: None,
+            trigger_rules: None,
         }],
         ..AppConfig::default()
     };
@@ -341,6 +344,7 @@ async fn dashboard_shows_no_executions_for_new_hook() {
             retries: None,
             rate_limit: None,
             payload: None,
+            trigger_rules: None,
         }],
         ..AppConfig::default()
     };
@@ -382,6 +386,7 @@ fn make_test_hook(name: &str, slug: &str, command: &str) -> sendword::config::Ho
         retries: None,
         rate_limit: None,
         payload: None,
+        trigger_rules: None,
     }
 }
 
@@ -478,6 +483,7 @@ async fn hook_detail_shows_disabled_hook() {
             retries: None,
             rate_limit: None,
             payload: None,
+            trigger_rules: None,
         }],
         ..AppConfig::default()
     };
@@ -703,6 +709,7 @@ async fn replay_creates_new_execution_linked_to_original() {
             retries: None,
             rate_limit: None,
             payload: None,
+            trigger_rules: None,
         }],
         ..AppConfig::default()
     };
@@ -784,6 +791,7 @@ async fn replay_spawns_executor_and_runs_command() {
             retries: None,
             rate_limit: None,
             payload: None,
+            trigger_rules: None,
         }],
         ..AppConfig::default()
     };
@@ -1632,6 +1640,7 @@ fn shell_hook(slug: &str) -> HookConfig {
         retries: None,
         rate_limit: None,
         payload: None,
+        trigger_rules: None,
     }
 }
 
