@@ -1,3 +1,345 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  body {
+    background-color: #06080c;
+    color: #e5e0d8;
+    color-scheme: dark;
+    font-family: 'Outfit', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  h1, h2, h3, h4 {
+    font-family: 'Space Mono', ui-monospace, monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+  }
+
+  a {
+    color: #f0a830;
+    text-decoration: none;
+  }
+  a:hover {
+    color: #faf0dc;
+  }
+
+  code {
+    font-family: 'Space Mono', ui-monospace, monospace;
+    background: #141820;
+    padding: 0.125em 0.375em;
+    color: #40c0a0;
+    font-size: 0.85em;
+  }
+
+  input, select, textarea {
+    background-color: #141820;
+    border-color: #2a3144;
+    color: #e5e0d8;
+  }
+  input::placeholder, textarea::placeholder {
+    color: #5c5852;
+  }
+  input:focus, select:focus, textarea:focus {
+    border-color: #f0a830;
+    outline: none;
+    box-shadow: 0 0 0 1px #f0a830;
+  }
+  input[type="checkbox"] {
+    accent-color: #f0a830;
+  }
+  select option {
+    background: #141820;
+    color: #e5e0d8;
+  }
+}
+
+@layer components {
+  /* --- Card --- */
+  .sw-card {
+    background: #0c0f16;
+    border: 1px solid #2a3144;
+    padding: 1rem;
+  }
+
+  /* --- Label --- */
+  .sw-label {
+    display: block;
+    font-family: 'Space Mono', ui-monospace, monospace;
+    font-size: 0.6875rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #8b8680;
+    margin-bottom: 0.25rem;
+  }
+
+  /* --- Input --- */
+  .sw-input {
+    width: 100%;
+    background: #141820;
+    border: 1px solid #2a3144;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.875rem;
+    color: #e5e0d8;
+  }
+  .sw-input:focus {
+    border-color: #f0a830;
+    outline: none;
+    box-shadow: 0 0 0 1px #f0a830;
+  }
+  .sw-input::placeholder {
+    color: #5c5852;
+  }
+  .sw-input[readonly] {
+    background: #0c0f16;
+    color: #5c5852;
+  }
+
+  /* --- Buttons --- */
+  .sw-btn {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.5rem 1rem;
+    font-family: 'Space Mono', ui-monospace, monospace;
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    text-decoration: none;
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+  }
+  .sw-btn:hover {
+    text-decoration: none;
+  }
+  .sw-btn-primary {
+    background: #f0a830;
+    color: #06080c;
+    border-color: #f0a830;
+  }
+  .sw-btn-primary:hover {
+    background: #faf0dc;
+    color: #06080c;
+    border-color: #faf0dc;
+  }
+  .sw-btn-secondary {
+    background: transparent;
+    color: #e5e0d8;
+    border-color: #2a3144;
+  }
+  .sw-btn-secondary:hover {
+    border-color: #f0a830;
+    color: #f0a830;
+  }
+  .sw-btn-danger {
+    background: transparent;
+    color: #e54d2e;
+    border-color: #e54d2e;
+  }
+  .sw-btn-danger:hover {
+    background: #e54d2e;
+    color: #06080c;
+  }
+  .sw-btn-sm {
+    padding: 0.25rem 0.625rem;
+    font-size: 0.625rem;
+  }
+
+  /* --- Badges --- */
+  .sw-badge {
+    display: inline-block;
+    font-family: 'Space Mono', ui-monospace, monospace;
+    font-size: 0.625rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 0.125rem 0.5rem;
+    border: 1px solid;
+  }
+  .sw-badge-success {
+    color: #40c0a0;
+    border-color: #40c0a0;
+    background: rgba(64, 192, 160, 0.1);
+  }
+  .sw-badge-error {
+    color: #e54d2e;
+    border-color: #e54d2e;
+    background: rgba(229, 77, 46, 0.1);
+  }
+  .sw-badge-info {
+    color: #6ca8d0;
+    border-color: #6ca8d0;
+    background: rgba(108, 168, 208, 0.1);
+  }
+  .sw-badge-warning {
+    color: #f0a830;
+    border-color: #f0a830;
+    background: rgba(240, 168, 48, 0.1);
+  }
+  .sw-badge-muted {
+    color: #5c5852;
+    border-color: #5c5852;
+    background: rgba(92, 88, 82, 0.1);
+  }
+  .sw-badge-purple {
+    color: #a78bfa;
+    border-color: #a78bfa;
+    background: rgba(167, 139, 250, 0.1);
+  }
+  .sw-badge-orange {
+    color: #fb923c;
+    border-color: #fb923c;
+    background: rgba(251, 146, 60, 0.1);
+  }
+  .sw-badge-cyan {
+    color: #22d3ee;
+    border-color: #22d3ee;
+    background: rgba(34, 211, 238, 0.1);
+  }
+
+  /* --- Alerts --- */
+  .sw-alert {
+    font-size: 0.8125rem;
+    padding: 0.75rem 1rem;
+    border-left: 3px solid;
+    margin-bottom: 1rem;
+    font-family: 'Space Mono', ui-monospace, monospace;
+  }
+  .sw-alert-success {
+    color: #40c0a0;
+    border-color: #40c0a0;
+    background: rgba(64, 192, 160, 0.06);
+  }
+  .sw-alert-error {
+    color: #e54d2e;
+    border-color: #e54d2e;
+    background: rgba(229, 77, 46, 0.06);
+  }
+
+  /* --- Table --- */
+  .sw-table {
+    width: 100%;
+    font-size: 0.875rem;
+    border-collapse: collapse;
+  }
+  .sw-table thead {
+    border-bottom: 1px solid #2a3144;
+  }
+  .sw-table th {
+    font-family: 'Space Mono', ui-monospace, monospace;
+    font-size: 0.625rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #5c5852;
+    padding: 0.5rem 1rem;
+    text-align: left;
+    font-weight: 400;
+  }
+  .sw-table td {
+    padding: 0.5rem 1rem;
+    border-bottom: 1px solid #1c2230;
+  }
+  .sw-table tbody tr:hover {
+    background: #0c0f16;
+  }
+
+  /* --- Back link --- */
+  .sw-back {
+    font-family: 'Space Mono', ui-monospace, monospace;
+    font-size: 0.6875rem;
+    color: #5c5852;
+    text-decoration: none;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .sw-back:hover {
+    color: #f0a830;
+  }
+
+  /* --- Status dots --- */
+  .sw-dot {
+    display: inline-block;
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 9999px;
+  }
+  .sw-dot-success { background: #40c0a0; }
+  .sw-dot-error { background: #e54d2e; }
+  .sw-dot-info { background: #6ca8d0; }
+  .sw-dot-warning { background: #f0a830; }
+  .sw-dot-muted { background: #5c5852; }
+
+  /* --- Filter buttons --- */
+  .sw-filter-btn {
+    font-family: 'Space Mono', ui-monospace, monospace;
+    font-size: 0.625rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 0.25rem 0.625rem;
+    border: 1px solid #2a3144;
+    color: #8b8680;
+    background: transparent;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .sw-filter-btn:hover {
+    border-color: #8b8680;
+    color: #e5e0d8;
+  }
+  .sw-filter-btn.active {
+    background: #f0a830;
+    color: #06080c;
+    border-color: #f0a830;
+  }
+
+  /* --- Toast --- */
+  .sw-toast {
+    font-family: 'Space Mono', ui-monospace, monospace;
+    font-size: 0.6875rem;
+    padding: 0.75rem 1rem;
+    pointer-events: auto;
+    transition: opacity 0.3s;
+    border-left: 3px solid;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .sw-toast-success {
+    background: #0c0f16;
+    color: #40c0a0;
+    border-color: #40c0a0;
+  }
+  .sw-toast-error {
+    background: #0c0f16;
+    color: #e54d2e;
+    border-color: #e54d2e;
+  }
+  .sw-toast-info {
+    background: #0c0f16;
+    color: #e5e0d8;
+    border-color: #f0a830;
+  }
+
+  /* --- Pre/code blocks --- */
+  .sw-pre {
+    background: #0c0f16;
+    border: 1px solid #2a3144;
+    padding: 1rem;
+    font-family: 'Space Mono', ui-monospace, monospace;
+    font-size: 0.8125rem;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    color: #e5e0d8;
+    line-height: 1.6;
+  }
+
+  /* --- Definition list terms --- */
+  .sw-dt {
+    font-family: 'Space Mono', ui-monospace, monospace;
+    font-size: 0.6875rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #5c5852;
+  }
+}

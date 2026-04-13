@@ -39,8 +39,7 @@ function initLogStream() {
       const data = JSON.parse(e.data) as { status: string };
       if (statusBadge) {
         statusBadge.textContent = data.status;
-        // Update badge color based on terminal status.
-        statusBadge.className = 'px-2 py-1 rounded text-xs font-medium ' + statusClass(data.status);
+        statusBadge.className = 'sw-badge ' + statusBadgeClass(data.status);
       }
     } catch {
       // ignore parse errors
@@ -52,12 +51,12 @@ function initLogStream() {
   };
 }
 
-function statusClass(status: string): string {
-  if (status === 'success') return 'bg-green-100 text-green-800';
-  if (status === 'failed' || status === 'timed_out') return 'bg-red-100 text-red-800';
-  if (status === 'running') return 'bg-blue-100 text-blue-800';
-  if (status === 'pending' || status === 'pending_approval') return 'bg-yellow-100 text-yellow-800';
-  return 'bg-gray-100 text-gray-600';
+function statusBadgeClass(status: string): string {
+  if (status === 'success') return 'sw-badge-success';
+  if (status === 'failed' || status === 'timed_out') return 'sw-badge-error';
+  if (status === 'running') return 'sw-badge-info';
+  if (status === 'pending' || status === 'pending_approval') return 'sw-badge-warning';
+  return 'sw-badge-muted';
 }
 
 // --- Toast notifications ---
@@ -67,12 +66,11 @@ export function showToast(message: string, type: 'success' | 'error' | 'info' = 
   if (!container) return;
 
   const toast = document.createElement('div');
-  toast.className = [
-    'px-4 py-3 rounded shadow-lg text-sm font-medium pointer-events-auto transition-opacity duration-300',
-    type === 'success' ? 'bg-green-600 text-white' :
-    type === 'error'   ? 'bg-red-600 text-white' :
-                         'bg-gray-800 text-white',
-  ].join(' ');
+  toast.className = 'sw-toast ' + (
+    type === 'success' ? 'sw-toast-success' :
+    type === 'error'   ? 'sw-toast-error' :
+                         'sw-toast-info'
+  );
   toast.textContent = message;
   container.appendChild(toast);
 
@@ -118,7 +116,6 @@ function formatRelativeTime(iso: string): string {
   if (diffHr < 24) return `${diffHr}h ago`;
   const diffDays = Math.floor(diffHr / 24);
   if (diffDays < 30) return `${diffDays}d ago`;
-  // Fall back to locale date for older timestamps
   return date.toLocaleDateString();
 }
 

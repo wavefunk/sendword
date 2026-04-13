@@ -23,19 +23,6 @@
           config.allowUnfree = true;
         };
         toolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
-        beads-latest = (pkgs.beads.override {
-          buildGoModule = pkgs.buildGoModule.override { go = pkgs.go_1_26; };
-        }).overrideAttrs (old: rec {
-          version = "0.60.0";
-          src = pkgs.fetchFromGitHub {
-            owner = "steveyegge";
-            repo = "beads";
-            rev = "v${version}";
-            hash = "sha256-z3EDtaBHB3ltPRT7vuBFURD7UwgAJBXAPozRnkjejeU=";
-          };
-          vendorHash = "sha256-1BJsEPP5SYZFGCWHLn532IUKlzcGDg5nhrqGWylEHgY=";
-          doCheck = false;
-        });
         playwrightDeps = with pkgs; [
           glib
           nss
@@ -72,9 +59,7 @@
               just
               cargo-expand
               bacon
-              claude-code
               dolt
-              beads-latest
               tailwindcss
               esbuild
               nodejs

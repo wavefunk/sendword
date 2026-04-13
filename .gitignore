@@ -17,3 +17,7 @@ sendword.json
 
 # Beads / Dolt files (added by bd init)
 .beads-credential-key
+.claude/summaries/
+/.claude/worktrees/
+docs/superpowers/
+/website/dist/

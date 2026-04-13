@@ -1,0 +1,143 @@
+---
+data:
+  nav:
+    file: "nav.yaml"
+  features:
+    file: "features.yaml"
+seo:
+  title: "sendword — webhooks that run commands"
+  description: "A lightweight HTTP webhook-to-command runner sidecar. Receive webhooks, validate payloads, execute commands — with auth, filtering, retries, and a web UI."
+schema:
+  type: WebSite
+---
+{% extends "_base.html" %}
+
+{% block title %}sendword — webhooks that run commands{% endblock %}
+
+{% block content %}
+<section class="hero">
+  <div class="hero-badge">open source &middot; single binary &middot; zero dependencies</div>
+  <h1 class="hero-title">send<span class="hero-title-accent">word</span></h1>
+  <p class="hero-tagline">Webhooks that run commands.<br>Receive. Validate. Execute.</p>
+  <div class="hero-actions">
+    <a {{ link_to("/docs/index.html") }} class="btn btn-primary">Get Started</a>
+    <a href="https://github.com/wavefunk/sendword" class="btn btn-secondary" target="_blank" rel="noopener">View Source</a>
+  </div>
+  <div class="hero-demo">
+    <div class="demo-request">
+      <span class="demo-label">incoming webhook</span>
+      <pre><code>curl -X POST https://your-server/hook/deploy \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"repo": "myapp", "branch": "main"}'</code></pre>
+    </div>
+    <div class="demo-arrow">
+      <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
+        <path d="M12 20H28M28 20L22 14M28 20L22 26" stroke="#f0a830" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </div>
+    <div class="demo-response">
+      <span class="demo-label">sendword executes</span>
+      <pre><code>cd /app &amp;&amp; git pull origin { branch }
+docker compose up -d
+echo "deployed { repo } on { branch }"</code></pre>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <h2 class="section-title">What it does</h2>
+  <div class="features-grid">
+    {% for feature in features %}
+    <div class="feature-card">
+      <h3>{{ feature.title }}</h3>
+      <p>{{ feature.description }}</p>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="section">
+  <h2 class="section-title">How it works</h2>
+  <div class="steps">
+    <div class="step">
+      <span class="step-number">01</span>
+      <h3>Configure a hook</h3>
+      <pre><code>[[hooks]]
+name = "Deploy"
+slug = "deploy"
+
+[hooks.executor]
+type = "shell"
+command = "bash deploy.sh { branch }"
+
+[hooks.auth]
+mode = "bearer"
+token = "${DEPLOY_TOKEN}"</code></pre>
+    </div>
+    <div class="step">
+      <span class="step-number">02</span>
+      <h3>Add rules &amp; guards</h3>
+      <pre><code>[hooks.trigger_rules]
+cooldown = "5m"
+
+[[hooks.trigger_rules.payload_filters]]
+field = "branch"
+operator = "regex"
+value = "^(main|release/.*)"
+
+[hooks.concurrency]
+mode = "queue"
+queue_depth = 5</code></pre>
+    </div>
+    <div class="step">
+      <span class="step-number">03</span>
+      <h3>Run sendword</h3>
+      <pre><code>$ sendword serve
+listening on 127.0.0.1:8080
+
+# hooks available:
+#   POST /hook/deploy
+#   POST /hook/notify
+#   POST /hook/sync
+
+# dashboard at /</code></pre>
+    </div>
+  </div>
+</section>
+
+<section class="section section-config">
+  <h2 class="section-title">One file. Full control.</h2>
+  <p class="section-subtitle">Everything lives in <code>sendword.toml</code>. Export as JSON, import it on another machine, version-control the whole thing.</p>
+  <div class="config-showcase">
+    <pre><code>[server]
+bind = "0.0.0.0"
+port = 8080
+
+[defaults.timeout]
+timeout = "30s"
+
+[defaults.retries]
+count = 3
+backoff = "exponential"
+initial_delay = "2s"
+max_delay = "60s"
+
+[masking]
+env_vars = ["API_KEY", "DB_PASSWORD"]
+patterns = ["(token)[=:]\\s*\\S+"]
+
+[backup]
+bucket = "my-backups"
+schedule = "0 2 * * *"
+retention.max_count = 30</code></pre>
+  </div>
+</section>
+
+<section class="section cta">
+  <div class="cta-install">
+    <code>cargo install sendword</code>
+    <button class="cta-copy" onclick="navigator.clipboard.writeText('cargo install sendword')" aria-label="Copy install command" title="Copy to clipboard">&#x2398;</button>
+  </div>
+  <p><a href="/docs/quickstart">Read the quickstart guide &rarr;</a></p>
+</section>
+{% endblock %}

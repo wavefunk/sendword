@@ -5,43 +5,22 @@
 {% block content %}
 <main class="min-h-screen flex items-center justify-center px-4">
   <div class="w-full max-w-sm">
-    <h1 class="text-2xl font-bold text-center mb-6">sendword</h1>
+    <h1 class="text-2xl font-bold text-center mb-8">Sendword</h1>
 
     {% if error %}
-    <div class="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">
-      {{ error }}
-    </div>
+    <div class="sw-alert sw-alert-error">{{ error }}</div>
     {% endif %}
 
     <form method="post" action="/login" class="space-y-4">
       <div>
-        <label for="username" class="block text-sm font-medium text-gray-700 mb-1">Username</label>
-        <input
-          type="text"
-          id="username"
-          name="username"
-          autocomplete="username"
-          required
-          class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-        >
+        <label for="username" class="sw-label">Username</label>
+        <input type="text" id="username" name="username" autocomplete="username" required class="sw-input">
       </div>
       <div>
-        <label for="password" class="block text-sm font-medium text-gray-700 mb-1">Password</label>
-        <input
-          type="password"
-          id="password"
-          name="password"
-          autocomplete="current-password"
-          required
-          class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-        >
+        <label for="password" class="sw-label">Password</label>
+        <input type="password" id="password" name="password" autocomplete="current-password" required class="sw-input">
       </div>
-      <button
-        type="submit"
-        class="w-full bg-blue-600 text-white text-sm font-medium rounded-lg px-4 py-2 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-      >
-        Sign in
-      </button>
+      <button type="submit" class="sw-btn sw-btn-primary w-full justify-center">Sign in</button>
     </form>
   </div>
 </main>

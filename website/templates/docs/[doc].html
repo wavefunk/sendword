@@ -1,0 +1,30 @@
+---
+collection:
+  file: "docs.yaml"
+slug_field: slug
+item_as: doc
+fragment_blocks:
+  - doc_content
+  - sidebar
+data:
+  nav:
+    file: "nav.yaml"
+  docs_list:
+    file: "docs.yaml"
+  categories:
+    file: "categories.yaml"
+seo:
+  title: "{{ doc.title }} — sendword docs"
+  description: "{{ doc.description }}"
+schema:
+  type: Article
+  breadcrumb_names:
+    docs: "Documentation"
+---
+{% extends "_docs.html" %}
+
+{% block title %}{{ doc.title }} — {{ site.name }} docs{% endblock %}
+
+{% block doc_content %}
+{{ doc.content | markdown }}
+{% endblock %}

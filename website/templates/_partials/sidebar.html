@@ -1,0 +1,20 @@
+<aside class="sidebar" id="sidebar">
+  {% for cat in categories %}
+  <details class="sidebar-category" open>
+    <summary class="sidebar-category-title">{{ cat.name }}</summary>
+    {% for d in docs_list %}
+      {% if d.category == cat.name %}
+      <a href="/docs/{{ d.slug }}"
+         hx-get="/_fragments/docs/{{ d.slug }}/doc_content.html"
+         hx-target="#doc-content"
+         hx-push-url="/docs/{{ d.slug }}"
+         class="sidebar-link{% if d.slug == doc.slug %} active{% endif %}"
+         onclick="closeSidebar()">
+        {{ d.title }}
+      </a>
+      {% endif %}
+    {% endfor %}
+  </details>
+  {% endfor %}
+</aside>
+<div class="sidebar-overlay" id="sidebar-overlay" onclick="closeSidebar()"></div>

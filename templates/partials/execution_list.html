@@ -1,10 +1,10 @@
 {# Filter bar — passes current filters through on pagination requests #}
 <div class="flex flex-wrap gap-2 mb-3 items-end">
   <div>
-    <label class="block text-xs text-gray-500 mb-0.5">Status</label>
+    <label class="sw-label">Status</label>
     <select
       id="exec-status-filter"
-      class="text-sm border rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
+      class="sw-input text-sm"
       hx-get="/hooks/{{ slug }}/executions"
       hx-target="#execution-list"
       hx-swap="innerHTML"
@@ -22,13 +22,13 @@
     </select>
   </div>
   <div>
-    <label class="block text-xs text-gray-500 mb-0.5">From</label>
+    <label class="sw-label">From</label>
     <input
       id="exec-from-filter"
       type="date"
       name="from_date"
       value="{{ active_from }}"
-      class="text-sm border rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
+      class="sw-input text-sm"
       hx-get="/hooks/{{ slug }}/executions"
       hx-target="#execution-list"
       hx-swap="innerHTML"
@@ -36,13 +36,13 @@
       hx-trigger="change">
   </div>
   <div>
-    <label class="block text-xs text-gray-500 mb-0.5">To</label>
+    <label class="sw-label">To</label>
     <input
       id="exec-to-filter"
       type="date"
       name="to_date"
       value="{{ active_to }}"
-      class="text-sm border rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
+      class="sw-input text-sm"
       hx-get="/hooks/{{ slug }}/executions"
       hx-target="#execution-list"
       hx-swap="innerHTML"
@@ -53,36 +53,36 @@
 
 {% if executions %}
 <div class="overflow-x-auto">
-  <table class="w-full text-sm">
+  <table class="sw-table">
     <thead>
-      <tr class="border-b text-left text-gray-500">
-        <th class="pb-2 pr-4 font-medium">ID</th>
-        <th class="pb-2 pr-4 font-medium">Triggered</th>
-        <th class="pb-2 pr-4 font-medium">Status</th>
-        <th class="pb-2 pr-4 font-medium">Exit Code</th>
-        <th class="pb-2 font-medium">Duration</th>
+      <tr>
+        <th>ID</th>
+        <th>Triggered</th>
+        <th>Status</th>
+        <th>Exit Code</th>
+        <th>Duration</th>
       </tr>
     </thead>
     <tbody>
       {% for exec in executions %}
-      <tr class="border-b hover:bg-gray-50">
-        <td class="py-2 pr-4">
-          <a href="/executions/{{ exec.id }}" class="font-mono text-blue-600 hover:underline">{{ exec.id[:8] }}</a>
+      <tr>
+        <td>
+          <a href="/executions/{{ exec.id }}" class="font-mono text-sw-amber hover:text-sw-cream">{{ exec.id[:8] }}</a>
         </td>
-        <td class="py-2 pr-4 text-gray-600"><span data-timestamp="{{ exec.triggered_at }}">{{ exec.triggered_at }}</span></td>
-        <td class="py-2 pr-4">
-          <span class="px-2 py-0.5 rounded text-xs font-medium
-            {%- if exec.status == 'success' %} bg-green-100 text-green-800
-            {%- elif exec.status == 'failed' or exec.status == 'timed_out' %} bg-red-100 text-red-800
-            {%- elif exec.status == 'running' %} bg-blue-100 text-blue-800
-            {%- elif exec.status == 'pending' or exec.status == 'pending_approval' %} bg-yellow-100 text-yellow-800
-            {%- else %} bg-gray-100 text-gray-600
+        <td class="text-sw-dim"><span data-timestamp="{{ exec.triggered_at }}">{{ exec.triggered_at }}</span></td>
+        <td>
+          <span class="sw-badge
+            {%- if exec.status == 'success' %} sw-badge-success
+            {%- elif exec.status == 'failed' or exec.status == 'timed_out' %} sw-badge-error
+            {%- elif exec.status == 'running' %} sw-badge-info
+            {%- elif exec.status == 'pending' or exec.status == 'pending_approval' %} sw-badge-warning
+            {%- else %} sw-badge-muted
             {%- endif %}">
             {{ exec.status }}
           </span>
         </td>
-        <td class="py-2 pr-4 font-mono text-gray-600">{{ exec.exit_code if exec.exit_code is defined and exec.exit_code is not none else "-" }}</td>
-        <td class="py-2 font-mono text-gray-600">{{ exec.duration if exec.duration is defined and exec.duration is not none else "-" }}</td>
+        <td class="font-mono text-sw-dim">{{ exec.exit_code if exec.exit_code is defined and exec.exit_code is not none else "-" }}</td>
+        <td class="font-mono text-sw-dim">{{ exec.duration if exec.duration is defined and exec.duration is not none else "-" }}</td>
       </tr>
       {% endfor %}
     </tbody>
@@ -95,12 +95,12 @@
     hx-get="/hooks/{{ slug }}/executions?page={{ page + 1 }}&status={{ active_status }}&from_date={{ active_from }}&to_date={{ active_to }}"
     hx-target="#execution-list"
     hx-swap="innerHTML"
-    class="text-sm text-blue-600 hover:underline">
+    class="sw-btn sw-btn-secondary sw-btn-sm">
     Load more (page {{ page + 1 }} of {{ total_pages }})
   </button>
 </div>
 {% endif %}
 
 {% else %}
-<p class="text-gray-500 text-sm">No executions yet.</p>
+<p class="text-sw-muted text-sm font-mono">No executions yet.</p>
 {% endif %}

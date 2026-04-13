@@ -76,3 +76,6 @@ sendword/
 
 ## Available commands
 The just file has available commands. Be mindful of commands that you run often, add it to the justfile.
+
+### Extras
+Read to AGENTS.md for additional instructions.

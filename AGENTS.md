@@ -82,3 +82,29 @@ bd close <id>         # Complete work
 - NEVER say "ready to push when you are" - YOU must push
 - If push fails, resolve and retry until it succeeds
 <!-- END BEADS INTEGRATION -->
+
+<!-- BEGIN YOUWHATKNOW INTEGRATION -->
+## File Summaries (youwhatknow)
+
+This project uses **youwhatknow** for automatic file summaries during Claude Code sessions.
+It works via hooks — no manual action needed.
+
+**How it works:**
+- Large files show a summary (description, symbols, line ranges) on first read
+- Read again for full content, or use offset/limit to target sections
+- Project structure is injected at session start
+
+**Useful commands:**
+```bash
+youwhatknow status              # Check daemon health
+youwhatknow status --json       # Machine-readable status
+youwhatknow reindex             # Refresh index after major changes
+youwhatknow reindex --full      # Full reindex (ignore change detection)
+youwhatknow summary <path>      # Preview a file summary
+youwhatknow reset <path>        # Reset read count for a file
+youwhatknow restart             # Restart daemon
+youwhatknow logs                # View daemon logs
+youwhatknow prime               # Full agent workflow context
+```
+
+<!-- END YOUWHATKNOW INTEGRATION -->
