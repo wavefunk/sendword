@@ -1,0 +1,56 @@
+[site]
+name = "sendword"
+base_url = "https://sendword.dev"
+
+[site.seo]
+title = "sendword — webhooks that run commands"
+description = "A lightweight HTTP webhook-to-command runner sidecar. Receive webhooks, validate payloads, execute commands — with auth, filtering, retries, and a web UI."
+og_type = "website"
+
+[site.schema]
+default_types = ["BreadcrumbList"]
+
+[build]
+fragments = true
+fragment_dir = "_fragments"
+content_block = "content"
+minify = true
+clean_urls = false
+clean_links = true
+not_found = true
+oob_blocks = ["sidebar"]
+
+[build.critical_css]
+enabled = true
+max_inline_size = 50000
+preload_full = true
+
+[build.hints]
+enabled = true
+auto_detect_hero = true
+prefetch_links = true
+max_prefetch = 5
+
+[build.content_hash]
+enabled = true
+
+[build.bundling]
+enabled = true
+css = true
+js = true
+tree_shake_css = true
+
+[build.view_transitions]
+enabled = true
+
+[sitemap]
+enabled = true
+clean_urls = false
+
+[robots]
+enabled = true
+sitemap = true
+
+[[robots.rules]]
+user_agent = "*"
+allow = ["/"]

@@ -1,0 +1,62 @@
+# sendword configuration
+# Env vars override all settings. Use SENDWORD_<SECTION>__<KEY> format.
+# Example: SENDWORD_SERVER__PORT=9090
+
+[server]
+bind = "127.0.0.1"
+port = 8080
+
+[database]
+path = "data/sendword.db"
+
+[logs]
+dir = "data/logs"
+
+[auth]
+session_lifetime = "24h"
+secure_cookie = false
+
+[scripts]
+dir = "data/scripts"
+
+[defaults]
+timeout = "30s"
+
+[defaults.rate_limit]
+max_per_minute = 60
+
+[defaults.retries]
+count = 0
+backoff = "exponential"
+initial_delay = "1s"
+max_delay = "60s"
+
+# [masking]
+# Redact sensitive values from log output in the web UI.
+# Raw logs on disk are never modified.
+# env_vars = ["DATABASE_URL", "API_KEY", "AWS_SECRET_ACCESS_KEY"]
+# patterns = ["Bearer [A-Za-z0-9._~+/=-]+", "ghp_[A-Za-z0-9]{36}"]
+
+[[hooks]]
+name = "Deploy App"
+slug = "deploy-app"
+description = "Triggers app deployment"
+enabled = true
+cwd = "/opt/app"
+timeout = "60s"
+
+[hooks.executor]
+type = "shell"
+command = "echo 'deployed!'"
+
+[hooks.env]
+APP_ENV = "production"
+
+[hooks.retries]
+count = 2
+backoff = "exponential"
+initial_delay = "2s"
+max_delay = "30s"
+
+[hooks.rate_limit]
+max_per_minute = 5

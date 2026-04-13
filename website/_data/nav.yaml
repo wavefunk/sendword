@@ -1,0 +1,6 @@
+- label: Docs
+  url: /docs/index.html
+  external: false
+- label: GitHub
+  url: https://github.com/wavefunk/sendword
+  external: true

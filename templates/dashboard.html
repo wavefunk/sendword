@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+
+{% block title %}sendword - Dashboard{% endblock %}
+
+{% block content %}
+<main class="max-w-4xl mx-auto px-4 py-8">
+  {% if success %}
+  <div class="sw-alert sw-alert-success">{{ success }}</div>
+  {% endif %}
+
+  {% if error %}
+  <div class="sw-alert sw-alert-error">{{ error }}</div>
+  {% endif %}
+
+  <div class="flex items-center justify-between mb-4">
+    <h1 class="text-2xl font-bold">Hooks</h1>
+    <a href="/hooks/new" class="sw-btn sw-btn-primary sw-btn-sm">+ New hook</a>
+  </div>
+
+  {% if hooks %}
+  <div class="mb-4">
+    <input
+      id="hook-filter"
+      type="text"
+      placeholder="Filter hooks by name or slug…"
+      class="sw-input"
+      oninput="filterHooks(this.value)"
+    >
+  </div>
+
+  <div id="hook-list" class="space-y-3">
+    {% for hook in hooks %}
+    <div class="hook-card sw-card"
+         data-name="{{ hook.name | lower }}"
+         data-slug="{{ hook.slug | lower }}">
+      <div class="flex items-center justify-between">
+        <div>
+          <a href="/hooks/{{ hook.slug }}" class="text-sm font-bold text-sw-amber hover:text-sw-cream">{{ hook.name }}</a>
+          {% if hook.description %}
+          <p class="text-sm text-sw-dim mt-0.5">{{ hook.description }}</p>
+          {% endif %}
+        </div>
+        <span class="sw-badge {{ 'sw-badge-success' if hook.enabled else 'sw-badge-muted' }}">
+          {{ "enabled" if hook.enabled else "disabled" }}
+        </span>
+      </div>
+      <p class="text-xs text-sw-muted mt-1 font-mono">/hook/{{ hook.slug }}</p>
+
+      <div class="flex items-center gap-3 mt-2">
+        {% if hook.recent_statuses %}
+        <div class="flex items-center gap-1" title="Last {{ hook.recent_statuses | length }} executions (oldest → newest)">
+          {% for s in hook.recent_statuses %}
+          <span class="sw-dot
+            {%- if s == 'success' %} sw-dot-success
+            {%- elif s == 'failed' or s == 'timed_out' %} sw-dot-error
+            {%- elif s == 'running' %} sw-dot-info
+            {%- elif s == 'pending' or s == 'pending_approval' %} sw-dot-warning
+            {%- else %} sw-dot-muted
+            {%- endif %}"
+            title="{{ s }}">
+          </span>
+          {% endfor %}
+        </div>
+        {% if hook.last_triggered_at %}
+        <span class="text-xs text-sw-muted font-mono" data-timestamp="{{ hook.last_triggered_at }}">{{ hook.last_triggered_at }}</span>
+        {% endif %}
+        {% else %}
+        <p class="text-xs text-sw-muted font-mono">No executions yet</p>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <p id="hook-no-results" class="text-sw-dim text-sm hidden font-mono">No hooks match your filter.</p>
+
+  {% else %}
+  <p class="text-sw-dim font-mono text-sm">No hooks configured. <a href="/hooks/new" class="text-sw-amber hover:text-sw-cream">Create your first hook</a> to get started.</p>
+  {% endif %}
+</main>
+
+<script>
+function filterHooks(query) {
+  const q = query.trim().toLowerCase();
+  const cards = document.querySelectorAll('.hook-card');
+  let visible = 0;
+  cards.forEach(function(card) {
+    const name = card.dataset.name || '';
+    const slug = card.dataset.slug || '';
+    const match = !q || name.includes(q) || slug.includes(q);
+    card.style.display = match ? '' : 'none';
+    if (match) visible++;
+  });
+  const noResults = document.getElementById('hook-no-results');
+  if (noResults) noResults.classList.toggle('hidden', visible > 0);
+}
+</script>
+{% endblock %}

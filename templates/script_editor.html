@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+
+{% block title %}sendword - {% if is_new %}New script{% else %}{{ filename }}{% endif %}{% endblock %}
+
+{% block content %}
+<main class="max-w-4xl mx-auto px-4 py-8">
+  <div class="mb-6">
+    <a href="/scripts" class="sw-back">&larr; Back to scripts</a>
+  </div>
+
+  <div class="flex items-center justify-between mb-6">
+    <h1 class="text-2xl font-bold">{% if is_new %}New Script{% else %}{{ filename }}{% endif %}</h1>
+    {% if not is_new %}
+    <form method="post" action="/scripts/{{ filename }}/delete"
+          onsubmit="return confirm('Delete {{ filename }}?')">
+      <button type="submit" class="sw-btn sw-btn-danger sw-btn-sm">Delete</button>
+    </form>
+    {% endif %}
+  </div>
+
+  {% if success %}
+  <div class="sw-alert sw-alert-success">{{ success }}</div>
+  {% endif %}
+
+  {% if error %}
+  <div class="sw-alert sw-alert-error">{{ error }}</div>
+  {% endif %}
+
+  <form method="post" action="{% if is_new %}/scripts/new{% else %}/scripts/{{ filename }}{% endif %}" class="space-y-4">
+    <div>
+      <label for="filename" class="sw-label">Filename</label>
+      <input type="text" id="filename" name="filename" value="{{ filename }}" {% if not is_new %}readonly{% endif %} required pattern="[a-zA-Z0-9][a-zA-Z0-9._\-]*" placeholder="my-script.sh" class="sw-input font-mono max-w-sm">
+      {% if is_new %}
+      <p class="mt-1 text-xs text-sw-muted font-mono">Letters, numbers, hyphens, underscores, dots. No leading dots.</p>
+      {% endif %}
+    </div>
+
+    <div>
+      <label for="content" class="sw-label">Content</label>
+      <textarea id="content" name="content" rows="24" class="sw-input font-mono leading-relaxed" spellcheck="false">{{ content }}</textarea>
+      <p class="mt-1 text-xs text-sw-muted font-mono">Max 1 MB. The file will be saved with executable permissions.</p>
+    </div>
+
+    <div class="flex items-center gap-3">
+      <button type="submit" class="sw-btn sw-btn-primary">
+        {% if is_new %}Create{% else %}Save{% endif %}
+      </button>
+      <a href="{% if is_new %}/scripts{% else %}/scripts/{{ filename }}{% endif %}" class="sw-btn sw-btn-secondary">Cancel</a>
+    </div>
+  </form>
+</main>
+{% endblock %}

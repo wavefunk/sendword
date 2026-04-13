@@ -1,0 +1,16 @@
+---
+data:
+  nav:
+    file: "nav.yaml"
+---
+{% extends "_base.html" %}
+
+{% block title %}404 — {{ site.name }}{% endblock %}
+
+{% block content %}
+<section class="not-found">
+  <h1>404</h1>
+  <p>Message not delivered. This page doesn't exist.</p>
+  <a href="/" class="btn btn-primary">Back to home</a>
+</section>
+{% endblock %}

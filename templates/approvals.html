@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+
+{% block title %}sendword - Pending Approvals{% endblock %}
+
+{% block content %}
+<main class="max-w-4xl mx-auto px-4 py-8">
+  <h1 class="text-2xl font-bold mb-6">Pending Approvals</h1>
+
+  {% if executions %}
+  <div class="sw-card p-0">
+    <table class="sw-table">
+      <thead>
+        <tr>
+          <th>Hook</th>
+          <th>Triggered</th>
+          <th>Source</th>
+          <th class="text-right">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for exec in executions %}
+        <tr>
+          <td>
+            <a href="/executions/{{ exec.id }}" class="font-mono text-sw-amber hover:text-sw-cream">{{ exec.hook_slug }}</a>
+          </td>
+          <td class="text-sw-dim"><span data-timestamp="{{ exec.triggered_at }}">{{ exec.triggered_at }}</span></td>
+          <td class="text-sw-muted font-mono text-xs">{{ exec.trigger_source }}</td>
+          <td class="text-right space-x-2">
+            <form method="post" action="/executions/{{ exec.id }}/approve" class="inline">
+              <button type="submit" class="sw-btn sw-btn-primary sw-btn-sm">Approve</button>
+            </form>
+            <form method="post" action="/executions/{{ exec.id }}/reject" class="inline">
+              <button type="submit" class="sw-btn sw-btn-danger sw-btn-sm">Reject</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="text-sw-dim text-center py-12 font-mono text-sm">No executions pending approval.</div>
+  {% endif %}
+</main>
+{% endblock %}

@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+
+{% block title %}sendword - Login{% endblock %}
+
+{% block content %}
+<main class="min-h-screen flex items-center justify-center px-4">
+  <div class="w-full max-w-sm">
+    <h1 class="text-2xl font-bold text-center mb-8">Sendword</h1>
+
+    {% if error %}
+    <div class="sw-alert sw-alert-error">{{ error }}</div>
+    {% endif %}
+
+    <form method="post" action="/login" class="space-y-4">
+      <div>
+        <label for="username" class="sw-label">Username</label>
+        <input type="text" id="username" name="username" autocomplete="username" required class="sw-input">
+      </div>
+      <div>
+        <label for="password" class="sw-label">Password</label>
+        <input type="password" id="password" name="password" autocomplete="current-password" required class="sw-input">
+      </div>
+      <button type="submit" class="sw-btn sw-btn-primary w-full justify-center">Sign in</button>
+    </form>
+  </div>
+</main>
+{% endblock %}

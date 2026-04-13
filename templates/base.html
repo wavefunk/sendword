@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}sendword{% endblock %}</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='2' y='6' width='28' height='20' rx='3' fill='%230c0a09' stroke='%23f59e0b' stroke-width='2'/%3E%3Cpath d='M2 8l14 10 14-10' fill='none' stroke='%23f59e0b' stroke-width='2' stroke-linecap='round'/%3E%3Ccircle cx='26' cy='8' r='5' fill='%23ef4444'/%3E%3C/svg%3E">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/dist/app.css">
+    <script src="https://unpkg.com/htmx.org@2" defer></script>
+  </head>
+  <body hx-boost="true">
+    {% block nav %}
+      {% if username is defined and username %}
+        <nav class="border-b border-sw-lighter bg-sw-deep">
+          <div class="max-w-4xl mx-auto px-4 flex items-center justify-between h-12">
+            <div class="flex items-center gap-6">
+              <a href="/" class="font-mono text-sm font-bold text-sw-fg tracking-wide hover:text-sw-fg">SENDWORD</a>
+              <div class="flex items-center gap-4">
+                <a href="/" class="font-mono text-xs uppercase tracking-wider {{ 'text-sw-amber hover:text-sw-amber' if nav_active == 'dashboard' else 'text-sw-dim hover:text-sw-amber' }}">Dashboard</a>
+                <a href="/approvals" class="font-mono text-xs uppercase tracking-wider {{ 'text-sw-amber hover:text-sw-amber' if nav_active == 'approvals' else 'text-sw-dim hover:text-sw-amber' }}">Approvals</a>
+                <a href="/scripts" class="font-mono text-xs uppercase tracking-wider {{ 'text-sw-amber hover:text-sw-amber' if nav_active == 'scripts' else 'text-sw-dim hover:text-sw-amber' }}">Scripts</a>
+                <a href="/settings/users" class="font-mono text-xs uppercase tracking-wider {{ 'text-sw-amber hover:text-sw-amber' if nav_active == 'settings' else 'text-sw-dim hover:text-sw-amber' }}">Settings</a>
+              </div>
+            </div>
+            <div class="flex items-center gap-4">
+              <span class="font-mono text-xs text-sw-muted">{{ username }}</span>
+              <a href="/logout" class="font-mono text-xs text-sw-dim hover:text-sw-amber uppercase tracking-wider">Logout</a>
+            </div>
+          </div>
+        </nav>
+      {% endif %}
+    {% endblock %}
+    {% block content %}{% endblock %}
+    <div id="toasts" class="fixed top-4 right-4 z-50 flex flex-col gap-2 pointer-events-none"></div>
+    <script type="module" src="/static/dist/main.js"></script>
+  </body>
+</html>

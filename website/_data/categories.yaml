@@ -1,0 +1,14 @@
+- name: Getting Started
+  desc: Install sendword and run your first hook.
+
+- name: Hooks
+  desc: Authentication, payloads, interpolation, and trigger rules.
+
+- name: Execution
+  desc: Executors, retries, barriers, and approval workflows.
+
+- name: Operations
+  desc: Logging, masking, notifications, backup, and user management.
+
+- name: API Reference
+  desc: HTTP endpoints for webhooks, config, executions, and health.

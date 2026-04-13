@@ -1,0 +1,1477 @@
+# Getting Started
+
+- title: "Quickstart"
+  slug: quickstart
+  category: Getting Started
+  description: "Install sendword and trigger your first hook in five minutes."
+  content: |
+    # Quickstart
+
+    Get sendword running and trigger your first hook in five minutes.
+
+    ## Install
+
+    Install via cargo:
+
+    ```
+    cargo install sendword
+    ```
+
+    ## Create a configuration
+
+    Create a `sendword.toml` file:
+
+    ```toml
+    [server]
+    bind = "127.0.0.1"
+    port = 8080
+
+    [[hooks]]
+    name = "Hello World"
+    slug = "hello"
+
+    [hooks.executor]
+    type = "shell"
+    command = "echo 'hello from sendword'"
+    ```
+
+    ## Start the server
+
+    ```
+    sendword serve
+    ```
+
+    The web UI is now available at `http://localhost:8080`. Your hook is ready to receive webhooks at `POST /hook/hello`.
+
+    ## Trigger your hook
+
+    ```bash
+    curl -X POST http://localhost:8080/hook/hello
+    ```
+
+    Check the dashboard to see the execution result, stdout, and stderr.
+
+    ## Next steps
+
+    - [Configure authentication](/docs/authentication) to secure your hooks
+    - [Add payload validation](/docs/payload-validation) to enforce schemas
+    - [Set up trigger rules](/docs/trigger-rules) for filtering and rate limiting
+
+- title: "Installation"
+  slug: installation
+  category: Getting Started
+  description: "Installation options and requirements for sendword."
+  content: |
+    # Installation
+
+    Sendword is a single Rust binary with no runtime dependencies beyond SQLite.
+
+    ## From cargo
+
+    ```
+    cargo install sendword
+    ```
+
+    ## From source
+
+    ```bash
+    git clone https://github.com/wavefunk/sendword
+    cd sendword
+    cargo build --release
+    ```
+
+    The binary will be at `target/release/sendword`.
+
+    ## With Nix
+
+    If you use Nix, sendword ships a flake:
+
+    ```bash
+    nix run github:wavefunk/sendword
+    ```
+
+    Or add it to your development shell via `flake.nix`.
+
+    ## Requirements
+
+    - Rust 1.80+ (for building from source)
+    - SQLite (bundled via SQLx)
+    - A directory with write access for the database and logs
+
+- title: "Configuration"
+  slug: configuration
+  category: Getting Started
+  description: "Complete reference for sendword.toml configuration options."
+  content: |
+    # Configuration
+
+    Sendword reads its configuration from `sendword.toml` in the working directory. Every option can be overridden with environment variables using the `SENDWORD_` prefix.
+
+    ## Server
+
+    ```toml
+    [server]
+    bind = "127.0.0.1"   # Listen address
+    port = 8080           # Listen port
+    ```
+
+    ## Database
+
+    ```toml
+    [database]
+    path = "data/sendword.db"
+    ```
+
+    ## Logs
+
+    ```toml
+    [logs]
+    dir = "data/logs"
+    ```
+
+    ## Scripts
+
+    ```toml
+    [scripts]
+    dir = "data/scripts"
+    ```
+
+    ## Authentication
+
+    ```toml
+    [auth]
+    session_lifetime = "24h"    # Login session duration
+    secure_cookie = false       # Require HTTPS for cookies
+    ```
+
+    ## Defaults
+
+    Global defaults that individual hooks can override:
+
+    ```toml
+    [defaults.rate_limit]
+    max_per_minute = 60
+
+    [defaults.timeout]
+    timeout = "30s"
+
+    [defaults.retries]
+    count = 0
+    backoff = "exponential"
+    initial_delay = "1s"
+    max_delay = "60s"
+    ```
+
+    ## Environment Variable Overrides
+
+    Any setting can be overridden using the `SENDWORD_` prefix with `__` for nesting:
+
+    ```bash
+    SENDWORD_SERVER__PORT=9090 sendword serve
+    SENDWORD_DEFAULTS__TIMEOUT__TIMEOUT=60s sendword serve
+    ```
+
+    ## Export and Import
+
+    Export your running config as JSON:
+
+    ```bash
+    sendword export > config.json
+    ```
+
+    Import on another machine:
+
+    ```bash
+    sendword import config.json
+    ```
+
+    Or use the API:
+
+    ```bash
+    curl http://localhost:8080/api/config/export > config.json
+    curl -X POST http://localhost:8080/api/config/import \
+      -H "Content-Type: application/json" \
+      -d @config.json
+    ```
+
+- title: "CLI Reference"
+  slug: cli-reference
+  category: Getting Started
+  description: "Command-line interface reference for sendword."
+  content: |
+    # CLI Reference
+
+    Sendword provides a set of subcommands for serving, managing users, and handling backups.
+
+    ## serve
+
+    Start the HTTP server:
+
+    ```
+    sendword serve
+    ```
+
+    This is the default command. It starts the Axum web server, runs database migrations, and begins listening for webhook requests.
+
+    ## export
+
+    Export the current configuration as JSON to stdout:
+
+    ```
+    sendword export > config.json
+    ```
+
+    ## import
+
+    Import configuration from a JSON file:
+
+    ```
+    sendword import config.json
+    ```
+
+    Validates the config before applying. Returns detailed errors on validation failure.
+
+    ## user create
+
+    Create a new user interactively:
+
+    ```
+    sendword user create --username admin
+    ```
+
+    Prompts for a password. Passwords are stored with bcrypt hashing.
+
+    ## backup create
+
+    Create a backup and upload to S3:
+
+    ```
+    sendword backup create
+    ```
+
+    Requires `[backup]` section in config.
+
+    ## backup list
+
+    List available backups in S3:
+
+    ```
+    sendword backup list
+    ```
+
+    ## restore
+
+    Restore from a backup:
+
+    ```
+    sendword restore --from backups/sendword-2024-01-15.tar.gz --output ./restored
+    ```
+
+# Hooks
+
+- title: "Creating Hooks"
+  slug: creating-hooks
+  category: Hooks
+  description: "How to define and configure webhook hooks."
+  content: |
+    # Creating Hooks
+
+    Hooks are the core unit in sendword. Each hook maps an incoming HTTP request to an action.
+
+    ## Basic hook
+
+    ```toml
+    [[hooks]]
+    name = "Deploy App"
+    slug = "deploy"
+    enabled = true
+    description = "Deploys the application on push to main"
+
+    [hooks.executor]
+    type = "shell"
+    command = "bash /scripts/deploy.sh"
+    ```
+
+    Once configured, this hook is available at `POST /hook/deploy`.
+
+    ## Slug rules
+
+    The `slug` field must be:
+
+    - Alphanumeric characters and hyphens only
+    - Unique across all hooks
+    - Used in the webhook URL path
+
+    ## Enabling and disabling
+
+    Set `enabled = false` to disable a hook without removing its configuration. Disabled hooks return `404` to callers.
+
+    ## Per-hook settings
+
+    Each hook can override global defaults:
+
+    ```toml
+    [[hooks]]
+    name = "Slow Task"
+    slug = "slow-task"
+    timeout = "5m"
+    cwd = "/opt/tasks"
+
+    [hooks.executor]
+    type = "shell"
+    command = "python long_running.py"
+
+    [hooks.env]
+    TASK_MODE = "batch"
+    API_KEY = "${{EXTERNAL_API_KEY}}"
+
+    [hooks.retries]
+    count = 3
+    backoff = "exponential"
+    initial_delay = "5s"
+    max_delay = "2m"
+    ```
+
+    ## Environment variables
+
+    The `[hooks.env]` table sets environment variables for the execution. Values can reference system environment variables with `${{VAR_NAME}}` syntax.
+
+    Sendword also inherits `PATH`, `HOME`, `USER`, and `LANG` from the host system.
+
+- title: "Authentication"
+  slug: authentication
+  category: Hooks
+  description: "Securing hooks with bearer tokens and HMAC signatures."
+  content: |
+    # Authentication
+
+    Each hook can require authentication. Three modes are available.
+
+    ## None (default)
+
+    ```toml
+    [hooks.auth]
+    mode = "none"
+    ```
+
+    No authentication required. Anyone who knows the URL can trigger the hook.
+
+    ## Bearer Token
+
+    ```toml
+    [hooks.auth]
+    mode = "bearer"
+    token = "my-secret-token"
+    ```
+
+    Callers must include the token in the `Authorization` header:
+
+    ```bash
+    curl -X POST http://localhost:8080/hook/deploy \
+      -H "Authorization: Bearer my-secret-token"
+    ```
+
+    The token can reference an environment variable:
+
+    ```toml
+    [hooks.auth]
+    mode = "bearer"
+    token = "${{DEPLOY_TOKEN}}"
+    ```
+
+    ## HMAC Signature
+
+    ```toml
+    [hooks.auth]
+    mode = "hmac"
+    header = "X-Hub-Signature-256"
+    algorithm = "sha256"
+    secret = "${{WEBHOOK_SECRET}}"
+    ```
+
+    The caller signs the request body with the shared secret. Sendword verifies the signature using constant-time comparison to prevent timing attacks.
+
+    This is the standard approach for GitHub, GitLab, and most webhook providers:
+
+    ```bash
+    BODY='{"ref": "refs/heads/main"}'
+    SIG=$(echo -n "$BODY" | openssl dgst -sha256 -hmac "$SECRET" | cut -d' ' -f2)
+
+    curl -X POST http://localhost:8080/hook/github \
+      -H "X-Hub-Signature-256: sha256=$SIG" \
+      -H "Content-Type: application/json" \
+      -d "$BODY"
+    ```
+
+    ## Failed authentication
+
+    Requests that fail authentication are logged as trigger attempts with an `auth_failed` status. They never reach the executor.
+
+- title: "Payload Validation"
+  slug: payload-validation
+  category: Hooks
+  description: "Defining JSON payload schemas for incoming webhooks."
+  content: |
+    # Payload Validation
+
+    Define a schema for each hook to validate incoming JSON payloads before execution.
+
+    ## Defining fields
+
+    ```toml
+    [hooks.payload]
+    [[hooks.payload.fields]]
+    name = "repo"
+    type = "string"
+    required = true
+
+    [[hooks.payload.fields]]
+    name = "branch"
+    type = "string"
+    required = false
+
+    [[hooks.payload.fields]]
+    name = "force"
+    type = "boolean"
+    required = false
+    ```
+
+    ## Supported types
+
+    | Type | Description |
+    |------|-------------|
+    | `string` | Text values |
+    | `number` | Integer or floating-point numbers |
+    | `boolean` | `true` or `false` |
+    | `object` | Nested JSON objects |
+    | `array` | JSON arrays |
+
+    ## Validation behavior
+
+    - Missing `Content-Type: application/json` header: body is treated as `{}`
+    - Malformed JSON: returns `400 Bad Request`
+    - Schema violation: returns `422 Unprocessable Entity` with details
+    - Empty body: treated as `{}` (only fails if required fields are defined)
+    - Extra fields not in the schema are silently accepted
+
+    ## Example error response
+
+    ```json
+    {
+      "error": "payload validation failed",
+      "details": [
+        "missing required field: repo",
+        "field 'force' expected boolean, got string"
+      ]
+    }
+    ```
+
+- title: "Payload Interpolation"
+  slug: payload-interpolation
+  category: Hooks
+  description: "Using webhook payload data in commands and HTTP requests."
+  content: |
+    # Payload Interpolation
+
+    Use values from the incoming webhook payload in shell commands, scripts, and HTTP executor bodies.
+
+    ## Syntax
+
+    Wrap field names in double braces:
+
+    ```toml
+    [hooks.executor]
+    type = "shell"
+    command = "deploy --repo={{repo}} --branch={{branch}}"
+    ```
+
+    ## Nested fields
+
+    Use dot notation for nested JSON objects:
+
+    ```toml
+    command = "echo {{repository.owner.login}}"
+    ```
+
+    Given the payload:
+
+    ```json
+    {
+      "repository": {
+        "owner": {
+          "login": "octocat"
+        }
+      }
+    }
+    ```
+
+    This resolves to `echo octocat`.
+
+    ## Shell escaping
+
+    All interpolated values are automatically shell-escaped to prevent injection attacks. A payload value of `; rm -rf /` would be escaped to `'; rm -rf /'`.
+
+    ## Type handling
+
+    | JSON Type | Interpolated As |
+    |-----------|----------------|
+    | String | Raw string value |
+    | Number | Numeric string |
+    | Boolean | `true` or `false` |
+    | Object | JSON string |
+    | Array | JSON string |
+    | Null | Empty string |
+
+    ## HTTP executor
+
+    Interpolation also works in the HTTP executor's URL, headers, and body:
+
+    ```toml
+    [hooks.executor]
+    type = "http"
+    method = "POST"
+    url = "https://api.example.com/deploy?repo={{repo}}"
+    body = '{"ref": "{{branch}}", "environment": "production"}'
+    ```
+
+- title: "Trigger Rules"
+  slug: trigger-rules
+  category: Hooks
+  description: "Filtering webhooks by payload content, time windows, cooldowns, and rate limits."
+  content: |
+    # Trigger Rules
+
+    Trigger rules are evaluated after authentication but before execution. A webhook that fails any rule is logged as `filtered` and never runs.
+
+    ## Payload Filters
+
+    Match specific payload fields:
+
+    ```toml
+    [[hooks.trigger_rules.payload_filters]]
+    field = "action"
+    operator = "equals"
+    value = "opened"
+    ```
+
+    ### Operators
+
+    | Operator | Description |
+    |----------|-------------|
+    | `equals` | Exact string match |
+    | `not_equals` | Not equal |
+    | `contains` | Substring match |
+    | `regex` | Regular expression match |
+    | `exists` | Field is present (any value) |
+    | `gt` | Greater than (numeric) |
+    | `lt` | Less than (numeric) |
+    | `gte` | Greater than or equal |
+    | `lte` | Less than or equal |
+
+    ### Nested fields
+
+    Use dot notation for nested values:
+
+    ```toml
+    [[hooks.trigger_rules.payload_filters]]
+    field = "pull_request.base.ref"
+    operator = "regex"
+    value = "^(main|release/.*)"
+    ```
+
+    Multiple payload filters use AND logic — all must match.
+
+    ## Time Windows
+
+    Restrict execution to specific days and hours (UTC):
+
+    ```toml
+    [[hooks.trigger_rules.time_windows]]
+    days = ["Mon", "Tue", "Wed", "Thu", "Fri"]
+    start_time = "09:00"
+    end_time = "17:00"
+    ```
+
+    Multiple time windows use OR logic — any matching window allows execution.
+
+    ## Cooldown
+
+    Enforce a minimum interval between executions:
+
+    ```toml
+    [hooks.trigger_rules]
+    cooldown = "5m"
+    ```
+
+    If a hook was executed less than 5 minutes ago, the new request is filtered.
+
+    ## Rate Limiting
+
+    Token-bucket rate limiting per hook:
+
+    ```toml
+    [hooks.trigger_rules.rate_limit]
+    max_requests = 10
+    window = "1m"
+    ```
+
+    Exceeding the limit returns `429 Too Many Requests`.
+
+# Execution
+
+- title: "Shell Executor"
+  slug: shell-executor
+  category: Execution
+  description: "Running shell commands from webhook triggers."
+  content: |
+    # Shell Executor
+
+    The shell executor runs commands via `sh -c` with full payload interpolation support.
+
+    ## Basic usage
+
+    ```toml
+    [hooks.executor]
+    type = "shell"
+    command = "echo 'hook triggered'"
+    ```
+
+    ## With interpolation
+
+    ```toml
+    [hooks.executor]
+    type = "shell"
+    command = "cd /app && git checkout {{branch}} && make deploy"
+    ```
+
+    All interpolated values are shell-escaped automatically.
+
+    ## Working directory
+
+    ```toml
+    [[hooks]]
+    name = "Build"
+    slug = "build"
+    cwd = "/opt/project"
+
+    [hooks.executor]
+    type = "shell"
+    command = "make build"
+    ```
+
+    ## Environment variables
+
+    ```toml
+    [hooks.env]
+    DEPLOY_ENV = "production"
+    API_KEY = "${{EXTERNAL_API_KEY}}"
+    ```
+
+    Environment variable values can reference host environment variables using `${{VAR_NAME}}` syntax.
+
+    ## Timeout
+
+    Per-hook timeout (overrides global default):
+
+    ```toml
+    [[hooks]]
+    slug = "long-task"
+    timeout = "5m"
+    ```
+
+    If a command exceeds its timeout, the process is killed and the execution is marked as `TimedOut`.
+
+    ## Output capture
+
+    stdout and stderr are written to separate log files:
+
+    ```
+    data/logs/{execution_id}/stdout.log
+    data/logs/{execution_id}/stderr.log
+    ```
+
+    The original payload is saved as `payload.json` in the same directory.
+
+- title: "Script Executor"
+  slug: script-executor
+  category: Execution
+  description: "Running managed script files from webhook triggers."
+  content: |
+    # Script Executor
+
+    The script executor runs pre-uploaded scripts from the managed scripts directory.
+
+    ## Configuration
+
+    ```toml
+    [hooks.executor]
+    type = "script"
+    path = "deploy.sh"
+    ```
+
+    The `path` is relative to the scripts directory (default `data/scripts`).
+
+    ## Managing scripts
+
+    Scripts are managed through the web UI at `/scripts`:
+
+    - **Upload**: Create new scripts with the web editor
+    - **Edit**: Modify existing scripts in the browser
+    - **Delete**: Remove scripts you no longer need
+
+    ## Filename rules
+
+    - Alphanumeric characters, hyphens, underscores, and dots only
+    - No path traversal (`..` is rejected)
+    - No leading dots (hidden files)
+    - Maximum file size: 1 MB
+
+    ## Payload access
+
+    Scripts receive the payload as a JSON file at `data/logs/{execution_id}/payload.json`. Read it in your script:
+
+    ```bash
+    #!/bin/bash
+    PAYLOAD=$(cat "$SENDWORD_PAYLOAD_PATH")
+    REPO=$(echo "$PAYLOAD" | jq -r '.repo')
+    echo "Deploying $REPO"
+    ```
+
+- title: "HTTP Executor"
+  slug: http-executor
+  category: Execution
+  description: "Forwarding webhooks to external HTTP endpoints."
+  content: |
+    # HTTP Executor
+
+    The HTTP executor makes HTTP requests to external services, acting as a webhook relay or transformer.
+
+    ## Configuration
+
+    ```toml
+    [hooks.executor]
+    type = "http"
+    method = "POST"
+    url = "https://api.example.com/deploy"
+    follow_redirects = true
+    ```
+
+    ## Headers
+
+    ```toml
+    [hooks.executor]
+    type = "http"
+    method = "POST"
+    url = "https://slack.com/api/chat.postMessage"
+
+    [hooks.executor.headers]
+    Authorization = "Bearer ${{SLACK_TOKEN}}"
+    Content-Type = "application/json"
+    ```
+
+    ## Body with interpolation
+
+    ```toml
+    [hooks.executor]
+    type = "http"
+    method = "POST"
+    url = "https://hooks.slack.com/services/..."
+    body = '{"text": "Deployment of {{repo}} to {{branch}} triggered"}'
+    ```
+
+    ## Supported methods
+
+    `GET`, `POST`, `PUT`, `PATCH`, `DELETE`
+
+- title: "Retries & Backoff"
+  slug: retries-backoff
+  category: Execution
+  description: "Automatic retry strategies for failed executions."
+  content: |
+    # Retries & Backoff
+
+    Sendword can automatically retry failed executions using configurable backoff strategies.
+
+    ## Global defaults
+
+    ```toml
+    [defaults.retries]
+    count = 3
+    backoff = "exponential"
+    initial_delay = "2s"
+    max_delay = "60s"
+    ```
+
+    ## Per-hook override
+
+    ```toml
+    [hooks.retries]
+    count = 5
+    backoff = "linear"
+    initial_delay = "1s"
+    max_delay = "30s"
+    ```
+
+    ## Backoff strategies
+
+    ### None
+
+    Retry immediately with no delay:
+
+    ```toml
+    backoff = "none"
+    ```
+
+    ### Linear
+
+    Delay increases linearly: `delay = initial_delay * attempt_number`
+
+    ```toml
+    backoff = "linear"
+    initial_delay = "5s"
+    max_delay = "60s"
+    ```
+
+    Attempt 1: 5s, Attempt 2: 10s, Attempt 3: 15s, ...
+
+    ### Exponential
+
+    Delay doubles each attempt: `delay = initial_delay * 2^(attempt - 1)`
+
+    ```toml
+    backoff = "exponential"
+    initial_delay = "2s"
+    max_delay = "60s"
+    ```
+
+    Attempt 1: 2s, Attempt 2: 4s, Attempt 3: 8s, Attempt 4: 16s, ...
+
+    All strategies are capped at `max_delay`.
+
+    ## Log behavior
+
+    Each retry attempt appends to the execution logs with a marker:
+
+    ```
+    --- RETRY ATTEMPT 2 ---
+    ```
+
+    The execution status reflects the final attempt's result.
+
+- title: "Barriers & Queues"
+  slug: barriers-queues
+  category: Execution
+  description: "Concurrency control with mutex and queue barriers."
+  content: |
+    # Barriers & Queues
+
+    Barriers control how many executions of a hook can run simultaneously.
+
+    ## Mutex
+
+    Only one execution at a time. Additional requests wait in FIFO order:
+
+    ```toml
+    [hooks.concurrency]
+    mode = "mutex"
+    ```
+
+    ## Queue
+
+    FIFO queue with a configurable maximum depth:
+
+    ```toml
+    [hooks.concurrency]
+    mode = "queue"
+    queue_depth = 10
+    ```
+
+    If the queue is full, new requests are rejected.
+
+    ## When to use barriers
+
+    - **CI/CD hooks**: Prevent overlapping deployments with mutex
+    - **Data processing**: Queue batch jobs with a depth limit to control resource usage
+    - **External APIs**: Rate-limit outgoing calls by queueing webhook processing
+
+    ## Without barriers
+
+    By default, hooks have no concurrency control. Multiple webhook requests execute in parallel.
+
+- title: "Approval Workflows"
+  slug: approval-workflows
+  category: Execution
+  description: "Gating executions behind manual approval."
+  content: |
+    # Approval Workflows
+
+    Require human approval before a hook's command executes. Useful for production deployments and destructive operations.
+
+    ## Configuration
+
+    ```toml
+    [hooks.approval]
+    required = true
+    timeout = "2h"
+    ```
+
+    ## How it works
+
+    1. A webhook triggers the hook
+    2. The execution enters `PendingApproval` status
+    3. The approval appears on the dashboard at `/approvals`
+    4. A user reviews the payload and approves or rejects
+    5. If approved, the command executes normally
+    6. If rejected or the timeout expires, the execution is cancelled
+
+    ## Approval states
+
+    | Status | Description |
+    |--------|-------------|
+    | `PendingApproval` | Waiting for human review |
+    | `Approved` | Approved and queued for execution |
+    | `Rejected` | Manually rejected by a user |
+    | `Expired` | Approval timeout reached |
+
+    ## API
+
+    ```bash
+    # Approve
+    curl -X POST http://localhost:8080/executions/{id}/approve
+
+    # Reject
+    curl -X POST http://localhost:8080/executions/{id}/reject
+    ```
+
+    ## Combining with barriers
+
+    Approval and concurrency barriers work together. An approved execution still respects mutex/queue constraints.
+
+# Operations
+
+- title: "Log Masking"
+  slug: log-masking
+  category: Operations
+  description: "Hiding sensitive data in execution logs."
+  content: |
+    # Log Masking
+
+    Prevent sensitive data from appearing in the web UI and log files.
+
+    ## Mask environment variables
+
+    ```toml
+    [masking]
+    env_vars = ["API_KEY", "DB_PASSWORD", "SECRET_TOKEN"]
+    ```
+
+    Any occurrence of the environment variable's value in stdout or stderr is replaced with `***`.
+
+    ## Mask patterns
+
+    ```toml
+    [masking]
+    patterns = [
+      "(api[_-]?key)[=:]\\s*\\S+",
+      "Bearer\\s+\\S+",
+      "password[=:]\\s*\\S+"
+    ]
+    ```
+
+    Regex patterns are compiled at startup. Any match in log output is replaced with `***`.
+
+    ## When masking applies
+
+    - stdout displayed in the web UI
+    - stderr displayed in the web UI
+    - Masking is applied at display time — raw logs on disk are unmodified
+
+    ## Best practices
+
+    - Always mask secrets passed as environment variables
+    - Use regex patterns for secrets that appear in API responses
+    - Combine both approaches for defense in depth
+
+- title: "Notifications"
+  slug: notifications
+  category: Operations
+  description: "Post-execution webhook notifications for alerting."
+  content: |
+    # Notifications
+
+    Send a webhook notification after an execution completes. Useful for alerting on failures, posting to Slack, or triggering downstream workflows.
+
+    ## Configuration
+
+    ```toml
+    [hooks.notification]
+    url = "https://hooks.slack.com/services/T00/B00/xxx"
+    on = ["failure", "timeout"]
+    ```
+
+    ## Outcome filters
+
+    | Value | Triggers when |
+    |-------|--------------|
+    | `success` | Exit code 0 |
+    | `failure` | Non-zero exit code |
+    | `timeout` | Execution exceeded timeout |
+
+    Default: `["failure", "timeout"]`
+
+    ## Custom headers and body
+
+    ```toml
+    [hooks.notification]
+    url = "https://hooks.slack.com/services/..."
+    method = "POST"
+    on = ["failure", "timeout"]
+
+    [hooks.notification.headers]
+    Content-Type = "application/json"
+
+    [hooks.notification]
+    body = '{"text": ":warning: {{hook_name}} {{status}} (exit {{exit_code}}, {{duration}})"}'
+    ```
+
+    ## Available template variables
+
+    | Variable | Description |
+    |----------|-------------|
+    | `hook_name` | Hook display name |
+    | `hook_slug` | Hook URL slug |
+    | `status` | Execution outcome |
+    | `exit_code` | Process exit code |
+    | `execution_id` | Unique execution ID |
+    | `duration` | Execution wall time |
+    | `trigger_source` | IP address of the caller |
+
+    ## Reliability
+
+    Notifications are best-effort. A notification failure does not affect the execution record or retry logic.
+
+- title: "Backup & Restore"
+  slug: backup-restore
+  category: Operations
+  description: "Backing up and restoring sendword data to S3-compatible storage."
+  content: |
+    # Backup & Restore
+
+    Back up your SQLite database and TOML configuration to any S3-compatible storage provider (AWS S3, MinIO, R2, etc.).
+
+    ## Configuration
+
+    ```toml
+    [backup]
+    endpoint = "https://s3.amazonaws.com"
+    bucket = "my-sendword-backups"
+    access_key = "${{AWS_ACCESS_KEY_ID}}"
+    secret_key = "${{AWS_SECRET_ACCESS_KEY}}"
+    region = "us-east-1"
+    prefix = "sendword/"
+    ```
+
+    ## Scheduled backups
+
+    Run backups on a cron schedule:
+
+    ```toml
+    [backup]
+    schedule = "0 2 * * *"   # Daily at 2am UTC
+    ```
+
+    ## Retention
+
+    Automatically clean up old backups:
+
+    ```toml
+    [backup.retention]
+    max_count = 30     # Keep at most 30 backups
+    max_age = "90d"    # Delete backups older than 90 days
+    ```
+
+    ## Manual backup
+
+    ```bash
+    sendword backup create
+    ```
+
+    Creates a VACUUM snapshot of the database, bundles it with the TOML config into a `.tar.gz`, and uploads to S3.
+
+    ## List backups
+
+    ```bash
+    sendword backup list
+    ```
+
+    ## Restore
+
+    ```bash
+    sendword restore --from sendword/sendword-2024-01-15.tar.gz --output ./restored
+    ```
+
+    Downloads the archive from S3 and extracts the database and config to the target directory.
+
+- title: "User Management"
+  slug: user-management
+  category: Operations
+  description: "Managing users, sessions, and dashboard access."
+  content: |
+    # User Management
+
+    Sendword supports multiple users with password-based authentication for the web dashboard.
+
+    ## Create a user
+
+    From the CLI:
+
+    ```
+    sendword user create --username admin
+    ```
+
+    Or from the web UI at `/settings/users`.
+
+    ## Authentication
+
+    Users log in at `/login` with username and password. Sessions are stored in the database with a configurable lifetime:
+
+    ```toml
+    [auth]
+    session_lifetime = "24h"
+    secure_cookie = false
+    ```
+
+    Set `secure_cookie = true` when running behind HTTPS.
+
+    ## Password hashing
+
+    Passwords are hashed with bcrypt. Plaintext passwords are never stored.
+
+    ## Change password
+
+    Users can change their own password at `/settings/password`.
+
+    ## Delete a user
+
+    Admins can delete users from the web UI at `/settings/users`.
+
+    ## Session behavior
+
+    - Sessions expire after the configured lifetime
+    - Logging out invalidates the session immediately
+    - Each login creates a new session
+
+# API Reference
+
+- title: "Webhook API"
+  slug: webhook-api
+  category: API Reference
+  description: "HTTP endpoint for triggering hooks."
+  content: |
+    # Webhook API
+
+    The primary endpoint for receiving webhooks.
+
+    ## Trigger a hook
+
+    ```
+    POST /hook/{slug}
+    ```
+
+    ### Request
+
+    ```bash
+    curl -X POST http://localhost:8080/hook/deploy \
+      -H "Content-Type: application/json" \
+      -H "Authorization: Bearer $TOKEN" \
+      -d '{"repo": "myapp", "branch": "main"}'
+    ```
+
+    ### Responses
+
+    **200 OK** — Execution started:
+
+    ```json
+    {
+      "execution_id": "01HQXYZ..."
+    }
+    ```
+
+    **200 OK** — Filtered by trigger rule:
+
+    ```json
+    {
+      "status": "filtered",
+      "reason": "cooldown: 3m remaining"
+    }
+    ```
+
+    **400 Bad Request** — Malformed JSON:
+
+    ```json
+    {
+      "error": "invalid JSON"
+    }
+    ```
+
+    **401 Unauthorized** — Authentication failed:
+
+    ```json
+    {
+      "error": "authentication failed"
+    }
+    ```
+
+    **404 Not Found** — No hook with that slug (or hook is disabled).
+
+    **422 Unprocessable Entity** — Payload validation failed:
+
+    ```json
+    {
+      "error": "payload validation failed",
+      "details": ["missing required field: repo"]
+    }
+    ```
+
+    **429 Too Many Requests** — Rate limit exceeded:
+
+    ```json
+    {
+      "status": "rate_limited",
+      "reason": "rate limit exceeded: 10/min"
+    }
+    ```
+
+    ### Headers
+
+    | Header | Required | Description |
+    |--------|----------|-------------|
+    | `Content-Type` | No | `application/json` for payload validation |
+    | `Authorization` | If auth configured | `Bearer {token}` |
+    | `X-Hub-Signature-256` | If HMAC auth | HMAC signature |
+
+- title: "Configuration API"
+  slug: configuration-api
+  category: API Reference
+  description: "Endpoints for exporting and importing configuration."
+  content: |
+    # Configuration API
+
+    Manage your sendword configuration programmatically.
+
+    ## Export
+
+    ```
+    GET /api/config/export
+    ```
+
+    Returns the current configuration as a JSON object. Useful for backing up config or syncing across instances.
+
+    ```bash
+    curl http://localhost:8080/api/config/export | jq .
+    ```
+
+    ## Import
+
+    ```
+    POST /api/config/import
+    Content-Type: application/json
+    ```
+
+    Replace the running configuration with the provided JSON. The config is validated before applying.
+
+    ```bash
+    curl -X POST http://localhost:8080/api/config/import \
+      -H "Content-Type: application/json" \
+      -d @config.json
+    ```
+
+    ### Success response
+
+    ```json
+    {
+      "status": "ok",
+      "hooks": 5
+    }
+    ```
+
+    ### Validation error
+
+    ```json
+    {
+      "error": "validation failed",
+      "details": [
+        "hook 'deploy': duplicate slug",
+        "hook 'notify': invalid executor type"
+      ]
+    }
+    ```
+
+- title: "Execution API"
+  slug: execution-api
+  category: API Reference
+  description: "Endpoints for viewing and managing executions."
+  content: |
+    # Execution API
+
+    View execution history, stream logs, replay executions, and manage approvals.
+
+    ## View execution
+
+    ```
+    GET /executions/{id}
+    ```
+
+    Returns the execution detail page with status, logs, payload, and timing information.
+
+    ## Stream logs
+
+    ```
+    GET /executions/{id}/logs/stream
+    ```
+
+    Server-sent events stream of live log output. Connect with EventSource or curl:
+
+    ```bash
+    curl -N http://localhost:8080/executions/{id}/logs/stream
+    ```
+
+    ## Replay
+
+    ```
+    POST /executions/{id}/replay
+    ```
+
+    Re-runs the execution with the same payload. Creates a new execution ID.
+
+    ## Approve / Reject
+
+    For hooks with approval workflows:
+
+    ```
+    POST /executions/{id}/approve
+    POST /executions/{id}/reject
+    ```
+
+    ## Execution statuses
+
+    | Status | Description |
+    |--------|-------------|
+    | `Pending` | Queued, waiting to run |
+    | `PendingApproval` | Awaiting manual approval |
+    | `Approved` | Approved, waiting to execute |
+    | `Rejected` | Manually rejected |
+    | `Expired` | Approval timeout reached |
+    | `Running` | Currently executing |
+    | `Success` | Completed with exit code 0 |
+    | `Failed` | Completed with non-zero exit |
+    | `TimedOut` | Exceeded timeout |
+
+- title: "Health Check"
+  slug: health-check
+  category: API Reference
+  description: "Health check endpoint for monitoring and load balancers."
+  content: |
+    # Health Check
+
+    A simple endpoint for monitoring and load balancer health probes.
+
+    ## Endpoint
+
+    ```
+    GET /healthz
+    ```
+
+    ## Healthy response
+
+    ```json
+    {
+      "status": "ok"
+    }
+    ```
+
+    HTTP status: `200 OK`
+
+    ## Unhealthy response
+
+    ```json
+    {
+      "status": "error",
+      "detail": "database connection failed"
+    }
+    ```
+
+    HTTP status: `503 Service Unavailable`
+
+    ## Usage
+
+    ```bash
+    # Simple check
+    curl -f http://localhost:8080/healthz
+
+    # In a Docker healthcheck
+    HEALTHCHECK CMD curl -f http://localhost:8080/healthz || exit 1
+
+    # Kubernetes liveness probe
+    livenessProbe:
+      httpGet:
+        path: /healthz
+        port: 8080
+      initialDelaySeconds: 5
+      periodSeconds: 10
+    ```
+
+- title: "Backup API"
+  slug: backup-api
+  category: API Reference
+  description: "Endpoints for managing S3 backups."
+  content: |
+    # Backup API
+
+    Manage backups programmatically through the HTTP API.
+
+    ## List backups
+
+    ```
+    GET /api/backup/list
+    ```
+
+    ```json
+    [
+      {
+        "key": "sendword/sendword-2024-01-15T02:00:00.tar.gz",
+        "size": 524288,
+        "last_modified": "2024-01-15T02:00:05Z"
+      }
+    ]
+    ```
+
+    ## Create backup
+
+    ```
+    POST /api/backup/create
+    ```
+
+    Creates a new backup and uploads to S3. Returns the backup key:
+
+    ```json
+    {
+      "key": "sendword/sendword-2024-01-16T02:00:00.tar.gz"
+    }
+    ```
+
+    ## Restore from backup
+
+    ```
+    POST /api/backup/restore
+    Content-Type: application/json
+    ```
+
+    ```json
+    {
+      "from": "sendword/sendword-2024-01-15T02:00:00.tar.gz",
+      "output": "/opt/sendword/restored"
+    }
+    ```
+
+    Downloads and extracts the backup to the specified directory.

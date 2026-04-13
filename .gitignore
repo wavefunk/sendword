@@ -1,0 +1,23 @@
+/target
+/.direnv/
+/.envrc.private
+.env
+/rustc-ice-*
+.dolt/
+*.db
+/.claude/skills/
+/data/
+static/dist/
+node_modules/
+.playwright/
+.playwright-cli/
+
+# Config override file (may contain local/secret overrides)
+sendword.json
+
+# Beads / Dolt files (added by bd init)
+.beads-credential-key
+.claude/summaries/
+/.claude/worktrees/
+docs/superpowers/
+/website/dist/
