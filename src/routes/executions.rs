@@ -12,7 +12,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Serialize;
 
-use crate::auth::AuthUser;
+use crate::extractors::AuthUser;
 use crate::barriers::{self, execution_lock, execution_queue};
 use crate::config::ExecutorConfig;
 use crate::error::{AppError, DbError};
@@ -68,7 +68,7 @@ fn compute_duration(started_at: &Option<String>, completed_at: &Option<String>) 
 }
 
 async fn execution_detail(
-    auth: AuthUser,
+    AuthUser(auth): AuthUser,
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Html<String>, AppError> {
@@ -117,7 +117,7 @@ async fn execution_detail(
             retry_of => exec.retry_of,
             stdout => stdout,
             stderr => stderr,
-            username => auth.username,
+            username => auth.email.as_str(),
             nav_active => "hooks",
         },
     )?;
@@ -258,13 +258,13 @@ async fn replay_execution(
 
 /// Approve a pending_approval execution. Transitions to approved, then spawns execution.
 async fn approve_execution(
-    user: AuthUser,
+    AuthUser(user): AuthUser,
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Response, Response> {
     let pool = state.db.pool();
 
-    let exec = execution::mark_approved(pool, &id, &user.username)
+    let exec = execution::mark_approved(pool, &id, user.email.as_str())
         .await
         .map_err(|e| match e {
             DbError::Conflict(_) => StatusCode::CONFLICT.into_response(),
@@ -378,13 +378,13 @@ async fn approve_execution(
 
 /// Reject a pending_approval execution.
 async fn reject_execution(
-    user: AuthUser,
+    AuthUser(user): AuthUser,
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Response, Response> {
     let pool = state.db.pool();
 
-    let exec = execution::mark_rejected(pool, &id, &user.username)
+    let exec = execution::mark_rejected(pool, &id, user.email.as_str())
         .await
         .map_err(|e| match e {
             DbError::Conflict(_) => StatusCode::CONFLICT.into_response(),
@@ -413,7 +413,7 @@ async fn reject_execution(
 
 /// List all pending_approval executions.
 async fn list_pending_approvals(
-    user: AuthUser,
+    AuthUser(user): AuthUser,
     State(state): State<Arc<AppState>>,
 ) -> Result<Html<String>, AppError> {
     let pool = state.db.pool();
@@ -435,7 +435,7 @@ async fn list_pending_approvals(
         "approvals.html",
         context! {
             executions => exec_list,
-            username => user.username,
+            username => user.email.as_str(),
             nav_active => "approvals",
         },
     )?;

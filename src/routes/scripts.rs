@@ -8,7 +8,7 @@ use axum::{Form, Router};
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
-use crate::auth::AuthUser;
+use crate::extractors::AuthUser;
 use crate::error::AppError;
 use crate::server::AppState;
 use crate::templates::context;
@@ -151,7 +151,7 @@ struct FlashParams {
 // --- Handlers ---
 
 async fn list_scripts(
-    auth: AuthUser,
+    AuthUser(auth): AuthUser,
     State(state): State<Arc<AppState>>,
     Query(flash): Query<FlashParams>,
 ) -> Result<Html<String>, AppError> {
@@ -167,7 +167,7 @@ async fn list_scripts(
                     scripts => Vec::<()>::new(),
                     success => flash.success,
                     error => flash.error,
-                    username => auth.username,
+                    username => auth.email.as_str(),
                     nav_active => "scripts",
                 },
             )?;
@@ -219,7 +219,7 @@ async fn list_scripts(
             scripts => scripts,
             success => flash.success,
             error => flash.error,
-            username => auth.username,
+            username => auth.email.as_str(),
             nav_active => "scripts",
         },
     )?;
@@ -229,7 +229,7 @@ async fn list_scripts(
 // --- GET /scripts/new ---
 
 async fn new_script(
-    auth: AuthUser,
+    AuthUser(auth): AuthUser,
     State(state): State<Arc<AppState>>,
     Query(flash): Query<FlashParams>,
 ) -> Result<Html<String>, AppError> {
@@ -241,7 +241,7 @@ async fn new_script(
             content => "",
             success => flash.success,
             error => flash.error,
-            username => auth.username,
+            username => auth.email.as_str(),
             nav_active => "scripts",
         },
     )?;
@@ -303,7 +303,7 @@ async fn create_script(
 // --- GET /scripts/:filename ---
 
 async fn edit_script(
-    auth: AuthUser,
+    AuthUser(auth): AuthUser,
     State(state): State<Arc<AppState>>,
     AxumPath(filename): AxumPath<String>,
     Query(flash): Query<FlashParams>,
@@ -327,7 +327,7 @@ async fn edit_script(
             content => content,
             success => flash.success,
             error => flash.error,
-            username => auth.username,
+            username => auth.email.as_str(),
             nav_active => "scripts",
         },
     )?;

@@ -6,7 +6,7 @@ use axum::routing::get;
 use axum::Router;
 use serde::Deserialize;
 
-use crate::auth::AuthUser;
+use crate::extractors::AuthUser;
 use crate::error::AppError;
 use crate::models::execution;
 use crate::server::AppState;
@@ -23,7 +23,7 @@ pub fn router() -> Router<Arc<AppState>> {
 }
 
 async fn dashboard(
-    auth: AuthUser,
+    AuthUser(auth): AuthUser,
     State(state): State<Arc<AppState>>,
     Query(flash): Query<FlashParams>,
 ) -> Result<Html<String>, AppError> {
@@ -68,7 +68,7 @@ async fn dashboard(
             hooks => hooks,
             success => flash.success,
             error => flash.error,
-            username => auth.username,
+            username => auth.email.as_str(),
             nav_active => "dashboard",
         },
     )?;

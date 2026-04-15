@@ -11,7 +11,7 @@ use axum::routing::{get, post};
 use axum::{Form, Json, Router};
 use serde::{Deserialize, Serialize};
 
-use crate::auth::AuthUser;
+use crate::extractors::AuthUser;
 use crate::barriers::{self, BarrierOutcome};
 use crate::executor::ResolvedExecutor;
 use crate::interpolation::interpolate_command;
@@ -479,7 +479,7 @@ struct PaginationParams {
 }
 
 async fn hook_detail(
-    auth: AuthUser,
+    AuthUser(auth): AuthUser,
     State(state): State<Arc<AppState>>,
     Path(slug): Path<String>,
     Query(flash): Query<FlashParams>,
@@ -639,7 +639,7 @@ async fn hook_detail(
             has_more => has_more,
             success => flash.success,
             error => flash.error,
-            username => auth.username,
+            username => auth.email.as_str(),
             nav_active => "hooks",
         },
     )?;
@@ -1207,7 +1207,7 @@ struct FlashParams {
 // ---------------------------------------------------------------------------
 
 async fn new_hook_form(
-    auth: AuthUser,
+    AuthUser(auth): AuthUser,
     State(state): State<Arc<AppState>>,
     Query(flash): Query<FlashParams>,
 ) -> Result<Html<String>, AppError> {
@@ -1240,7 +1240,7 @@ async fn new_hook_form(
             form_trigger_rate_window => "",
             success => flash.success,
             error => flash.error,
-            username => auth.username,
+            username => auth.email.as_str(),
             nav_active => "hooks",
         },
     )?;
@@ -1285,7 +1285,7 @@ async fn create_hook(
 // ---------------------------------------------------------------------------
 
 async fn edit_hook_form(
-    auth: AuthUser,
+    AuthUser(auth): AuthUser,
     State(state): State<Arc<AppState>>,
     Path(slug): Path<String>,
     Query(flash): Query<FlashParams>,
@@ -1441,7 +1441,7 @@ async fn edit_hook_form(
             form_trigger_rate_window => trigger_rate_window,
             success => flash.success,
             error => flash.error,
-            username => auth.username,
+            username => auth.email.as_str(),
             nav_active => "hooks",
         },
     )?;
@@ -1568,9 +1568,10 @@ fn compute_duration(started_at: &Option<String>, completed_at: &Option<String>) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use allowthem_core::{AllowThemBuilder, Email, EmbeddedAuthClient, generate_token, hash_token};
+    use chrono::{Duration, Utc};
     use crate::config::AppConfig;
     use crate::db::Db;
-    use crate::models::user;
     use crate::templates::Templates;
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
@@ -1591,20 +1592,34 @@ mod tests {
 
         let db = Db::new_in_memory().await.expect("in-memory db");
         db.migrate().await.expect("migration");
+
+        let ath = AllowThemBuilder::with_pool(db.pool().clone())
+            .cookie_secure(false)
+            .build()
+            .await
+            .expect("allowthem build");
+        let auth_client = Arc::new(EmbeddedAuthClient::new(ath.clone(), "/login"));
+
         let templates = Templates::new(Templates::default_dir());
-        let state = AppState::new(config, &config_path, db, templates);
+        let state = AppState::new(config, &config_path, db, templates, ath, auth_client);
         (state, dir)
     }
 
     /// Create a test user and return a session cookie value.
     async fn create_test_session(state: &Arc<AppState>) -> String {
-        let pool = state.db.pool();
-        let u = user::create(pool, "admin", "password123").await.unwrap();
-        let session_lifetime = state.config.load().auth.session_lifetime;
-        let sess = crate::models::session::create(pool, &u.id, session_lifetime)
+        let email = Email::new("admin@example.com".into()).unwrap();
+        let user = state.ath.db().create_user(email, "password123", None).await.unwrap();
+        let token = generate_token();
+        let token_hash = hash_token(&token);
+        let expires = Utc::now() + Duration::hours(24);
+        state
+            .ath
+            .db()
+            .create_session(user.id, token_hash, None, None, expires)
             .await
             .unwrap();
-        format!("sendword_session={}", sess.id)
+        let cookie = state.ath.session_cookie(&token);
+        cookie.split(';').next().unwrap().to_string()
     }
 
     /// Build the test app with a ConnectInfo layer so trigger_hook can extract

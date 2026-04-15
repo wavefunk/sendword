@@ -7,7 +7,7 @@ use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::auth::AuthUser;
+use crate::extractors::AuthUser;
 use crate::backup::BackupEntry;
 use crate::config::AppConfig;
 use crate::server::AppState;
@@ -232,9 +232,11 @@ mod tests {
     use axum::Router;
     use tower::ServiceExt;
 
+    use allowthem_core::{AllowThemBuilder, Email, EmbeddedAuthClient, generate_token, hash_token};
+    use chrono::{Duration, Utc};
+
     use crate::config::AppConfig;
     use crate::db::Db;
-    use crate::models::{user, session};
     use crate::server::AppState;
 
     async fn test_state_with_config(toml_content: &str) -> (Arc<AppState>, tempfile::TempDir) {
@@ -251,8 +253,15 @@ mod tests {
         let db = Db::new_in_memory().await.expect("db");
         db.migrate().await.expect("migrate");
 
+        let ath = AllowThemBuilder::with_pool(db.pool().clone())
+            .cookie_secure(false)
+            .build()
+            .await
+            .expect("allowthem build");
+        let auth_client = Arc::new(EmbeddedAuthClient::new(ath.clone(), "/login"));
+
         let templates = crate::templates::Templates::new(crate::templates::Templates::default_dir());
-        let state = AppState::new(config, &config_path, db, templates);
+        let state = AppState::new(config, &config_path, db, templates, ath, auth_client);
         (state, dir)
     }
 
@@ -261,11 +270,19 @@ mod tests {
     }
 
     async fn create_test_session(state: &Arc<AppState>) -> String {
-        let pool = state.db.pool();
-        let u = user::create(pool, "admin", "password123").await.unwrap();
-        let session_lifetime = state.config.load().auth.session_lifetime;
-        let sess = session::create(pool, &u.id, session_lifetime).await.unwrap();
-        format!("sendword_session={}", sess.id)
+        let email = Email::new("admin@example.com".into()).unwrap();
+        let user = state.ath.db().create_user(email, "password123", None).await.unwrap();
+        let token = generate_token();
+        let token_hash = hash_token(&token);
+        let expires = Utc::now() + Duration::hours(24);
+        state
+            .ath
+            .db()
+            .create_session(user.id, token_hash, None, None, expires)
+            .await
+            .unwrap();
+        let cookie = state.ath.session_cookie(&token);
+        cookie.split(';').next().unwrap().to_string()
     }
 
     #[tokio::test]
