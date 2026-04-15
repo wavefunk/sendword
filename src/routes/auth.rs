@@ -6,10 +6,11 @@ use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::get;
 use axum::Form;
 use axum::Router;
+use chrono::Utc;
 use serde::Deserialize;
 
-use crate::auth::{CookieConfig, COOKIE_NAME};
-use crate::models::{session, user};
+use allowthem_core::{generate_token, hash_token, password};
+
 use crate::server::AppState;
 use crate::templates::context;
 
@@ -25,9 +26,22 @@ async fn login_page(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
 ) -> Result<Response, Response> {
-    // If the user already has a valid session, redirect to dashboard
-    if has_valid_session(&state, &headers).await {
-        return Ok(Redirect::to("/").into_response());
+    // Check if already authenticated via OptionalAuthUser logic
+    if let Some(cookie_header) = headers.get(axum::http::header::COOKIE)
+        && let Ok(cookie_str) = cookie_header.to_str()
+    {
+        let cookie_name = state.auth_client.session_cookie_name();
+        if let Some(token) = allowthem_core::parse_session_cookie(cookie_str, cookie_name) {
+            if state
+                .auth_client
+                .validate_session(&token)
+                .await
+                .unwrap_or(None)
+                .is_some()
+            {
+                return Ok(Redirect::to("/").into_response());
+            }
+        }
     }
 
     render_login(&state, None)
@@ -35,7 +49,7 @@ async fn login_page(
 
 #[derive(Deserialize)]
 struct LoginForm {
-    username: String,
+    email: String,
     password: String,
 }
 
@@ -44,31 +58,44 @@ async fn login_submit(
     State(state): State<Arc<AppState>>,
     Form(form): Form<LoginForm>,
 ) -> Result<Response, Response> {
-    // Look up user by username
-    let pool = state.db.pool();
-    let found_user = match user::get_by_username(pool, &form.username).await {
+    // Look up user with password hash populated
+    let found_user = match state.ath.db().find_for_login(&form.email).await {
         Ok(u) => u,
-        Err(_) => return render_login(&state, Some("Invalid username or password")),
+        Err(_) => return render_login(&state, Some("Invalid email or password")),
     };
 
-    // Verify password
-    if !user::verify_password(&form.password, &found_user.password_hash) {
-        return render_login(&state, Some("Invalid username or password"));
+    // Verify password — find_for_login returns password_hash populated
+    let Some(pw_hash) = &found_user.password_hash else {
+        return render_login(&state, Some("Invalid email or password"));
+    };
+
+    match password::verify_password(&form.password, pw_hash) {
+        Ok(true) => {}
+        Ok(false) => return render_login(&state, Some("Invalid email or password")),
+        Err(e) => {
+            tracing::error!(error = %e, "password verification error");
+            return render_login(&state, Some("Login failed, please try again"));
+        }
     }
 
-    // Create session
-    let session_lifetime = state.config.load().auth.session_lifetime;
-    let sess = session::create(pool, &found_user.id, session_lifetime)
+    // Generate token, hash for storage
+    let token = generate_token();
+    let token_hash = hash_token(&token);
+
+    let ttl = state.ath.session_config().ttl;
+    let expires = Utc::now() + ttl;
+
+    if let Err(e) = state
+        .ath
+        .db()
+        .create_session(found_user.id, token_hash, None, None, expires)
         .await
-        .map_err(|e| {
-            tracing::error!(error = %e, "failed to create session");
-            render_login_unwrap(&state, Some("Login failed, please try again"))
-        })?;
+    {
+        tracing::error!(error = %e, "failed to create session");
+        return render_login(&state, Some("Login failed, please try again"));
+    }
 
-    // Set cookie and redirect
-    let cookie_config = CookieConfig::from_app_state(&state);
-    let cookie_header = cookie_config.session_cookie_header(&sess.id);
-
+    let cookie_header = state.ath.session_cookie(&token);
     Ok(([(SET_COOKIE, cookie_header)], Redirect::to("/")).into_response())
 }
 
@@ -77,56 +104,26 @@ async fn logout(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
 ) -> Response {
-    // Extract session token from cookie header
     if let Some(cookie_header) = headers.get(axum::http::header::COOKIE)
         && let Ok(cookie_str) = cookie_header.to_str()
-            && let Some(token) = extract_session_token(cookie_str) {
-                let pool = state.db.pool();
-                if let Err(e) = session::delete(pool, token).await {
-                    tracing::warn!(error = %e, "failed to delete session during logout");
-                }
-            }
-
-    // Clear cookie and redirect
-    let cookie_config = CookieConfig::from_app_state(&state);
-    let clear_header = cookie_config.clear_cookie_header();
-
-    ([(SET_COOKIE, clear_header)], Redirect::to("/login")).into_response()
-}
-
-/// Extract the session token value from a Cookie header string.
-fn extract_session_token(cookie_str: &str) -> Option<&str> {
-    for pair in cookie_str.split(';') {
-        let pair = pair.trim();
-        if let Some(value) = pair.strip_prefix(COOKIE_NAME) {
-            let value = value.strip_prefix('=')?;
-            if !value.is_empty() {
-                return Some(value);
+    {
+        let cookie_name = state.auth_client.session_cookie_name();
+        if let Some(token) = allowthem_core::parse_session_cookie(cookie_str, cookie_name) {
+            if let Err(e) = state.auth_client.logout(&token).await {
+                tracing::warn!(error = %e, "failed to delete session during logout");
             }
         }
     }
-    None
-}
 
-/// Check whether the request carries a valid, non-expired session cookie.
-async fn has_valid_session(state: &AppState, headers: &axum::http::HeaderMap) -> bool {
-    let cookie_header = match headers.get(axum::http::header::COOKIE) {
-        Some(h) => h,
-        None => return false,
-    };
-    let cookie_str = match cookie_header.to_str() {
-        Ok(s) => s,
-        Err(_) => return false,
-    };
-    let token = match extract_session_token(cookie_str) {
-        Some(t) => t,
-        None => return false,
-    };
+    // Build a clearing cookie: same name, Max-Age=0
+    let config = state.ath.session_config();
+    let clear_cookie = format!(
+        "{}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0{}",
+        config.cookie_name,
+        if config.secure { "; Secure" } else { "" },
+    );
 
-    matches!(
-        session::find_by_token(state.db.pool(), token).await,
-        Ok(Some(_))
-    )
+    ([(SET_COOKIE, clear_cookie)], Redirect::to("/login")).into_response()
 }
 
 /// Render the login template with an optional error message.
@@ -140,13 +137,4 @@ fn render_login(state: &AppState, error: Option<&str>) -> Result<Response, Respo
             axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response()
         })?;
     Ok(Html(html).into_response())
-}
-
-/// Render login template, panicking on template failure.
-/// Only used in error-mapping contexts where we already need a Response.
-fn render_login_unwrap(state: &AppState, error: Option<&str>) -> Response {
-    match render_login(state, error) {
-        Ok(resp) => resp,
-        Err(resp) => resp,
-    }
 }
