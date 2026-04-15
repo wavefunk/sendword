@@ -57,6 +57,7 @@ impl Db {
 
     pub async fn migrate(&self) -> DbResult<()> {
         sqlx::migrate!("./migrations")
+            .set_ignore_missing(true)
             .run(&self.pool)
             .await
             .map_err(|e| DbError::Migration(e.to_string()))?;
