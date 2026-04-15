@@ -6,10 +6,12 @@ use axum::routing::get;
 use axum::Form;
 use axum::Router;
 use serde::Deserialize;
+use uuid::Uuid;
 
-use crate::auth::AuthUser;
+use allowthem_core::{AuthError, Email, UserId, password};
+
 use crate::error::AppError;
-use crate::models::user;
+use crate::extractors::AuthUser;
 use crate::server::AppState;
 use crate::templates::context;
 
@@ -31,21 +33,21 @@ struct FlashParams {
 // --- GET /settings/users ---
 
 async fn list_users(
-    auth: AuthUser,
+    AuthUser(auth): AuthUser,
     State(state): State<Arc<AppState>>,
     Query(flash): Query<FlashParams>,
 ) -> Result<Html<String>, AppError> {
-    let pool = state.db.pool();
-    let all_users = user::list(pool).await?;
+    let all_users = state.ath.db().list_users().await?;
 
     let user_rows: Vec<_> = all_users
         .iter()
         .map(|u| {
             context! {
-                id => u.id,
-                username => u.username,
-                created_at => u.created_at,
-                is_self => u.id == auth.user_id,
+                id => u.id.to_string(),
+                // "username" key keeps existing template working until commit 8 updates login.html
+                username => u.email.as_str(),
+                created_at => u.created_at.to_rfc3339(),
+                is_self => u.id == auth.id,
             }
         })
         .collect();
@@ -56,7 +58,7 @@ async fn list_users(
             users => user_rows,
             success => flash.success,
             error => flash.error,
-            username => auth.username,
+            username => auth.email.as_str(),
             nav_active => "settings",
         },
     )?;
@@ -67,32 +69,34 @@ async fn list_users(
 
 #[derive(Deserialize)]
 struct CreateUserForm {
-    username: String,
+    email: String,
     password: String,
 }
 
 async fn create_user(
-    _auth: AuthUser,
+    AuthUser(_auth): AuthUser,
     State(state): State<Arc<AppState>>,
     Form(form): Form<CreateUserForm>,
 ) -> Response {
-    let pool = state.db.pool();
-
     if form.password.is_empty() {
         return Redirect::to("/settings/users?error=Password+cannot+be+empty").into_response();
     }
 
-    match user::create(pool, &form.username, &form.password).await {
+    let email = match Email::new(form.email.clone()) {
+        Ok(e) => e,
+        Err(_) => {
+            let encoded = urlencoding::encode("Invalid email address");
+            return Redirect::to(&format!("/settings/users?error={encoded}")).into_response();
+        }
+    };
+
+    match state.ath.db().create_user(email, &form.password, None).await {
         Ok(created) => {
-            let msg = format!("User '{}' created", created.username);
+            let msg = format!("User '{}' created", created.email.as_str());
             let encoded = urlencoding::encode(&msg);
             Redirect::to(&format!("/settings/users?success={encoded}")).into_response()
         }
-        Err(crate::error::DbError::Validation(msg)) => {
-            let encoded = urlencoding::encode(&msg);
-            Redirect::to(&format!("/settings/users?error={encoded}")).into_response()
-        }
-        Err(crate::error::DbError::Conflict(msg)) => {
+        Err(AuthError::Conflict(msg)) => {
             let encoded = urlencoding::encode(&msg);
             Redirect::to(&format!("/settings/users?error={encoded}")).into_response()
         }
@@ -106,19 +110,25 @@ async fn create_user(
 // --- POST /settings/users/:id/delete ---
 
 async fn delete_user(
-    auth: AuthUser,
+    AuthUser(auth): AuthUser,
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Response {
+    let user_id = match Uuid::parse_str(&id).map(UserId::from_uuid) {
+        Ok(uid) => uid,
+        Err(_) => {
+            return Redirect::to("/settings/users?error=Invalid+user+ID").into_response();
+        }
+    };
+
     // Prevent self-deletion
-    if id == auth.user_id {
+    if user_id == auth.id {
         return Redirect::to("/settings/users?error=Cannot+delete+yourself").into_response();
     }
 
-    let pool = state.db.pool();
-    match user::delete(pool, &id).await {
+    match state.ath.db().delete_user(user_id).await {
         Ok(()) => Redirect::to("/settings/users?success=User+deleted").into_response(),
-        Err(crate::error::DbError::NotFound(_)) => {
+        Err(AuthError::NotFound) => {
             Redirect::to("/settings/users?error=User+not+found").into_response()
         }
         Err(e) => {
@@ -131,7 +141,7 @@ async fn delete_user(
 // --- GET /settings/password ---
 
 async fn password_page(
-    auth: AuthUser,
+    AuthUser(auth): AuthUser,
     State(state): State<Arc<AppState>>,
     Query(flash): Query<FlashParams>,
 ) -> Result<Html<String>, AppError> {
@@ -140,7 +150,7 @@ async fn password_page(
         context! {
             success => flash.success,
             error => flash.error,
-            username => auth.username,
+            username => auth.email.as_str(),
             nav_active => "settings",
         },
     )?;
@@ -157,12 +167,10 @@ struct ChangePasswordForm {
 }
 
 async fn change_password(
-    auth: AuthUser,
+    AuthUser(auth): AuthUser,
     State(state): State<Arc<AppState>>,
     Form(form): Form<ChangePasswordForm>,
 ) -> Response {
-    let pool = state.db.pool();
-
     // Validate new password matches confirmation
     if form.new_password != form.confirm_password {
         return Redirect::to("/settings/password?error=New+passwords+do+not+match")
@@ -174,8 +182,8 @@ async fn change_password(
             .into_response();
     }
 
-    // Fetch current user to verify password
-    let current_user = match user::get_by_id(pool, &auth.user_id).await {
+    // Fetch user with password hash for verification
+    let current_user = match state.ath.db().find_for_login(auth.email.as_str()).await {
         Ok(u) => u,
         Err(e) => {
             tracing::error!(error = %e, "failed to fetch user for password change");
@@ -185,13 +193,26 @@ async fn change_password(
     };
 
     // Verify current password
-    if !user::verify_password(&form.current_password, &current_user.password_hash) {
-        return Redirect::to("/settings/password?error=Current+password+is+incorrect")
+    let Some(pw_hash) = &current_user.password_hash else {
+        return Redirect::to("/settings/password?error=Failed+to+change+password")
             .into_response();
+    };
+
+    match password::verify_password(&form.current_password, pw_hash) {
+        Ok(true) => {}
+        Ok(false) => {
+            return Redirect::to("/settings/password?error=Current+password+is+incorrect")
+                .into_response();
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "password verification error");
+            return Redirect::to("/settings/password?error=Failed+to+change+password")
+                .into_response();
+        }
     }
 
     // Update password
-    match user::update_password(pool, &auth.user_id, &form.new_password).await {
+    match state.ath.db().update_user_password(auth.id, &form.new_password).await {
         Ok(()) => {
             Redirect::to("/settings/password?success=Password+updated+successfully")
                 .into_response()
@@ -205,34 +226,56 @@ async fn change_password(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::config::AppConfig;
-    use crate::db::Db;
-    use crate::templates::Templates;
+    use std::sync::Arc;
+
+    use allowthem_core::{AllowThemBuilder, Email, EmbeddedAuthClient, generate_token, hash_token};
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
+    use chrono::{Duration, Utc};
     use tower::ServiceExt;
+
+    use crate::config::AppConfig;
+    use crate::db::Db;
+    use crate::server::AppState;
+    use crate::templates::Templates;
 
     async fn test_state() -> Arc<AppState> {
         let db = Db::new_in_memory().await.expect("in-memory db");
         db.migrate().await.expect("migration");
+
+        let ath = AllowThemBuilder::with_pool(db.pool().clone())
+            .cookie_secure(false)
+            .build()
+            .await
+            .expect("allowthem build");
+        let auth_client = Arc::new(EmbeddedAuthClient::new(ath.clone(), "/login"));
+
         let config = AppConfig::default();
         let templates = Templates::new(Templates::default_dir());
-        AppState::new(config, "sendword.toml", db, templates)
+        AppState::new(config, "sendword.toml", db, templates, ath, auth_client)
     }
 
     /// Create a test user and return a session cookie value for authenticated requests.
     async fn create_test_session(state: &Arc<AppState>) -> String {
-        let pool = state.db.pool();
-        let u = user::create(pool, "admin", "password123").await.unwrap();
-        let session_lifetime = state.config.load().auth.session_lifetime;
-        let sess = crate::models::session::create(pool, &u.id, session_lifetime)
+        let email = Email::new("admin@example.com".into()).unwrap();
+        let user = state.ath.db().create_user(email, "password123", None).await.unwrap();
+
+        let token = generate_token();
+        let token_hash = hash_token(&token);
+        let expires = Utc::now() + Duration::hours(24);
+        state
+            .ath
+            .db()
+            .create_session(user.id, token_hash, None, None, expires)
             .await
             .unwrap();
-        format!("sendword_session={}", sess.id)
+
+        // session_cookie returns Set-Cookie value; extract name=value for Cookie header
+        let cookie = state.ath.session_cookie(&token);
+        cookie.split(';').next().unwrap().to_string()
     }
 
-    fn app(state: Arc<AppState>) -> Router {
+    fn app(state: Arc<AppState>) -> axum::Router {
         crate::server::router(state)
     }
 
@@ -273,7 +316,8 @@ mod tests {
             .await
             .unwrap();
         let html = String::from_utf8(body.to_vec()).unwrap();
-        assert!(html.contains("admin"));
+        // user rows include email as the username field
+        assert!(html.contains("admin@example.com"));
         assert!(html.contains("(you)"));
     }
 
@@ -289,7 +333,7 @@ mod tests {
                     .uri("/settings/users")
                     .header("Cookie", &cookie)
                     .header("Content-Type", "application/x-www-form-urlencoded")
-                    .body(Body::from("username=newuser&password=secret123"))
+                    .body(Body::from("email=newuser@example.com&password=secret123"))
                     .unwrap(),
             )
             .await
@@ -300,7 +344,7 @@ mod tests {
         assert!(location.contains("success="));
 
         // Verify user was created
-        let users = user::list(state.db.pool()).await.unwrap();
+        let users = state.ath.db().list_users().await.unwrap();
         assert_eq!(users.len(), 2);
     }
 
@@ -309,7 +353,7 @@ mod tests {
         let state = test_state().await;
         let cookie = create_test_session(&state).await;
 
-        // Try to create "admin" again
+        // Try to create the admin user again
         let resp = app(state)
             .oneshot(
                 Request::builder()
@@ -317,7 +361,7 @@ mod tests {
                     .uri("/settings/users")
                     .header("Cookie", &cookie)
                     .header("Content-Type", "application/x-www-form-urlencoded")
-                    .body(Body::from("username=admin&password=other"))
+                    .body(Body::from("email=admin@example.com&password=other"))
                     .unwrap(),
             )
             .await
@@ -332,9 +376,8 @@ mod tests {
     async fn delete_self_is_prevented() {
         let state = test_state().await;
         let cookie = create_test_session(&state).await;
-        let admin = user::get_by_username(state.db.pool(), "admin")
-            .await
-            .unwrap();
+        let email = Email::new("admin@example.com".into()).unwrap();
+        let admin = state.ath.db().get_user_by_email(&email).await.unwrap();
 
         let resp = app(state)
             .oneshot(
@@ -360,9 +403,8 @@ mod tests {
         let cookie = create_test_session(&state).await;
 
         // Create another user to delete
-        let other = user::create(state.db.pool(), "other-user", "password")
-            .await
-            .unwrap();
+        let other_email = Email::new("other@example.com".into()).unwrap();
+        let other = state.ath.db().create_user(other_email, "password", None).await.unwrap();
 
         let resp = app(state.clone())
             .oneshot(
@@ -381,7 +423,7 @@ mod tests {
         assert!(location.contains("success="));
 
         // Verify user was deleted
-        let users = user::list(state.db.pool()).await.unwrap();
+        let users = state.ath.db().list_users().await.unwrap();
         assert_eq!(users.len(), 1);
     }
 
@@ -476,11 +518,11 @@ mod tests {
         let location = resp.headers().get("location").unwrap().to_str().unwrap();
         assert!(location.contains("success="));
 
-        // Verify new password works
-        let admin = user::get_by_username(state.db.pool(), "admin")
-            .await
-            .unwrap();
-        assert!(user::verify_password("newpassword", &admin.password_hash));
-        assert!(!user::verify_password("password123", &admin.password_hash));
+        // Verify new password works via find_for_login
+        let email = Email::new("admin@example.com".into()).unwrap();
+        let user = state.ath.db().find_for_login(email.as_str()).await.unwrap();
+        let pw_hash = user.password_hash.unwrap();
+        assert!(allowthem_core::password::verify_password("newpassword", &pw_hash).unwrap());
+        assert!(!allowthem_core::password::verify_password("password123", &pw_hash).unwrap());
     }
 }
