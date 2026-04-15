@@ -125,6 +125,9 @@ async fn serve() -> eyre::Result<()> {
 
     let state = sendword::server::AppState::new(config, "sendword.toml", db, templates, ath, auth_client);
 
+    let _rate_limit_sweep = sendword::tasks::spawn_rate_limit_sweep(state.db.pool().clone());
+    tracing::info!("rate limit sweep task started");
+
     let _approval_sweep = sendword::tasks::spawn_approval_sweep(
         state.db.pool().clone(),
         std::sync::Arc::clone(&state),
