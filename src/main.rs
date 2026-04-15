@@ -1,4 +1,9 @@
+use std::sync::Arc;
+
 use clap::{Parser, Subcommand};
+
+use allowthem_core::{AllowThemBuilder, Email, EmbeddedAuthClient};
+
 use sendword::config::AppConfig;
 
 #[derive(Parser)]
@@ -44,9 +49,9 @@ enum Command {
 enum UserAction {
     /// Create a new user
     Create {
-        /// Username (3-32 chars, alphanumeric and hyphens)
+        /// Email address for the new user
         #[arg(long)]
-        username: String,
+        email: String,
     },
 }
 
@@ -67,7 +72,7 @@ async fn main() -> eyre::Result<()> {
         Some(Command::Export) => config_export().await,
         Some(Command::Import { path }) => config_import(&path).await,
         Some(Command::User { action }) => match action {
-            UserAction::Create { username } => user_create(&username).await,
+            UserAction::Create { email } => user_create(&email).await,
         },
         Some(Command::Backup { action }) => match action {
             BackupAction::Create => backup_create().await,
@@ -103,15 +108,22 @@ async fn serve() -> eyre::Result<()> {
     sendword::barriers::recover_barriers(db.pool()).await;
     tracing::info!("barrier state recovered");
 
-    let _session_sweep = sendword::tasks::spawn_session_sweep(db.pool().clone());
-    tracing::info!("session sweep task started");
+    let session_ttl = chrono::Duration::from_std(config.auth.session_lifetime)
+        .unwrap_or(chrono::Duration::hours(24));
+    let ath = AllowThemBuilder::with_pool(db.pool().clone())
+        .session_ttl(session_ttl)
+        .cookie_secure(config.auth.secure_cookie)
+        .build()
+        .await?;
+    let auth_client = Arc::new(EmbeddedAuthClient::new(ath.clone(), "/login"));
+    tracing::info!("allowthem auth ready");
 
     let templates = sendword::templates::Templates::new(
         sendword::templates::Templates::default_dir(),
     );
     tracing::info!("templates loaded");
 
-    let state = sendword::server::AppState::new(config, "sendword.toml", db, templates);
+    let state = sendword::server::AppState::new(config, "sendword.toml", db, templates, ath, auth_client);
 
     let _approval_sweep = sendword::tasks::spawn_approval_sweep(
         state.db.pool().clone(),
@@ -151,12 +163,14 @@ async fn config_import(path: &std::path::Path) -> eyre::Result<()> {
     Ok(())
 }
 
-async fn user_create(username: &str) -> eyre::Result<()> {
-    // Validate username before prompting for password
-    if let Err(msg) = sendword::models::user::validate_username(username) {
-        eprintln!("error: {msg}");
-        std::process::exit(1);
-    }
+async fn user_create(email_str: &str) -> eyre::Result<()> {
+    let email = match Email::new(email_str.to_owned()) {
+        Ok(e) => e,
+        Err(_) => {
+            eprintln!("error: invalid email address");
+            std::process::exit(1);
+        }
+    };
 
     // Prompt for password interactively
     let password = rpassword::prompt_password("Password: ")?;
@@ -176,12 +190,15 @@ async fn user_create(username: &str) -> eyre::Result<()> {
     let db = sendword::db::Db::new(&config.database).await?;
     db.migrate().await?;
 
-    // Create user
-    match sendword::models::user::create(db.pool(), username, &password).await {
+    let ath = AllowThemBuilder::with_pool(db.pool().clone())
+        .build()
+        .await?;
+
+    match ath.db().create_user(email, &password, None).await {
         Ok(user) => {
-            eprintln!("user '{}' created (id: {})", user.username, user.id);
+            eprintln!("user '{}' created (id: {})", user.email.as_str(), user.id);
         }
-        Err(sendword::error::DbError::Conflict(msg)) => {
+        Err(allowthem_core::AuthError::Conflict(msg)) => {
             eprintln!("error: {msg}");
             std::process::exit(1);
         }
