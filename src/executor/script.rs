@@ -4,10 +4,10 @@ use std::process::Stdio;
 use sqlx::SqlitePool;
 use tokio::io::AsyncWriteExt;
 
-use crate::models::execution;
 use crate::models::ExecutionStatus;
+use crate::models::execution;
 
-use super::{prepare_log_files, system_env_vars, ExecutionContext, ExecutionResult};
+use super::{ExecutionContext, ExecutionResult, prepare_log_files, system_env_vars};
 
 /// Run a script file directly (not via `sh -c`).
 ///
@@ -83,13 +83,9 @@ pub async fn run_script(pool: &SqlitePool, ctx: &ExecutionContext, path: &Path) 
         Err(e) => {
             let msg = format!("failed to spawn script: {e}\n");
             let _ = stderr_file.write_all(msg.as_bytes()).await;
-            let _ = execution::mark_completed(
-                pool,
-                &ctx.execution_id,
-                ExecutionStatus::Failed,
-                None,
-            )
-            .await;
+            let _ =
+                execution::mark_completed(pool, &ctx.execution_id, ExecutionStatus::Failed, None)
+                    .await;
             return ExecutionResult {
                 status: ExecutionStatus::Failed,
                 exit_code: None,
@@ -186,7 +182,11 @@ fn flatten_json_fields(value: &serde_json::Value) -> Vec<(String, String)> {
     result
 }
 
-fn flatten_recursive(value: &serde_json::Value, prefix: String, result: &mut Vec<(String, String)>) {
+fn flatten_recursive(
+    value: &serde_json::Value,
+    prefix: String,
+    result: &mut Vec<(String, String)>,
+) {
     match value {
         serde_json::Value::Object(map) => {
             for (key, val) in map {
@@ -309,7 +309,9 @@ mod tests {
         let (script_file, script_path) = write_script("#!/bin/sh\necho hello_from_script\n");
 
         let (mut ctx, exec_id) = setup_execution(&pool, logs_dir).await;
-        ctx.executor = crate::executor::ResolvedExecutor::Script { path: script_path.clone() };
+        ctx.executor = crate::executor::ResolvedExecutor::Script {
+            path: script_path.clone(),
+        };
 
         let result = run_script(&pool, &ctx, &script_path).await;
 
@@ -331,7 +333,9 @@ mod tests {
         let (script_file, script_path) = write_script("#!/bin/sh\necho $SENDWORD_FIELD_ACTION\n");
 
         let (mut ctx, exec_id) = setup_execution(&pool, logs_dir).await;
-        ctx.executor = crate::executor::ResolvedExecutor::Script { path: script_path.clone() };
+        ctx.executor = crate::executor::ResolvedExecutor::Script {
+            path: script_path.clone(),
+        };
         ctx.payload_json = r#"{"action":"deploy"}"#.into();
 
         let result = run_script(&pool, &ctx, &script_path).await;
@@ -351,7 +355,9 @@ mod tests {
 
         let nonexistent = std::path::Path::new("/tmp/sendword_test_nonexistent_script_xyz.sh");
         let (mut ctx, _exec_id) = setup_execution(&pool, logs_dir).await;
-        ctx.executor = crate::executor::ResolvedExecutor::Script { path: nonexistent.to_path_buf() };
+        ctx.executor = crate::executor::ResolvedExecutor::Script {
+            path: nonexistent.to_path_buf(),
+        };
 
         let result = run_script(&pool, &ctx, nonexistent).await;
 
@@ -368,7 +374,9 @@ mod tests {
         let (script_file, script_path) = write_script("#!/bin/sh\nsleep 60\n");
 
         let (mut ctx, _exec_id) = setup_execution(&pool, logs_dir).await;
-        ctx.executor = crate::executor::ResolvedExecutor::Script { path: script_path.clone() };
+        ctx.executor = crate::executor::ResolvedExecutor::Script {
+            path: script_path.clone(),
+        };
         ctx.timeout = Duration::from_secs(1);
 
         let start = std::time::Instant::now();
@@ -391,7 +399,9 @@ mod tests {
         let (script_file, script_path) = write_script("#!/bin/sh\nexit 42\n");
 
         let (mut ctx, exec_id) = setup_execution(&pool, logs_dir).await;
-        ctx.executor = crate::executor::ResolvedExecutor::Script { path: script_path.clone() };
+        ctx.executor = crate::executor::ResolvedExecutor::Script {
+            path: script_path.clone(),
+        };
 
         let result = run_script(&pool, &ctx, &script_path).await;
 
@@ -406,7 +416,8 @@ mod tests {
 
     #[test]
     fn flatten_json_fields_simple() {
-        let v: serde_json::Value = serde_json::from_str(r#"{"action":"deploy","count":3}"#).unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(r#"{"action":"deploy","count":3}"#).unwrap();
         let fields = flatten_json_fields(&v);
         let map: std::collections::HashMap<_, _> = fields.into_iter().collect();
         assert_eq!(map.get("action").map(|s| s.as_str()), Some("deploy"));

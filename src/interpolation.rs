@@ -91,7 +91,10 @@ mod tests {
 
     #[test]
     fn shell_escape_string_with_special_chars() {
-        assert_eq!(shell_escape("rm -rf /; echo pwned"), "'rm -rf /; echo pwned'");
+        assert_eq!(
+            shell_escape("rm -rf /; echo pwned"),
+            "'rm -rf /; echo pwned'"
+        );
     }
 
     #[test]

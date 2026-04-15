@@ -1,6 +1,6 @@
 use figment::{
-    providers::{Env, Format, Json, Toml},
     Figment,
+    providers::{Env, Format, Json, Toml},
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -203,21 +203,19 @@ impl AppConfig {
                     HookAuthConfig::None => {}
                     HookAuthConfig::Bearer { token } => {
                         if token.is_empty() {
-                            errors.push(format!(
-                                "{prefix}.auth.token must be non-empty"
-                            ));
+                            errors.push(format!("{prefix}.auth.token must be non-empty"));
                         }
                     }
-                    HookAuthConfig::Hmac { header, algorithm: _, secret } => {
+                    HookAuthConfig::Hmac {
+                        header,
+                        algorithm: _,
+                        secret,
+                    } => {
                         if header.is_empty() {
-                            errors.push(format!(
-                                "{prefix}.auth.header must be non-empty"
-                            ));
+                            errors.push(format!("{prefix}.auth.header must be non-empty"));
                         }
                         if secret.is_empty() {
-                            errors.push(format!(
-                                "{prefix}.auth.secret must be non-empty"
-                            ));
+                            errors.push(format!("{prefix}.auth.secret must be non-empty"));
                         }
                     }
                 }
@@ -249,10 +247,8 @@ impl AppConfig {
 
                 if let Some(windows) = &rules.time_windows {
                     for (j, window) in windows.iter().enumerate() {
-                        let prefix_w =
-                            format!("{prefix}.trigger_rules.time_windows[{j}]");
-                        if chrono::NaiveTime::parse_from_str(&window.start_time, "%H:%M").is_err()
-                        {
+                        let prefix_w = format!("{prefix}.trigger_rules.time_windows[{j}]");
+                        if chrono::NaiveTime::parse_from_str(&window.start_time, "%H:%M").is_err() {
                             errors.push(format!("{prefix_w}.start_time must be HH:MM format"));
                         }
                         if chrono::NaiveTime::parse_from_str(&window.end_time, "%H:%M").is_err() {
@@ -261,12 +257,10 @@ impl AppConfig {
                         if let (Ok(start), Ok(end)) = (
                             chrono::NaiveTime::parse_from_str(&window.start_time, "%H:%M"),
                             chrono::NaiveTime::parse_from_str(&window.end_time, "%H:%M"),
-                        )
-                            && start >= end {
-                                errors.push(format!(
-                                    "{prefix_w}.start_time must be before end_time"
-                                ));
-                            }
+                        ) && start >= end
+                        {
+                            errors.push(format!("{prefix_w}.start_time must be before end_time"));
+                        }
                         const VALID_DAYS: &[&str] =
                             &["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
                         for day in &window.days {
@@ -295,19 +289,22 @@ impl AppConfig {
             }
 
             if let Some(concurrency) = &hook.concurrency
-                && concurrency.mode == ConcurrencyMode::Queue && concurrency.queue_depth == 0 {
-                    errors.push(format!(
-                        "{prefix}.concurrency.queue_depth must be greater than 0 in queue mode"
-                    ));
-                }
+                && concurrency.mode == ConcurrencyMode::Queue
+                && concurrency.queue_depth == 0
+            {
+                errors.push(format!(
+                    "{prefix}.concurrency.queue_depth must be greater than 0 in queue mode"
+                ));
+            }
 
             if let Some(approval) = &hook.approval
                 && let Some(timeout) = approval.timeout
-                    && timeout.is_zero() {
-                        errors.push(format!(
-                            "{prefix}.approval.timeout must be greater than 0 if set"
-                        ));
-                    }
+                && timeout.is_zero()
+            {
+                errors.push(format!(
+                    "{prefix}.approval.timeout must be greater than 0 if set"
+                ));
+            }
         }
 
         if let Some(backup) = &self.backup {
@@ -521,8 +518,12 @@ pub enum HttpMethod {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ExecutorConfig {
-    Shell { command: String },
-    Script { path: String },
+    Shell {
+        command: String,
+    },
+    Script {
+        path: String,
+    },
     Http {
         method: HttpMethod,
         url: String,
@@ -734,10 +735,19 @@ mod tests {
             assert_eq!(config.defaults.rate_limit.max_per_minute, 60);
             assert_eq!(config.defaults.timeout, Duration::from_secs(30));
             assert_eq!(config.defaults.retries.count, 0);
-            assert_eq!(config.defaults.retries.backoff, BackoffStrategy::Exponential);
-            assert_eq!(config.defaults.retries.initial_delay, Duration::from_secs(1));
+            assert_eq!(
+                config.defaults.retries.backoff,
+                BackoffStrategy::Exponential
+            );
+            assert_eq!(
+                config.defaults.retries.initial_delay,
+                Duration::from_secs(1)
+            );
             assert_eq!(config.defaults.retries.max_delay, Duration::from_secs(60));
-            assert_eq!(config.auth.session_lifetime, Duration::from_secs(24 * 60 * 60));
+            assert_eq!(
+                config.auth.session_lifetime,
+                Duration::from_secs(24 * 60 * 60)
+            );
             assert!(!config.auth.secure_cookie);
             assert_eq!(config.scripts.dir, "data/scripts");
             Ok(())
@@ -810,9 +820,7 @@ mod tests {
                 max_per_minute = 10
             "#;
 
-            let config: AppConfig = Figment::new()
-                .merge(Data::<Toml>::string(toml))
-                .extract()?;
+            let config: AppConfig = Figment::new().merge(Data::<Toml>::string(toml)).extract()?;
 
             assert_eq!(config.server.bind, "0.0.0.0");
             assert_eq!(config.server.port, 3000);
@@ -837,7 +845,10 @@ mod tests {
             };
             assert_eq!(command, "make deploy");
 
-            assert_eq!(hook.env.get("APP_ENV").map(String::as_str), Some("production"));
+            assert_eq!(
+                hook.env.get("APP_ENV").map(String::as_str),
+                Some("production")
+            );
 
             let retries = hook.retries.as_ref().expect("retries should be Some");
             assert_eq!(retries.count, 2);
@@ -862,11 +873,12 @@ mod tests {
                 dir = "/opt/sendword/scripts"
             "#;
 
-            let config: AppConfig = Figment::new()
-                .merge(Data::<Toml>::string(toml))
-                .extract()?;
+            let config: AppConfig = Figment::new().merge(Data::<Toml>::string(toml)).extract()?;
 
-            assert_eq!(config.auth.session_lifetime, Duration::from_secs(7 * 24 * 60 * 60));
+            assert_eq!(
+                config.auth.session_lifetime,
+                Duration::from_secs(7 * 24 * 60 * 60)
+            );
             assert!(config.auth.secure_cookie);
             assert_eq!(config.scripts.dir, "/opt/sendword/scripts");
             Ok(())
@@ -886,9 +898,7 @@ mod tests {
                 command = "echo hello"
             "#;
 
-            let config: AppConfig = Figment::new()
-                .merge(Data::<Toml>::string(toml))
-                .extract()?;
+            let config: AppConfig = Figment::new().merge(Data::<Toml>::string(toml)).extract()?;
 
             let hook = &config.hooks[0];
             assert!(hook.cwd.is_none());
@@ -904,22 +914,28 @@ mod tests {
     #[test]
     fn json_overrides_toml_values() {
         figment::Jail::expect_with(|jail| {
-            jail.create_file("test.toml", r#"
+            jail.create_file(
+                "test.toml",
+                r#"
                 [server]
                 bind = "127.0.0.1"
                 port = 8080
-            "#)?;
+            "#,
+            )?;
 
-            jail.create_file("test.json", r#"
+            jail.create_file(
+                "test.json",
+                r#"
                 {
                     "server": {
                         "port": 9090
                     }
                 }
-            "#)?;
+            "#,
+            )?;
 
-            let config = AppConfig::load_from("test.toml", "test.json")
-                .map_err(|e| e.to_string())?;
+            let config =
+                AppConfig::load_from("test.toml", "test.json").map_err(|e| e.to_string())?;
             assert_eq!(config.server.port, 9090);
             assert_eq!(config.server.bind, "127.0.0.1");
             Ok(())
@@ -929,15 +945,18 @@ mod tests {
     #[test]
     fn env_var_overrides_work() {
         figment::Jail::expect_with(|jail| {
-            jail.create_file("test.toml", r#"
+            jail.create_file(
+                "test.toml",
+                r#"
                 [server]
                 port = 8080
-            "#)?;
+            "#,
+            )?;
 
             jail.set_env("SENDWORD_SERVER__PORT", "9999");
 
-            let config = AppConfig::load_from("test.toml", "nonexistent.json")
-                .map_err(|e| e.to_string())?;
+            let config =
+                AppConfig::load_from("test.toml", "nonexistent.json").map_err(|e| e.to_string())?;
             assert_eq!(config.server.port, 9999);
             Ok(())
         });
@@ -971,7 +990,10 @@ mod tests {
             let config: AppConfig = Figment::new()
                 .merge(Data::<Toml>::string(toml_exp))
                 .extract()?;
-            assert_eq!(config.defaults.retries.backoff, BackoffStrategy::Exponential);
+            assert_eq!(
+                config.defaults.retries.backoff,
+                BackoffStrategy::Exponential
+            );
 
             Ok(())
         });
@@ -989,12 +1011,13 @@ mod tests {
                 max_delay = "2h"
             "#;
 
-            let config: AppConfig = Figment::new()
-                .merge(Data::<Toml>::string(toml))
-                .extract()?;
+            let config: AppConfig = Figment::new().merge(Data::<Toml>::string(toml)).extract()?;
 
             assert_eq!(config.defaults.timeout, Duration::from_secs(300));
-            assert_eq!(config.defaults.retries.initial_delay, Duration::from_millis(500));
+            assert_eq!(
+                config.defaults.retries.initial_delay,
+                Duration::from_millis(500)
+            );
             assert_eq!(config.defaults.retries.max_delay, Duration::from_secs(7200));
             Ok(())
         });
@@ -1060,8 +1083,14 @@ mod tests {
         ]);
         let err = config.validate().unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("deploy"), "error should name the duplicate slug: {msg}");
-        assert!(msg.contains("duplicate"), "error should mention duplicate: {msg}");
+        assert!(
+            msg.contains("deploy"),
+            "error should name the duplicate slug: {msg}"
+        );
+        assert!(
+            msg.contains("duplicate"),
+            "error should mention duplicate: {msg}"
+        );
     }
 
     #[test]
@@ -1098,7 +1127,10 @@ mod tests {
         let mut config = AppConfig::default();
         config.defaults.rate_limit.max_per_minute = 0;
         let err = config.validate().unwrap_err();
-        assert!(err.to_string().contains("max_per_minute must be greater than 0"));
+        assert!(
+            err.to_string()
+                .contains("max_per_minute must be greater than 0")
+        );
     }
 
     #[test]
@@ -1129,7 +1161,10 @@ mod tests {
         });
         let config = valid_config_with_hooks(vec![hook]);
         let err = config.validate().unwrap_err();
-        assert!(err.to_string().contains("hooks[0].retries.initial_delay must not exceed"));
+        assert!(
+            err.to_string()
+                .contains("hooks[0].retries.initial_delay must not exceed")
+        );
     }
 
     #[test]
@@ -1138,7 +1173,10 @@ mod tests {
         hook.rate_limit = Some(RateLimitConfig { max_per_minute: 0 });
         let config = valid_config_with_hooks(vec![hook]);
         let err = config.validate().unwrap_err();
-        assert!(err.to_string().contains("hooks[0].rate_limit.max_per_minute must be greater than 0"));
+        assert!(
+            err.to_string()
+                .contains("hooks[0].rate_limit.max_per_minute must be greater than 0")
+        );
     }
 
     #[test]
@@ -1163,7 +1201,10 @@ mod tests {
         let mut config = AppConfig::default();
         config.auth.session_lifetime = Duration::ZERO;
         let err = config.validate().unwrap_err();
-        assert!(err.to_string().contains("session_lifetime must be greater than 0"));
+        assert!(
+            err.to_string()
+                .contains("session_lifetime must be greater than 0")
+        );
     }
 
     #[test]
@@ -1197,7 +1238,10 @@ mod tests {
             )?;
 
             let result = AppConfig::load_from("test.toml", "nonexistent.json");
-            assert!(result.is_err(), "load_from should reject config with port=0");
+            assert!(
+                result.is_err(),
+                "load_from should reject config with port=0"
+            );
             let msg = result.unwrap_err().to_string();
             assert!(
                 msg.contains("port must be non-zero"),
@@ -1231,9 +1275,7 @@ mod tests {
                 mode = "bearer"
                 token = "${HOOK_TOKEN}"
             "#;
-            let config: AppConfig = Figment::new()
-                .merge(Data::<Toml>::string(toml))
-                .extract()?;
+            let config: AppConfig = Figment::new().merge(Data::<Toml>::string(toml)).extract()?;
             let hook = &config.hooks[0];
             let auth = hook.auth.as_ref().expect("auth should be present");
             match auth {
@@ -1262,13 +1304,15 @@ mod tests {
                 algorithm = "sha256"
                 secret = "${WEBHOOK_SECRET}"
             "#;
-            let config: AppConfig = Figment::new()
-                .merge(Data::<Toml>::string(toml))
-                .extract()?;
+            let config: AppConfig = Figment::new().merge(Data::<Toml>::string(toml)).extract()?;
             let hook = &config.hooks[0];
             let auth = hook.auth.as_ref().expect("auth should be present");
             match auth {
-                HookAuthConfig::Hmac { header, algorithm, secret } => {
+                HookAuthConfig::Hmac {
+                    header,
+                    algorithm,
+                    secret,
+                } => {
                     assert_eq!(header, "X-Hub-Signature-256");
                     assert_eq!(*algorithm, HmacAlgorithm::Sha256);
                     assert_eq!(secret, "${WEBHOOK_SECRET}");
@@ -1290,9 +1334,7 @@ mod tests {
                 type = "shell"
                 command = "echo ok"
             "#;
-            let config: AppConfig = Figment::new()
-                .merge(Data::<Toml>::string(toml))
-                .extract()?;
+            let config: AppConfig = Figment::new().merge(Data::<Toml>::string(toml)).extract()?;
             assert!(config.hooks[0].auth.is_none());
             Ok(())
         });
@@ -1311,9 +1353,7 @@ mod tests {
                 [hooks.auth]
                 mode = "none"
             "#;
-            let config: AppConfig = Figment::new()
-                .merge(Data::<Toml>::string(toml))
-                .extract()?;
+            let config: AppConfig = Figment::new().merge(Data::<Toml>::string(toml)).extract()?;
             let hook = &config.hooks[0];
             let auth = hook.auth.as_ref().expect("auth should be present");
             assert!(matches!(auth, HookAuthConfig::None));
@@ -1335,9 +1375,7 @@ mod tests {
                 mode = "bearer"
                 token = ""
             "#;
-            let config: AppConfig = Figment::new()
-                .merge(Data::<Toml>::string(toml))
-                .extract()?;
+            let config: AppConfig = Figment::new().merge(Data::<Toml>::string(toml)).extract()?;
             let result = config.validate();
             assert!(result.is_err());
             let err = result.unwrap_err().to_string();
@@ -1362,9 +1400,7 @@ mod tests {
                 algorithm = "sha256"
                 secret = "abc"
             "#;
-            let config: AppConfig = Figment::new()
-                .merge(Data::<Toml>::string(toml))
-                .extract()?;
+            let config: AppConfig = Figment::new().merge(Data::<Toml>::string(toml)).extract()?;
             let result = config.validate();
             assert!(result.is_err());
             let err = result.unwrap_err().to_string();
@@ -1389,9 +1425,7 @@ mod tests {
                 algorithm = "sha256"
                 secret = ""
             "#;
-            let config: AppConfig = Figment::new()
-                .merge(Data::<Toml>::string(toml))
-                .extract()?;
+            let config: AppConfig = Figment::new().merge(Data::<Toml>::string(toml)).extract()?;
             let result = config.validate();
             assert!(result.is_err());
             let err = result.unwrap_err().to_string();
@@ -1414,8 +1448,8 @@ mod tests {
             "#,
             )?;
 
-            let config = AppConfig::load_from("test.toml", "nonexistent.json")
-                .map_err(|e| e.to_string())?;
+            let config =
+                AppConfig::load_from("test.toml", "nonexistent.json").map_err(|e| e.to_string())?;
             assert_eq!(config.masking.env_vars, vec!["SECRET_KEY"]);
             assert_eq!(config.masking.patterns.len(), 1);
             assert_eq!(config.masking.compiled_patterns.len(), 1);
@@ -1470,8 +1504,8 @@ mod tests {
             "#,
             )?;
 
-            let config = AppConfig::load_from("test.toml", "nonexistent.json")
-                .map_err(|e| e.to_string())?;
+            let config =
+                AppConfig::load_from("test.toml", "nonexistent.json").map_err(|e| e.to_string())?;
             assert!(config.masking.env_vars.is_empty());
             assert!(config.masking.patterns.is_empty());
             Ok(())
@@ -1483,7 +1517,10 @@ mod tests {
         let mut config = AppConfig::default();
         config.masking.env_vars = vec!["".into()];
         let err = config.validate().unwrap_err();
-        assert!(err.to_string().contains("masking.env_vars[0] must be non-empty"));
+        assert!(
+            err.to_string()
+                .contains("masking.env_vars[0] must be non-empty")
+        );
     }
 
     #[test]
@@ -1511,10 +1548,13 @@ mod tests {
                 required = false
                 "#,
             )?;
-            let config = AppConfig::load_from("sendword.toml", "nonexistent.json")
-                .expect("should load");
+            let config =
+                AppConfig::load_from("sendword.toml", "nonexistent.json").expect("should load");
             let hook = &config.hooks[0];
-            let schema = hook.payload.as_ref().expect("payload schema should be present");
+            let schema = hook
+                .payload
+                .as_ref()
+                .expect("payload schema should be present");
             assert_eq!(schema.fields.len(), 2);
             assert_eq!(schema.fields[0].name, "action");
             assert!(schema.fields[0].required);
@@ -1541,8 +1581,8 @@ mod tests {
                 command = "echo hi"
                 "#,
             )?;
-            let config = AppConfig::load_from("sendword.toml", "nonexistent.json")
-                .expect("should load");
+            let config =
+                AppConfig::load_from("sendword.toml", "nonexistent.json").expect("should load");
             assert!(config.hooks[0].payload.is_none());
             Ok(())
         });

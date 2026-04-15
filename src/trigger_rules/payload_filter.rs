@@ -23,7 +23,10 @@ fn check_filter(filter: &PayloadFilter, payload: &serde_json::Value) -> Option<S
             let val = resolve_field(payload, &filter.field);
             match val {
                 Some(v) if !v.is_null() => None,
-                _ => Some(format!("field '{}' does not exist or is null", filter.field)),
+                _ => Some(format!(
+                    "field '{}' does not exist or is null",
+                    filter.field
+                )),
             }
         }
         FilterOperator::Equals => {
@@ -37,9 +40,7 @@ fn check_filter(filter: &PayloadFilter, payload: &serde_json::Value) -> Option<S
                     } else {
                         Some(format!(
                             "field '{}' = {} does not equal '{}'",
-                            filter.field,
-                            v,
-                            expected
+                            filter.field, v, expected
                         ))
                     }
                 }
@@ -56,9 +57,7 @@ fn check_filter(filter: &PayloadFilter, payload: &serde_json::Value) -> Option<S
                     } else {
                         Some(format!(
                             "field '{}' = {} equals '{}' (not_equals failed)",
-                            filter.field,
-                            v,
-                            expected
+                            filter.field, v, expected
                         ))
                     }
                 }
@@ -313,50 +312,35 @@ mod tests {
     #[test]
     fn exists_passes() {
         let payload = json!({"action": "any"});
-        let result = evaluate(
-            &[filter("action", FilterOperator::Exists, None)],
-            &payload,
-        );
+        let result = evaluate(&[filter("action", FilterOperator::Exists, None)], &payload);
         assert!(matches!(result, EvalOutcome::Allow));
     }
 
     #[test]
     fn exists_rejects_missing() {
         let payload = json!({});
-        let result = evaluate(
-            &[filter("action", FilterOperator::Exists, None)],
-            &payload,
-        );
+        let result = evaluate(&[filter("action", FilterOperator::Exists, None)], &payload);
         assert!(matches!(result, EvalOutcome::Reject { .. }));
     }
 
     #[test]
     fn exists_rejects_null() {
         let payload = json!({"action": null});
-        let result = evaluate(
-            &[filter("action", FilterOperator::Exists, None)],
-            &payload,
-        );
+        let result = evaluate(&[filter("action", FilterOperator::Exists, None)], &payload);
         assert!(matches!(result, EvalOutcome::Reject { .. }));
     }
 
     #[test]
     fn gt_passes() {
         let payload = json!({"count": 10});
-        let result = evaluate(
-            &[filter("count", FilterOperator::Gt, Some("5"))],
-            &payload,
-        );
+        let result = evaluate(&[filter("count", FilterOperator::Gt, Some("5"))], &payload);
         assert!(matches!(result, EvalOutcome::Allow));
     }
 
     #[test]
     fn gt_rejects() {
         let payload = json!({"count": 3});
-        let result = evaluate(
-            &[filter("count", FilterOperator::Gt, Some("5"))],
-            &payload,
-        );
+        let result = evaluate(&[filter("count", FilterOperator::Gt, Some("5"))], &payload);
         assert!(matches!(result, EvalOutcome::Reject { .. }));
     }
 
@@ -395,10 +379,7 @@ mod tests {
     #[test]
     fn numeric_comparison_rejects_non_number() {
         let payload = json!({"name": "hello"});
-        let result = evaluate(
-            &[filter("name", FilterOperator::Gt, Some("5"))],
-            &payload,
-        );
+        let result = evaluate(&[filter("name", FilterOperator::Gt, Some("5"))], &payload);
         assert!(matches!(result, EvalOutcome::Reject { .. }));
     }
 

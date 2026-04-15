@@ -3,17 +3,21 @@ use std::process::Stdio;
 use sqlx::SqlitePool;
 use tokio::io::AsyncWriteExt;
 
-use crate::models::execution;
 use crate::models::ExecutionStatus;
+use crate::models::execution;
 
-use super::{prepare_log_files, system_env_vars, ExecutionContext, ExecutionResult};
+use super::{ExecutionContext, ExecutionResult, prepare_log_files, system_env_vars};
 
 /// Run a shell command via `sh -c`.
 ///
 /// Spawns `sh -c <command>`, captures stdout/stderr to log files,
 /// enforces a timeout, and updates the execution record in the database
 /// through its lifecycle: pending -> running -> success/failed/timed_out.
-pub async fn run_shell(pool: &SqlitePool, ctx: &ExecutionContext, command: &str) -> ExecutionResult {
+pub async fn run_shell(
+    pool: &SqlitePool,
+    ctx: &ExecutionContext,
+    command: &str,
+) -> ExecutionResult {
     let log_dir_str = format!("{}/{}", ctx.logs_dir, ctx.execution_id);
 
     // 1. Prepare log files
@@ -74,13 +78,9 @@ pub async fn run_shell(pool: &SqlitePool, ctx: &ExecutionContext, command: &str)
         Err(e) => {
             let msg = format!("failed to spawn command: {e}\n");
             let _ = stderr_file.write_all(msg.as_bytes()).await;
-            let _ = execution::mark_completed(
-                pool,
-                &ctx.execution_id,
-                ExecutionStatus::Failed,
-                None,
-            )
-            .await;
+            let _ =
+                execution::mark_completed(pool, &ctx.execution_id, ExecutionStatus::Failed, None)
+                    .await;
             return ExecutionResult {
                 status: ExecutionStatus::Failed,
                 exit_code: None,

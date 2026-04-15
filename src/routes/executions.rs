@@ -4,19 +4,19 @@ use std::sync::Arc;
 
 use async_stream::stream;
 use axum::extract::{Path, State};
-use futures_core::Stream;
 use axum::http::StatusCode;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use futures_core::Stream;
 use serde::Serialize;
 
-use crate::extractors::AuthUser;
 use crate::barriers::{self, execution_lock, execution_queue};
 use crate::config::ExecutorConfig;
 use crate::error::{AppError, DbError};
 use crate::executor::ResolvedExecutor;
+use crate::extractors::AuthUser;
 use crate::interpolation::interpolate_command;
 use crate::masking::mask_secrets;
 use crate::models::execution;
@@ -75,12 +75,10 @@ async fn execution_detail(
     let config = state.config.load();
     let pool = state.db.pool();
 
-    let exec = execution::get_by_id(pool, &id)
-        .await
-        .map_err(|e| match e {
-            crate::error::DbError::NotFound(_) => AppError::not_found("execution"),
-            other => AppError::from(other),
-        })?;
+    let exec = execution::get_by_id(pool, &id).await.map_err(|e| match e {
+        crate::error::DbError::NotFound(_) => AppError::not_found("execution"),
+        other => AppError::from(other),
+    })?;
 
     let logs_dir = &config.logs.dir;
     let stdout = read_log_file(logs_dir, &exec.id, "stdout.log").await;
@@ -158,23 +156,32 @@ async fn replay_execution(
     let timeout = hook.timeout.unwrap_or(config.defaults.timeout);
     let resolved_executor = match &hook.executor {
         ExecutorConfig::Shell { command } => {
-            let interpolated =
-                if let Ok(payload_value) = serde_json::from_str::<serde_json::Value>(&original.request_payload) {
-                    interpolate_command(command, &payload_value).into_owned()
-                } else {
-                    command.clone()
-                };
-            ResolvedExecutor::Shell { command: interpolated }
+            let interpolated = if let Ok(payload_value) =
+                serde_json::from_str::<serde_json::Value>(&original.request_payload)
+            {
+                interpolate_command(command, &payload_value).into_owned()
+            } else {
+                command.clone()
+            };
+            ResolvedExecutor::Shell {
+                command: interpolated,
+            }
         }
-        ExecutorConfig::Script { path } => {
-            ResolvedExecutor::Script { path: std::path::PathBuf::from(path) }
-        }
-        ExecutorConfig::Http { method, url, headers, body, follow_redirects } => {
-            let payload_value: serde_json::Value =
-                serde_json::from_str(&original.request_payload)
-                    .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+        ExecutorConfig::Script { path } => ResolvedExecutor::Script {
+            path: std::path::PathBuf::from(path),
+        },
+        ExecutorConfig::Http {
+            method,
+            url,
+            headers,
+            body,
+            follow_redirects,
+        } => {
+            let payload_value: serde_json::Value = serde_json::from_str(&original.request_payload)
+                .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
             let interpolated_url = interpolate_command(url, &payload_value).into_owned();
-            let interpolated_body = body.as_deref()
+            let interpolated_body = body
+                .as_deref()
                 .map(|b| interpolate_command(b, &payload_value).into_owned());
             ResolvedExecutor::Http {
                 method: *method,
@@ -237,18 +244,17 @@ async fn replay_execution(
             "replay execution completed"
         );
         if let Some(ref nc) = notification_config
-            && let Ok(exec_record) =
-                crate::models::execution::get_by_id(&pool, &execution_id).await
-            {
-                crate::notification::send_notification(
-                    &state_clone.http_client,
-                    nc,
-                    &hook_snapshot,
-                    &result,
-                    &exec_record,
-                )
-                .await;
-            }
+            && let Ok(exec_record) = crate::models::execution::get_by_id(&pool, &execution_id).await
+        {
+            crate::notification::send_notification(
+                &state_clone.http_client,
+                nc,
+                &hook_snapshot,
+                &result,
+                &exec_record,
+            )
+            .await;
+        }
     });
 
     Ok(Json(ReplayResponse {
@@ -286,17 +292,25 @@ async fn approve_execution(
                 } else {
                     command.clone()
                 };
-                ResolvedExecutor::Shell { command: interpolated }
+                ResolvedExecutor::Shell {
+                    command: interpolated,
+                }
             }
-            ExecutorConfig::Script { path } => {
-                ResolvedExecutor::Script { path: std::path::PathBuf::from(path) }
-            }
-            ExecutorConfig::Http { method, url, headers, body, follow_redirects } => {
-                let payload_value: serde_json::Value =
-                    serde_json::from_str(&exec.request_payload)
-                        .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+            ExecutorConfig::Script { path } => ResolvedExecutor::Script {
+                path: std::path::PathBuf::from(path),
+            },
+            ExecutorConfig::Http {
+                method,
+                url,
+                headers,
+                body,
+                follow_redirects,
+            } => {
+                let payload_value: serde_json::Value = serde_json::from_str(&exec.request_payload)
+                    .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
                 let interpolated_url = interpolate_command(url, &payload_value).into_owned();
-                let interpolated_body = body.as_deref()
+                let interpolated_body = body
+                    .as_deref()
                     .map(|b| interpolate_command(b, &payload_value).into_owned());
                 ResolvedExecutor::Http {
                     method: *method,
@@ -351,16 +365,16 @@ async fn approve_execution(
             if let Some(ref nc) = notification_config
                 && let Ok(exec_record) =
                     crate::models::execution::get_by_id(&pool_clone, &execution_id).await
-                {
-                    crate::notification::send_notification(
-                        &state_clone.http_client,
-                        nc,
-                        &hook_snapshot,
-                        &result,
-                        &exec_record,
-                    )
-                    .await;
-                }
+            {
+                crate::notification::send_notification(
+                    &state_clone.http_client,
+                    nc,
+                    &hook_snapshot,
+                    &result,
+                    &exec_record,
+                )
+                .await;
+            }
             if concurrency_config.is_some() {
                 barriers::on_execution_complete(
                     &state_clone,
@@ -399,14 +413,16 @@ async fn reject_execution(
     let config = state.config.load();
     if let Some(hook) = config.hooks.iter().find(|h| h.slug == exec.hook_slug)
         && let Ok(Some(holder)) = execution_lock::get_holder(pool, &exec.hook_slug).await
-            && holder == id {
-                barriers::on_execution_complete(
-                    &state,
-                    &exec.hook_slug,
-                    hook.concurrency.clone(),
-                    hook.approval.clone(),
-                ).await;
-            }
+        && holder == id
+    {
+        barriers::on_execution_complete(
+            &state,
+            &exec.hook_slug,
+            hook.concurrency.clone(),
+            hook.approval.clone(),
+        )
+        .await;
+    }
 
     Ok(Redirect::to(&format!("/executions/{id}")).into_response())
 }
@@ -551,30 +567,35 @@ async fn log_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::Router;
     use axum::body::Body;
     use axum::http::{Method, Request};
-    use axum::Router;
     use tower::ServiceExt;
 
     use crate::config::AppConfig;
     use crate::db::Db;
     use crate::models::execution::{ExecutionStatus, NewExecution};
     use crate::server::AppState;
+    use allowthem_core::{AllowThemBuilder, EmbeddedAuthClient};
 
     async fn test_state() -> (Arc<AppState>, tempfile::TempDir) {
         let dir = tempfile::TempDir::new().expect("temp dir");
         let config_path = dir.path().join("sendword.toml");
         std::fs::write(&config_path, "[server]\nport = 8080\n").unwrap();
-        let config = AppConfig::load_from(
-            config_path.to_str().unwrap(),
-            "nonexistent_overlay.json",
-        )
-        .expect("load config");
+        let config =
+            AppConfig::load_from(config_path.to_str().unwrap(), "nonexistent_overlay.json")
+                .expect("load config");
         let db = Db::new_in_memory().await.expect("db");
         db.migrate().await.expect("migrate");
+        let ath = AllowThemBuilder::with_pool(db.pool().clone())
+            .cookie_secure(false)
+            .build()
+            .await
+            .expect("allowthem build");
+        let auth_client = Arc::new(EmbeddedAuthClient::new(ath.clone(), "/login"));
         let templates =
             crate::templates::Templates::new(crate::templates::Templates::default_dir());
-        let state = AppState::new(config, &config_path, db, templates);
+        let state = AppState::new(config, &config_path, db, templates, ath, auth_client);
         (state, dir)
     }
 
@@ -598,9 +619,7 @@ mod tests {
         .await
         .expect("create execution");
 
-        let app = Router::new()
-            .merge(router())
-            .with_state(Arc::clone(&state));
+        let app = Router::new().merge(router()).with_state(Arc::clone(&state));
 
         let resp = app
             .oneshot(

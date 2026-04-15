@@ -118,12 +118,12 @@ async fn serve() -> eyre::Result<()> {
     let auth_client = Arc::new(EmbeddedAuthClient::new(ath.clone(), "/login"));
     tracing::info!("allowthem auth ready");
 
-    let templates = sendword::templates::Templates::new(
-        sendword::templates::Templates::default_dir(),
-    );
+    let templates =
+        sendword::templates::Templates::new(sendword::templates::Templates::default_dir());
     tracing::info!("templates loaded");
 
-    let state = sendword::server::AppState::new(config, "sendword.toml", db, templates, ath, auth_client);
+    let state =
+        sendword::server::AppState::new(config, "sendword.toml", db, templates, ath, auth_client);
 
     let _rate_limit_sweep = sendword::tasks::spawn_rate_limit_sweep(state.db.pool().clone());
     tracing::info!("rate limit sweep task started");
@@ -134,10 +134,16 @@ async fn serve() -> eyre::Result<()> {
     );
     tracing::info!("approval sweep task started");
 
-    if state.config.load().backup.as_ref().and_then(|b| b.schedule.as_ref()).is_some() {
-        let _backup_scheduler = sendword::backup::scheduler::spawn_backup_scheduler(
-            std::sync::Arc::clone(&state),
-        );
+    if state
+        .config
+        .load()
+        .backup
+        .as_ref()
+        .and_then(|b| b.schedule.as_ref())
+        .is_some()
+    {
+        let _backup_scheduler =
+            sendword::backup::scheduler::spawn_backup_scheduler(std::sync::Arc::clone(&state));
         tracing::info!("backup scheduler started");
     }
 
@@ -215,9 +221,10 @@ async fn user_create(email_str: &str) -> eyre::Result<()> {
 
 async fn backup_create() -> eyre::Result<()> {
     let config = AppConfig::load()?;
-    let backup_config = config.backup.as_ref().ok_or_else(|| {
-        eyre::eyre!("backup is not configured in sendword.toml")
-    })?;
+    let backup_config = config
+        .backup
+        .as_ref()
+        .ok_or_else(|| eyre::eyre!("backup is not configured in sendword.toml"))?;
 
     let db = sendword::db::Db::new(&config.database).await?;
     db.migrate().await?;
@@ -238,9 +245,10 @@ async fn backup_create() -> eyre::Result<()> {
 
 async fn backup_list() -> eyre::Result<()> {
     let config = AppConfig::load()?;
-    let backup_config = config.backup.as_ref().ok_or_else(|| {
-        eyre::eyre!("backup is not configured in sendword.toml")
-    })?;
+    let backup_config = config
+        .backup
+        .as_ref()
+        .ok_or_else(|| eyre::eyre!("backup is not configured in sendword.toml"))?;
 
     match sendword::backup::list_backups(backup_config).await {
         Ok(entries) => {
@@ -263,9 +271,10 @@ async fn backup_list() -> eyre::Result<()> {
 
 async fn backup_restore(key: &str, output: &std::path::Path) -> eyre::Result<()> {
     let config = AppConfig::load()?;
-    let backup_config = config.backup.as_ref().ok_or_else(|| {
-        eyre::eyre!("backup is not configured in sendword.toml")
-    })?;
+    let backup_config = config
+        .backup
+        .as_ref()
+        .ok_or_else(|| eyre::eyre!("backup is not configured in sendword.toml"))?;
 
     match sendword::backup::restore_backup(backup_config, key, output).await {
         Ok(()) => {

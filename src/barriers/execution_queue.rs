@@ -55,22 +55,22 @@ pub async fn peek_next(pool: &SqlitePool, hook_slug: &str) -> DbResult<Option<Qu
     .fetch_optional(pool)
     .await?;
 
-    Ok(row.map(|(id, hook_slug, execution_id, position)| QueueEntry {
-        id,
-        hook_slug,
-        execution_id,
-        position,
-    }))
+    Ok(
+        row.map(|(id, hook_slug, execution_id, position)| QueueEntry {
+            id,
+            hook_slug,
+            execution_id,
+            position,
+        }),
+    )
 }
 
 /// Transition a queue entry from 'waiting' to 'ready'.
 pub async fn mark_ready(pool: &SqlitePool, queue_entry_id: &str) -> DbResult<()> {
-    sqlx::query(
-        "UPDATE execution_queue SET status = 'ready' WHERE id = ? AND status = 'waiting'",
-    )
-    .bind(queue_entry_id)
-    .execute(pool)
-    .await?;
+    sqlx::query("UPDATE execution_queue SET status = 'ready' WHERE id = ? AND status = 'waiting'")
+        .bind(queue_entry_id)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
@@ -252,7 +252,9 @@ mod tests {
             .map(|i| {
                 let pool = pool.clone();
                 tokio::spawn(async move {
-                    enqueue(&pool, "test-hook", &format!("exec-{i}")).await.unwrap()
+                    enqueue(&pool, "test-hook", &format!("exec-{i}"))
+                        .await
+                        .unwrap()
                 })
             })
             .collect();

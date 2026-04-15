@@ -11,24 +11,24 @@ use axum::routing::{get, post};
 use axum::{Form, Json, Router};
 use serde::{Deserialize, Serialize};
 
-use crate::extractors::AuthUser;
 use crate::barriers::{self, BarrierOutcome};
-use crate::executor::ResolvedExecutor;
-use crate::interpolation::interpolate_command;
-use crate::payload::{FieldType, PayloadField, PayloadSchema};
 use crate::config::{
     BackoffStrategy, ExecutorConfig, FilterOperator, HmacAlgorithm, HookAuthConfig, PayloadFilter,
     TimeWindow, TriggerRateLimit, TriggerRules,
 };
-use crate::webhook_auth;
 use crate::config_writer::{self, HookFormData, RetryFormData, WriteError};
 use crate::error::AppError;
-use crate::models::{execution, trigger_attempt, ExecutionStatus};
+use crate::executor::ResolvedExecutor;
+use crate::extractors::AuthUser;
+use crate::interpolation::interpolate_command;
 use crate::models::trigger_attempt::{NewTriggerAttempt, TriggerAttemptStatus};
+use crate::models::{ExecutionStatus, execution, trigger_attempt};
+use crate::payload::{FieldType, PayloadField, PayloadSchema};
 use crate::retry;
 use crate::server::AppState;
 use crate::templates::context;
 use crate::trigger_rules::{self, cooldown, payload_filter, rate_limit, time_window};
+use crate::webhook_auth;
 
 const EXECUTIONS_PER_PAGE: i64 = 20;
 
@@ -55,12 +55,13 @@ struct TriggerResponse {
 fn extract_source_ip(headers: &HeaderMap, peer: &SocketAddr) -> String {
     if let Some(forwarded) = headers.get("x-forwarded-for")
         && let Ok(val) = forwarded.to_str()
-            && let Some(first) = val.split(',').next() {
-                let trimmed = first.trim();
-                if !trimmed.is_empty() {
-                    return trimmed.to_owned();
-                }
-            }
+        && let Some(first) = val.split(',').next()
+    {
+        let trimmed = first.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_owned();
+        }
+    }
     peer.ip().to_string()
 }
 
@@ -179,8 +180,7 @@ async fn trigger_hook(
                 .into_response());
         }
 
-        serde_json::to_string(&payload_value)
-            .unwrap_or_else(|_| "{}".to_owned())
+        serde_json::to_string(&payload_value).unwrap_or_else(|_| "{}".to_owned())
     } else if body.is_empty() {
         "{}".to_owned()
     } else {
@@ -203,16 +203,25 @@ async fn trigger_hook(
             } else {
                 command.clone()
             };
-            ResolvedExecutor::Shell { command: interpolated }
+            ResolvedExecutor::Shell {
+                command: interpolated,
+            }
         }
-        ExecutorConfig::Script { path } => {
-            ResolvedExecutor::Script { path: std::path::PathBuf::from(path) }
-        }
-        ExecutorConfig::Http { method, url, headers, body, follow_redirects } => {
+        ExecutorConfig::Script { path } => ResolvedExecutor::Script {
+            path: std::path::PathBuf::from(path),
+        },
+        ExecutorConfig::Http {
+            method,
+            url,
+            headers,
+            body,
+            follow_redirects,
+        } => {
             let payload_value: serde_json::Value = serde_json::from_str(&payload_str)
                 .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
             let interpolated_url = interpolate_command(url, &payload_value).into_owned();
-            let interpolated_body = body.as_deref()
+            let interpolated_body = body
+                .as_deref()
                 .map(|b| interpolate_command(b, &payload_value).into_owned());
             ResolvedExecutor::Http {
                 method: *method,
@@ -238,59 +247,59 @@ async fn trigger_hook(
         // 1. Payload filters
         if let Some(filters) = &rules.payload_filters
             && !filters.is_empty()
-                && let trigger_rules::EvalOutcome::Reject { status, reason } =
-                    payload_filter::evaluate(filters, &payload_value)
-                {
-                    log_rejection(pool, &slug, &source_ip, status.clone(), &reason).await;
-                    return Ok(Json(serde_json::json!({
-                        "status": status.to_string(),
-                        "reason": reason,
-                    }))
-                    .into_response());
-                }
+            && let trigger_rules::EvalOutcome::Reject { status, reason } =
+                payload_filter::evaluate(filters, &payload_value)
+        {
+            log_rejection(pool, &slug, &source_ip, status.clone(), &reason).await;
+            return Ok(Json(serde_json::json!({
+                "status": status.to_string(),
+                "reason": reason,
+            }))
+            .into_response());
+        }
 
         // 2. Time windows
         if let Some(windows) = &rules.time_windows
             && !windows.is_empty()
-                && let trigger_rules::EvalOutcome::Reject { status, reason } =
-                    time_window::evaluate(windows)
-                {
-                    log_rejection(pool, &slug, &source_ip, status.clone(), &reason).await;
-                    return Ok(Json(serde_json::json!({
-                        "status": status.to_string(),
-                        "reason": reason,
-                    }))
-                    .into_response());
-                }
+            && let trigger_rules::EvalOutcome::Reject { status, reason } =
+                time_window::evaluate(windows)
+        {
+            log_rejection(pool, &slug, &source_ip, status.clone(), &reason).await;
+            return Ok(Json(serde_json::json!({
+                "status": status.to_string(),
+                "reason": reason,
+            }))
+            .into_response());
+        }
 
         // 3. Cooldown
         if let Some(cd) = rules.cooldown
             && let trigger_rules::EvalOutcome::Reject { status, reason } =
                 cooldown::evaluate(pool, &slug, cd).await
-            {
-                log_rejection(pool, &slug, &source_ip, status.clone(), &reason).await;
-                return Ok(Json(serde_json::json!({
-                    "status": status.to_string(),
-                    "reason": reason,
-                }))
-                .into_response());
-            }
+        {
+            log_rejection(pool, &slug, &source_ip, status.clone(), &reason).await;
+            return Ok(Json(serde_json::json!({
+                "status": status.to_string(),
+                "reason": reason,
+            }))
+            .into_response());
+        }
 
         // 4. Rate limit (returns 429, not 200)
         if let Some(rl) = &rules.rate_limit
             && let trigger_rules::EvalOutcome::Reject { status, reason } =
                 rate_limit::evaluate(pool, &slug, rl).await
-            {
-                log_rejection(pool, &slug, &source_ip, status.clone(), &reason).await;
-                return Err((
-                    StatusCode::TOO_MANY_REQUESTS,
-                    Json(serde_json::json!({
-                        "status": status.to_string(),
-                        "reason": reason,
-                    })),
-                )
-                    .into_response());
-            }
+        {
+            log_rejection(pool, &slug, &source_ip, status.clone(), &reason).await;
+            return Err((
+                StatusCode::TOO_MANY_REQUESTS,
+                Json(serde_json::json!({
+                    "status": status.to_string(),
+                    "reason": reason,
+                })),
+            )
+                .into_response());
+        }
     }
 
     // Pre-generate the execution ID so barriers can reference it before the record is created
@@ -335,7 +344,11 @@ async fn trigger_hook(
                 )
                     .into_response());
             }
-            BarrierOutcome::Defer { execution_id, reason, .. } => {
+            BarrierOutcome::Defer {
+                execution_id,
+                reason,
+                ..
+            } => {
                 let _ = trigger_attempt::insert(
                     pool,
                     &NewTriggerAttempt {
@@ -438,18 +451,17 @@ async fn trigger_hook(
             "execution completed"
         );
         if let Some(ref nc) = notification_config
-            && let Ok(exec_record) =
-                crate::models::execution::get_by_id(&pool, &execution_id).await
-            {
-                crate::notification::send_notification(
-                    &state_clone.http_client,
-                    nc,
-                    &hook_snapshot,
-                    &result,
-                    &exec_record,
-                )
-                .await;
-            }
+            && let Ok(exec_record) = crate::models::execution::get_by_id(&pool, &execution_id).await
+        {
+            crate::notification::send_notification(
+                &state_clone.http_client,
+                nc,
+                &hook_snapshot,
+                &result,
+                &exec_record,
+            )
+            .await;
+        }
         if concurrency_config.is_some() {
             barriers::on_execution_complete(
                 &state_clone,
@@ -521,10 +533,7 @@ async fn hook_detail(
         }
     };
 
-    let timeout_display = hook
-        .timeout
-        .unwrap_or(config.defaults.timeout)
-        .as_secs();
+    let timeout_display = hook.timeout.unwrap_or(config.defaults.timeout).as_secs();
 
     let env_vars: Vec<_> = hook.env.keys().collect();
 
@@ -551,7 +560,9 @@ async fn hook_detail(
 
     let (auth_mode, auth_header, auth_algorithm) = match &hook.auth {
         Some(HookAuthConfig::Bearer { .. }) => ("bearer", "", ""),
-        Some(HookAuthConfig::Hmac { header, algorithm, .. }) => {
+        Some(HookAuthConfig::Hmac {
+            header, algorithm, ..
+        }) => {
             let algo = match algorithm {
                 HmacAlgorithm::Sha256 => "sha256",
             };
@@ -607,7 +618,12 @@ async fn hook_detail(
         .trigger_rules
         .as_ref()
         .and_then(|r| r.rate_limit.as_ref())
-        .map(|rl| (rl.max_requests.to_string(), config_writer::format_duration(rl.window)))
+        .map(|rl| {
+            (
+                rl.max_requests.to_string(),
+                config_writer::format_duration(rl.window),
+            )
+        })
         .unwrap_or_default();
 
     let html = state.templates.render(
@@ -678,7 +694,8 @@ async fn execution_list(
     let pool = state.db.pool();
     let total = execution::count_by_hook_filtered(pool, &slug, &filters).await?;
     let executions =
-        execution::list_by_hook_filtered(pool, &slug, &filters, EXECUTIONS_PER_PAGE, offset).await?;
+        execution::list_by_hook_filtered(pool, &slug, &filters, EXECUTIONS_PER_PAGE, offset)
+            .await?;
 
     let total_pages = (total + EXECUTIONS_PER_PAGE - 1) / EXECUTIONS_PER_PAGE;
     let has_more = page < total_pages;
@@ -876,7 +893,10 @@ fn parse_payload_text(text: &str) -> Result<Option<PayloadSchema>, String> {
 
         let name = parts[0].trim();
         if name.is_empty() {
-            return Err(format!("payload line {}: field name cannot be empty", i + 1));
+            return Err(format!(
+                "payload line {}: field name cannot be empty",
+                i + 1
+            ));
         }
 
         let type_str = parts[1].trim();
@@ -1015,7 +1035,10 @@ fn parse_windows_text(text: &str) -> Result<Option<Vec<TimeWindow>>, String> {
 
         // Format: "Mon,Tue:09:00-17:00" — split on first colon to get days and time range
         let colon_idx = line.find(':').ok_or_else(|| {
-            format!("window line {}: expected 'Days:HH:MM-HH:MM', got '{line}'", i + 1)
+            format!(
+                "window line {}: expected 'Days:HH:MM-HH:MM', got '{line}'",
+                i + 1
+            )
         })?;
 
         let days_part = &line[..colon_idx];
@@ -1028,7 +1051,10 @@ fn parse_windows_text(text: &str) -> Result<Option<Vec<TimeWindow>>, String> {
             .collect();
 
         if days.is_empty() {
-            return Err(format!("window line {}: at least one day is required", i + 1));
+            return Err(format!(
+                "window line {}: at least one day is required",
+                i + 1
+            ));
         }
 
         // time_part should be "HH:MM-HH:MM"
@@ -1049,7 +1075,11 @@ fn parse_windows_text(text: &str) -> Result<Option<Vec<TimeWindow>>, String> {
             ));
         }
 
-        windows.push(TimeWindow { days, start_time, end_time });
+        windows.push(TimeWindow {
+            days,
+            start_time,
+            end_time,
+        });
     }
 
     if windows.is_empty() {
@@ -1094,15 +1124,12 @@ fn parse_hook_form(form: &HookForm) -> Result<HookFormData, String> {
             _ => BackoffStrategy::Exponential,
         };
 
-        let initial_delay = parse_duration_field(
-            form.retry_initial_delay.as_deref().unwrap_or(""),
-        )?
-        .unwrap_or(Duration::from_secs(1));
+        let initial_delay =
+            parse_duration_field(form.retry_initial_delay.as_deref().unwrap_or(""))?
+                .unwrap_or(Duration::from_secs(1));
 
-        let max_delay = parse_duration_field(
-            form.retry_max_delay.as_deref().unwrap_or(""),
-        )?
-        .unwrap_or(Duration::from_secs(60));
+        let max_delay = parse_duration_field(form.retry_max_delay.as_deref().unwrap_or(""))?
+            .unwrap_or(Duration::from_secs(60));
 
         Some(RetryFormData {
             count: retry_count,
@@ -1141,7 +1168,11 @@ fn parse_hook_form(form: &HookForm) -> Result<HookFormData, String> {
                 "sha256" => HmacAlgorithm::Sha256,
                 other => return Err(format!("unsupported HMAC algorithm: {other}")),
             };
-            Some(HookAuthConfig::Hmac { header, algorithm, secret })
+            Some(HookAuthConfig::Hmac {
+                header,
+                algorithm,
+                secret,
+            })
         }
         _ => None,
     };
@@ -1157,10 +1188,12 @@ fn parse_hook_form(form: &HookForm) -> Result<HookFormData, String> {
         let window_str = form.trigger_rate_window.trim();
         let max: u64 = max_str.parse().unwrap_or(0);
         if max > 0 && !window_str.is_empty() {
-            let window = parse_duration_field(window_str)?.ok_or_else(|| {
-                "trigger rate window must be a valid duration".to_owned()
-            })?;
-            Some(TriggerRateLimit { max_requests: max, window })
+            let window = parse_duration_field(window_str)?
+                .ok_or_else(|| "trigger rate window must be a valid duration".to_owned())?;
+            Some(TriggerRateLimit {
+                max_requests: max,
+                window,
+            })
         } else {
             None
         }
@@ -1171,7 +1204,12 @@ fn parse_hook_form(form: &HookForm) -> Result<HookFormData, String> {
         || cooldown.is_some()
         || rate_limit.is_some()
     {
-        Some(TriggerRules { payload_filters, time_windows, cooldown, rate_limit })
+        Some(TriggerRules {
+            payload_filters,
+            time_windows,
+            cooldown,
+            rate_limit,
+        })
     } else {
         None
     };
@@ -1332,10 +1370,12 @@ async fn edit_hook_form(
         };
 
     let (auth_mode, auth_token, auth_header, auth_algorithm, auth_secret) = match &hook.auth {
-        Some(HookAuthConfig::Bearer { token }) => {
-            ("bearer", token.as_str(), "", "", "")
-        }
-        Some(HookAuthConfig::Hmac { header, algorithm, secret }) => {
+        Some(HookAuthConfig::Bearer { token }) => ("bearer", token.as_str(), "", "", ""),
+        Some(HookAuthConfig::Hmac {
+            header,
+            algorithm,
+            secret,
+        }) => {
             let algo = match algorithm {
                 HmacAlgorithm::Sha256 => "sha256",
             };
@@ -1363,53 +1403,75 @@ async fn edit_hook_form(
         })
         .unwrap_or_default();
 
-    let (trigger_filters_text, trigger_windows_text, trigger_cooldown, trigger_rate_max, trigger_rate_window) =
-        if let Some(rules) = &hook.trigger_rules {
-            let filters_text = rules
-                .payload_filters
-                .as_ref()
-                .map(|filters| {
-                    filters
-                        .iter()
-                        .map(|f| {
-                            let op = config_writer::filter_operator_str(f.operator);
-                            match &f.value {
-                                Some(v) => format!("{}:{}:{}", f.field, op, v),
-                                None => format!("{}:{}", f.field, op),
-                            }
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                })
-                .unwrap_or_default();
+    let (
+        trigger_filters_text,
+        trigger_windows_text,
+        trigger_cooldown,
+        trigger_rate_max,
+        trigger_rate_window,
+    ) = if let Some(rules) = &hook.trigger_rules {
+        let filters_text = rules
+            .payload_filters
+            .as_ref()
+            .map(|filters| {
+                filters
+                    .iter()
+                    .map(|f| {
+                        let op = config_writer::filter_operator_str(f.operator);
+                        match &f.value {
+                            Some(v) => format!("{}:{}:{}", f.field, op, v),
+                            None => format!("{}:{}", f.field, op),
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .unwrap_or_default();
 
-            let windows_text = rules
-                .time_windows
-                .as_ref()
-                .map(|windows| {
-                    windows
-                        .iter()
-                        .map(|w| format!("{}:{}-{}", w.days.join(","), w.start_time, w.end_time))
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                })
-                .unwrap_or_default();
+        let windows_text = rules
+            .time_windows
+            .as_ref()
+            .map(|windows| {
+                windows
+                    .iter()
+                    .map(|w| format!("{}:{}-{}", w.days.join(","), w.start_time, w.end_time))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .unwrap_or_default();
 
-            let cooldown_str = rules
-                .cooldown
-                .map(config_writer::format_duration)
-                .unwrap_or_default();
+        let cooldown_str = rules
+            .cooldown
+            .map(config_writer::format_duration)
+            .unwrap_or_default();
 
-            let (rate_max, rate_window) = rules
-                .rate_limit
-                .as_ref()
-                .map(|rl| (rl.max_requests.to_string(), config_writer::format_duration(rl.window)))
-                .unwrap_or_default();
+        let (rate_max, rate_window) = rules
+            .rate_limit
+            .as_ref()
+            .map(|rl| {
+                (
+                    rl.max_requests.to_string(),
+                    config_writer::format_duration(rl.window),
+                )
+            })
+            .unwrap_or_default();
 
-            (filters_text, windows_text, cooldown_str, rate_max, rate_window)
-        } else {
-            (String::new(), String::new(), String::new(), String::new(), String::new())
-        };
+        (
+            filters_text,
+            windows_text,
+            cooldown_str,
+            rate_max,
+            rate_window,
+        )
+    } else {
+        (
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+        )
+    };
 
     let html = state.templates.render(
         "hook_form.html",
@@ -1568,27 +1630,24 @@ fn compute_duration(started_at: &Option<String>, completed_at: &Option<String>) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use allowthem_core::{AllowThemBuilder, Email, EmbeddedAuthClient, generate_token, hash_token};
-    use chrono::{Duration, Utc};
     use crate::config::AppConfig;
     use crate::db::Db;
     use crate::templates::Templates;
+    use allowthem_core::{AllowThemBuilder, Email, EmbeddedAuthClient, generate_token, hash_token};
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
+    use chrono::Utc;
     use tower::ServiceExt;
 
     /// Create a test AppState backed by a temporary directory for the TOML config.
     /// Returns (state, temp_dir) -- the temp_dir must be kept alive for the test duration.
-    async fn test_state_with_config(
-        toml_content: &str,
-    ) -> (Arc<AppState>, tempfile::TempDir) {
+    async fn test_state_with_config(toml_content: &str) -> (Arc<AppState>, tempfile::TempDir) {
         let dir = tempfile::TempDir::new().expect("tmp dir");
         let config_path = dir.path().join("sendword.toml");
         std::fs::write(&config_path, toml_content).expect("write config");
 
-        let config =
-            AppConfig::load_from(config_path.to_str().unwrap_or(""), "nonexistent.json")
-                .expect("load config");
+        let config = AppConfig::load_from(config_path.to_str().unwrap_or(""), "nonexistent.json")
+            .expect("load config");
 
         let db = Db::new_in_memory().await.expect("in-memory db");
         db.migrate().await.expect("migration");
@@ -1608,10 +1667,15 @@ mod tests {
     /// Create a test user and return a session cookie value.
     async fn create_test_session(state: &Arc<AppState>) -> String {
         let email = Email::new("admin@example.com".into()).unwrap();
-        let user = state.ath.db().create_user(email, "password123", None).await.unwrap();
+        let user = state
+            .ath
+            .db()
+            .create_user(email, "password123", None)
+            .await
+            .unwrap();
         let token = generate_token();
         let token_hash = hash_token(&token);
-        let expires = Utc::now() + Duration::hours(24);
+        let expires = Utc::now() + chrono::Duration::hours(24);
         state
             .ath
             .db()
@@ -1629,8 +1693,7 @@ mod tests {
         let peer = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
         crate::server::router(state).layer(axum::middleware::from_fn(
             move |mut req: axum::http::Request<Body>, next: axum::middleware::Next| {
-                req.extensions_mut()
-                    .insert(ConnectInfo(peer));
+                req.extensions_mut().insert(ConnectInfo(peer));
                 async move { next.run(req).await }
             },
         ))
@@ -1744,7 +1807,10 @@ mod tests {
         assert!(hook.enabled);
         assert_eq!(hook.cwd.as_deref(), Some("/opt/app"));
         assert_eq!(hook.timeout, Some(Duration::from_secs(120)));
-        assert_eq!(hook.env.get("APP_ENV").map(String::as_str), Some("production"));
+        assert_eq!(
+            hook.env.get("APP_ENV").map(String::as_str),
+            Some("production")
+        );
         assert_eq!(hook.env.get("DEBUG").map(String::as_str), Some("false"));
         let retries = hook.retries.as_ref().expect("retries should be set");
         assert_eq!(retries.count, 3);
@@ -1831,7 +1897,7 @@ max_delay = "30s"
             .await
             .unwrap();
         let html = String::from_utf8(body.to_vec()).unwrap();
-        assert!(html.contains("Edit hook"));
+        assert!(html.contains("Edit Hook"));
         assert!(html.contains("Deploy"));
         assert!(html.contains("make deploy"));
         assert!(html.contains("/opt/app"));
@@ -2007,7 +2073,9 @@ command = "echo delete"
                     .uri("/hooks/new")
                     .header("Cookie", &cookie)
                     .header("Content-Type", "application/x-www-form-urlencoded")
-                    .body(Body::from("name=Disabled+Hook&slug=disabled&command=echo+off"))
+                    .body(Body::from(
+                        "name=Disabled+Hook&slug=disabled&command=echo+off",
+                    ))
                     .unwrap(),
             )
             .await
@@ -2148,10 +2216,12 @@ required = true
             .await
             .unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert!(json["details"][0]["message"]
-            .as_str()
-            .unwrap()
-            .contains("expected type number"));
+        assert!(
+            json["details"][0]["message"]
+                .as_str()
+                .unwrap()
+                .contains("expected type number")
+        );
     }
 
     #[tokio::test]
@@ -2299,11 +2369,9 @@ command = "echo ok"
         let exec = crate::models::execution::get_by_id(pool, exec_id)
             .await
             .unwrap();
-        let stored: serde_json::Value =
-            serde_json::from_str(&exec.request_payload).unwrap();
+        let stored: serde_json::Value = serde_json::from_str(&exec.request_payload).unwrap();
         assert_eq!(stored["key"], "value");
     }
-
 
     // --- parse_payload_text ---
 
@@ -2358,9 +2426,12 @@ command = "echo ok"
     fn parse_payload_text_invalid_required_flag() {
         let result = parse_payload_text("action:string:mandatory");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("expected 'required' or 'optional'"));
+        assert!(
+            result
+                .unwrap_err()
+                .contains("expected 'required' or 'optional'")
+        );
     }
-
 
     // --- Integration tests: payload schema end-to-end ---
 
@@ -2619,10 +2690,12 @@ required = true
             .unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["error"], "payload validation failed");
-        assert!(json["details"][0]["message"]
-            .as_str()
-            .unwrap()
-            .contains("missing"));
+        assert!(
+            json["details"][0]["message"]
+                .as_str()
+                .unwrap()
+                .contains("missing")
+        );
     }
 
     #[tokio::test]
@@ -2663,7 +2736,11 @@ required = true
             .unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         let details = json["details"].as_array().unwrap();
-        assert_eq!(details.len(), 2, "should accumulate both type-mismatch errors");
+        assert_eq!(
+            details.len(),
+            2,
+            "should accumulate both type-mismatch errors"
+        );
     }
 
     #[tokio::test]
@@ -2712,5 +2789,4 @@ required = true
             .unwrap();
         assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
     }
-
 }

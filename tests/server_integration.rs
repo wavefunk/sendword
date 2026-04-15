@@ -1,5 +1,8 @@
 use std::sync::Arc;
 
+use allowthem_core::{AllowThemBuilder, Email, EmbeddedAuthClient, generate_token, hash_token};
+use chrono::Utc;
+
 use sendword::config::{
     AppConfig, ExecutorConfig, FilterOperator, HmacAlgorithm, HookAuthConfig, HookConfig,
     PayloadFilter, TriggerRateLimit, TriggerRules,
@@ -13,8 +16,14 @@ use sendword::templates::Templates;
 async fn test_state(config: AppConfig) -> Arc<AppState> {
     let db = Db::new_in_memory().await.expect("in-memory db");
     db.migrate().await.expect("migration");
+    let ath = AllowThemBuilder::with_pool(db.pool().clone())
+        .cookie_secure(false)
+        .build()
+        .await
+        .expect("allowthem build");
+    let auth_client = Arc::new(EmbeddedAuthClient::new(ath.clone(), "/login"));
     let templates = Templates::new(Templates::default_dir());
-    AppState::new(config, "sendword.toml", db, templates)
+    AppState::new(config, "sendword.toml", db, templates, ath, auth_client)
 }
 
 async fn spawn_server(state: Arc<AppState>) -> String {
@@ -39,17 +48,23 @@ async fn spawn_test_server() -> String {
 }
 
 async fn create_test_session(state: &Arc<AppState>) -> String {
-    use sendword::models::{session, user};
-    use std::time::Duration;
-
-    let pool = state.db.pool();
-    let u = user::create(pool, "testadmin", "testpass123")
+    let email = Email::new("testadmin@example.com".into()).unwrap();
+    let user = state
+        .ath
+        .db()
+        .create_user(email, "testpass123", None)
         .await
         .expect("create test user");
-    let sess = session::create(pool, &u.id, Duration::from_secs(3600))
+    let token = generate_token();
+    let token_hash = hash_token(&token);
+    let expires = Utc::now() + chrono::Duration::hours(24);
+    state
+        .ath
+        .db()
+        .create_session(user.id, token_hash, None, None, expires)
         .await
         .expect("create test session");
-    sess.id
+    token.as_str().to_owned()
 }
 
 async fn spawn_authed_server(config: AppConfig) -> (String, String) {
@@ -79,7 +94,12 @@ async fn healthz_returns_ok() {
 async fn healthz_returns_json_content_type() {
     let url = spawn_test_server().await;
     let resp = reqwest::get(format!("{url}/healthz")).await.unwrap();
-    let ct = resp.headers().get("content-type").unwrap().to_str().unwrap();
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap();
     assert!(ct.contains("application/json"));
 }
 
@@ -89,7 +109,7 @@ async fn dashboard_returns_html() {
     let client = reqwest::Client::new();
     let resp = client
         .get(format!("{url}/"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
@@ -112,13 +132,17 @@ async fn stub_routes_return_not_implemented() {
     let client = reqwest::Client::new();
 
     // trigger_hook returns 404 for non-existent/disabled hooks (unprotected)
-    let resp = client.post(format!("{url}/hook/test-hook")).send().await.unwrap();
+    let resp = client
+        .post(format!("{url}/hook/test-hook"))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(resp.status(), 404);
 
     // hook_detail returns 404 for non-existent hooks (protected)
     let resp = client
         .get(format!("{url}/hooks/test-hook"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
@@ -127,7 +151,7 @@ async fn stub_routes_return_not_implemented() {
     // execution_detail returns 404 for non-existent executions (protected)
     let resp = client
         .get(format!("{url}/executions/some-id"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
@@ -136,7 +160,7 @@ async fn stub_routes_return_not_implemented() {
     // replay returns 404 for non-existent executions (protected)
     let resp = client
         .post(format!("{url}/executions/some-id/replay"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
@@ -203,9 +227,9 @@ async fn dashboard_renders_configured_hooks() {
                 rate_limit: None,
                 payload: None,
                 trigger_rules: None,
-            concurrency: None,
-            approval: None,
-            notification: None,
+                concurrency: None,
+                approval: None,
+                notification: None,
             },
             HookConfig {
                 name: "Run Tests".into(),
@@ -223,9 +247,9 @@ async fn dashboard_renders_configured_hooks() {
                 rate_limit: None,
                 payload: None,
                 trigger_rules: None,
-            concurrency: None,
-            approval: None,
-            notification: None,
+                concurrency: None,
+                approval: None,
+                notification: None,
             },
         ],
         ..AppConfig::default()
@@ -235,7 +259,7 @@ async fn dashboard_renders_configured_hooks() {
     let client = reqwest::Client::new();
     let resp = client
         .get(format!("{url}/"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
@@ -243,8 +267,14 @@ async fn dashboard_renders_configured_hooks() {
     let body = resp.text().await.unwrap();
 
     // Both hook names should appear
-    assert!(body.contains("Deploy App"), "dashboard should show hook name");
-    assert!(body.contains("Run Tests"), "dashboard should show second hook name");
+    assert!(
+        body.contains("Deploy App"),
+        "dashboard should show hook name"
+    );
+    assert!(
+        body.contains("Run Tests"),
+        "dashboard should show second hook name"
+    );
 
     // Slugs should appear as URL paths
     assert!(
@@ -257,15 +287,21 @@ async fn dashboard_renders_configured_hooks() {
     );
 
     // Enabled/disabled status should be rendered
-    assert!(body.contains("enabled"), "dashboard should show enabled status");
-    assert!(body.contains("disabled"), "dashboard should show disabled status");
+    assert!(
+        body.contains("enabled"),
+        "dashboard should show enabled status"
+    );
+    assert!(
+        body.contains("disabled"),
+        "dashboard should show disabled status"
+    );
 }
 
 #[tokio::test]
 async fn dashboard_shows_last_execution_status() {
     use sendword::config::{ExecutorConfig, HookConfig};
-    use sendword::models::execution::{self, NewExecution};
     use sendword::models::ExecutionStatus;
+    use sendword::models::execution::{self, NewExecution};
     use std::collections::HashMap;
 
     let config = AppConfig {
@@ -285,9 +321,9 @@ async fn dashboard_shows_last_execution_status() {
             rate_limit: None,
             payload: None,
             trigger_rules: None,
-        concurrency: None,
-        approval: None,
-        notification: None,
+            concurrency: None,
+            approval: None,
+            notification: None,
         }],
         ..AppConfig::default()
     };
@@ -305,7 +341,7 @@ async fn dashboard_shows_last_execution_status() {
             trigger_source: "127.0.0.1",
             request_payload: "{}",
             retry_of: None,
-        status: None,
+            status: None,
         },
     )
     .await
@@ -321,7 +357,7 @@ async fn dashboard_shows_last_execution_status() {
     let client = reqwest::Client::new();
     let resp = client
         .get(format!("{url}/"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
@@ -329,7 +365,10 @@ async fn dashboard_shows_last_execution_status() {
     let body = resp.text().await.unwrap();
 
     assert!(body.contains("Test Hook"), "should show hook name");
-    assert!(body.contains("success"), "should show last execution status");
+    assert!(
+        body.contains("success"),
+        "should show last execution status"
+    );
     assert!(
         body.contains("/hooks/test-hook"),
         "should link to hook detail"
@@ -358,9 +397,9 @@ async fn dashboard_shows_no_executions_for_new_hook() {
             rate_limit: None,
             payload: None,
             trigger_rules: None,
-        concurrency: None,
-        approval: None,
-        notification: None,
+            concurrency: None,
+            approval: None,
+            notification: None,
         }],
         ..AppConfig::default()
     };
@@ -371,7 +410,7 @@ async fn dashboard_shows_no_executions_for_new_hook() {
     let client = reqwest::Client::new();
     let resp = client
         .get(format!("{url}/"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
@@ -415,7 +454,7 @@ async fn hook_detail_returns_404_for_unknown_slug() {
     let client = reqwest::Client::new();
     let resp = client
         .get(format!("{url}/hooks/nonexistent"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
@@ -433,7 +472,7 @@ async fn hook_detail_renders_hook_config() {
     let client = reqwest::Client::new();
     let resp = client
         .get(format!("{url}/hooks/deploy-app"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
@@ -471,7 +510,10 @@ async fn hook_detail_renders_hook_config() {
 
     // Auth section is now always shown (with "none" for public hooks)
     assert!(body.contains("Authentication"), "should show auth section");
-    assert!(body.contains("none"), "should show none auth mode for public hook");
+    assert!(
+        body.contains("none"),
+        "should show none auth mode for public hook"
+    );
 
     // Payload section is guarded by `is defined` and should be absent
     // when the handler doesn't pass payload_fields in the context.
@@ -503,9 +545,9 @@ async fn hook_detail_shows_disabled_hook() {
             rate_limit: None,
             payload: None,
             trigger_rules: None,
-        concurrency: None,
-        approval: None,
-        notification: None,
+            concurrency: None,
+            approval: None,
+            notification: None,
         }],
         ..AppConfig::default()
     };
@@ -514,7 +556,7 @@ async fn hook_detail_shows_disabled_hook() {
     let client = reqwest::Client::new();
     let resp = client
         .get(format!("{url}/hooks/disabled-hook"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
@@ -526,8 +568,8 @@ async fn hook_detail_shows_disabled_hook() {
 
 #[tokio::test]
 async fn hook_detail_shows_execution_history() {
-    use sendword::models::execution::{self, NewExecution};
     use sendword::models::ExecutionStatus;
+    use sendword::models::execution::{self, NewExecution};
 
     let config = AppConfig {
         hooks: vec![make_test_hook("Test Hook", "test-hook", "echo ok")],
@@ -547,7 +589,7 @@ async fn hook_detail_shows_execution_history() {
             trigger_source: "127.0.0.1",
             request_payload: "{}",
             retry_of: None,
-        status: None,
+            status: None,
         },
     )
     .await
@@ -555,9 +597,14 @@ async fn hook_detail_shows_execution_history() {
     execution::mark_running(state.db.pool(), &exec1.id)
         .await
         .unwrap();
-    execution::mark_completed(state.db.pool(), &exec1.id, ExecutionStatus::Success, Some(0))
-        .await
-        .unwrap();
+    execution::mark_completed(
+        state.db.pool(),
+        &exec1.id,
+        ExecutionStatus::Success,
+        Some(0),
+    )
+    .await
+    .unwrap();
 
     let exec2 = execution::create(
         state.db.pool(),
@@ -568,7 +615,7 @@ async fn hook_detail_shows_execution_history() {
             trigger_source: "10.0.0.1",
             request_payload: "{}",
             retry_of: None,
-        status: None,
+            status: None,
         },
     )
     .await
@@ -586,7 +633,7 @@ async fn hook_detail_shows_execution_history() {
     // Test the full page
     let resp = client
         .get(format!("{url}/hooks/test-hook"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
@@ -602,7 +649,7 @@ async fn hook_detail_shows_execution_history() {
     // Test the HTMX partial endpoint
     let resp = client
         .get(format!("{url}/hooks/test-hook/executions?page=1"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
@@ -626,7 +673,7 @@ async fn hook_detail_execution_list_returns_404_for_unknown_hook() {
     let client = reqwest::Client::new();
     let resp = client
         .get(format!("{url}/hooks/nonexistent/executions"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
@@ -646,7 +693,7 @@ async fn hook_detail_no_executions_shows_empty_message() {
     // The HTMX partial for a hook with no executions
     let resp = client
         .get(format!("{url}/hooks/empty-hook/executions?page=1"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
@@ -668,7 +715,7 @@ async fn replay_returns_404_for_nonexistent_execution() {
 
     let resp = client
         .post(format!("{url}/executions/nonexistent-id/replay"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
@@ -693,7 +740,7 @@ async fn replay_returns_404_when_hook_no_longer_exists() {
             trigger_source: "127.0.0.1",
             request_payload: r#"{"key": "value"}"#,
             retry_of: None,
-        status: None,
+            status: None,
         },
     )
     .await
@@ -704,7 +751,7 @@ async fn replay_returns_404_when_hook_no_longer_exists() {
 
     let resp = client
         .post(format!("{url}/executions/{}/replay", exec.id))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
@@ -714,8 +761,8 @@ async fn replay_returns_404_when_hook_no_longer_exists() {
 #[tokio::test]
 async fn replay_creates_new_execution_linked_to_original() {
     use sendword::config::{ExecutorConfig, HookConfig};
-    use sendword::models::execution::{self, NewExecution};
     use sendword::models::ExecutionStatus;
+    use sendword::models::execution::{self, NewExecution};
     use std::collections::HashMap;
 
     let config = AppConfig {
@@ -735,9 +782,9 @@ async fn replay_creates_new_execution_linked_to_original() {
             rate_limit: None,
             payload: None,
             trigger_rules: None,
-        concurrency: None,
-        approval: None,
-        notification: None,
+            concurrency: None,
+            approval: None,
+            notification: None,
         }],
         ..AppConfig::default()
     };
@@ -756,7 +803,7 @@ async fn replay_creates_new_execution_linked_to_original() {
             trigger_source: "10.0.0.1",
             request_payload: r#"{"action": "deploy"}"#,
             retry_of: None,
-        status: None,
+            status: None,
         },
     )
     .await
@@ -772,14 +819,16 @@ async fn replay_creates_new_execution_linked_to_original() {
     // Replay the execution
     let resp = client
         .post(format!("{url}/executions/{}/replay", original.id))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), 200);
 
     let body: serde_json::Value = resp.json().await.unwrap();
-    let new_id = body["execution_id"].as_str().expect("execution_id in response");
+    let new_id = body["execution_id"]
+        .as_str()
+        .expect("execution_id in response");
     assert!(!new_id.is_empty(), "new execution_id should be non-empty");
     assert_ne!(new_id, original.id, "replay should create a new execution");
 
@@ -794,8 +843,8 @@ async fn replay_creates_new_execution_linked_to_original() {
 #[tokio::test]
 async fn replay_spawns_executor_and_runs_command() {
     use sendword::config::{ExecutorConfig, HookConfig};
-    use sendword::models::execution::{self, NewExecution};
     use sendword::models::ExecutionStatus;
+    use sendword::models::execution::{self, NewExecution};
     use std::collections::HashMap;
 
     let tmp = tempfile::TempDir::new().expect("temp dir");
@@ -821,9 +870,9 @@ async fn replay_spawns_executor_and_runs_command() {
             rate_limit: None,
             payload: None,
             trigger_rules: None,
-        concurrency: None,
-        approval: None,
-        notification: None,
+            concurrency: None,
+            approval: None,
+            notification: None,
         }],
         ..AppConfig::default()
     };
@@ -842,7 +891,7 @@ async fn replay_spawns_executor_and_runs_command() {
             trigger_source: "127.0.0.1",
             request_payload: "{}",
             retry_of: None,
-        status: None,
+            status: None,
         },
     )
     .await
@@ -857,7 +906,7 @@ async fn replay_spawns_executor_and_runs_command() {
 
     let resp = client
         .post(format!("{url}/executions/{}/replay", original.id))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
@@ -882,7 +931,9 @@ async fn replay_spawns_executor_and_runs_command() {
     }
 
     // Verify stdout log was written
-    let stdout_path = std::path::Path::new(logs_dir).join(new_id).join("stdout.log");
+    let stdout_path = std::path::Path::new(logs_dir)
+        .join(new_id)
+        .join("stdout.log");
     let stdout = tokio::fs::read_to_string(&stdout_path).await.unwrap();
     assert_eq!(stdout.trim(), "replayed-output");
 }
@@ -895,7 +946,7 @@ async fn execution_detail_returns_404_for_unknown_id() {
     let client = reqwest::Client::new();
     let resp = client
         .get(format!("{url}/executions/nonexistent"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
@@ -904,8 +955,8 @@ async fn execution_detail_returns_404_for_unknown_id() {
 
 #[tokio::test]
 async fn execution_detail_renders_metadata() {
-    use sendword::models::execution::{self, NewExecution};
     use sendword::models::ExecutionStatus;
+    use sendword::models::execution::{self, NewExecution};
 
     let config = AppConfig {
         hooks: vec![make_test_hook("Test Hook", "test-hook", "echo hello")],
@@ -924,7 +975,7 @@ async fn execution_detail_renders_metadata() {
             trigger_source: "10.0.0.5",
             request_payload: r#"{"key": "value"}"#,
             retry_of: None,
-        status: None,
+            status: None,
         },
     )
     .await
@@ -942,7 +993,7 @@ async fn execution_detail_renders_metadata() {
 
     let resp = client
         .get(format!("{url}/executions/{exec_id}"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
@@ -973,9 +1024,15 @@ async fn execution_detail_renders_metadata() {
     assert!(body.contains("10.0.0.5"), "should show trigger source");
 
     // Timing labels
-    assert!(body.contains("Triggered at"), "should show triggered at label");
+    assert!(
+        body.contains("Triggered at"),
+        "should show triggered at label"
+    );
     assert!(body.contains("Started at"), "should show started at label");
-    assert!(body.contains("Completed at"), "should show completed at label");
+    assert!(
+        body.contains("Completed at"),
+        "should show completed at label"
+    );
     assert!(body.contains("Duration"), "should show duration label");
 
     // Replay button
@@ -988,8 +1045,8 @@ async fn execution_detail_renders_metadata() {
 
 #[tokio::test]
 async fn execution_detail_shows_failed_status_with_red_badge() {
-    use sendword::models::execution::{self, NewExecution};
     use sendword::models::ExecutionStatus;
+    use sendword::models::execution::{self, NewExecution};
 
     let config = AppConfig {
         hooks: vec![make_test_hook("Test Hook", "test-hook", "exit 1")],
@@ -1008,7 +1065,7 @@ async fn execution_detail_shows_failed_status_with_red_badge() {
             trigger_source: "127.0.0.1",
             request_payload: "{}",
             retry_of: None,
-        status: None,
+            status: None,
         },
     )
     .await
@@ -1026,7 +1083,7 @@ async fn execution_detail_shows_failed_status_with_red_badge() {
 
     let resp = client
         .get(format!("{url}/executions/{exec_id}"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
@@ -1034,13 +1091,16 @@ async fn execution_detail_shows_failed_status_with_red_badge() {
     let body = resp.text().await.unwrap();
 
     assert!(body.contains("failed"), "should show failed status");
-    assert!(body.contains("bg-red-100"), "should use red badge for failed");
+    assert!(
+        body.contains("sw-badge-error"),
+        "should use red badge for failed"
+    );
 }
 
 #[tokio::test]
 async fn execution_detail_reads_log_files() {
-    use sendword::models::execution::{self, NewExecution};
     use sendword::models::ExecutionStatus;
+    use sendword::models::execution::{self, NewExecution};
 
     let tmp = tempfile::TempDir::new().unwrap();
     let logs_dir = tmp.path().to_str().unwrap();
@@ -1077,7 +1137,7 @@ async fn execution_detail_reads_log_files() {
             trigger_source: "127.0.0.1",
             request_payload: "{}",
             retry_of: None,
-        status: None,
+            status: None,
         },
     )
     .await
@@ -1094,7 +1154,7 @@ async fn execution_detail_reads_log_files() {
 
     let resp = client
         .get(format!("{url}/executions/{exec_id}"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
@@ -1135,7 +1195,7 @@ async fn execution_detail_shows_fallback_when_logs_missing() {
             trigger_source: "127.0.0.1",
             request_payload: "{}",
             retry_of: None,
-        status: None,
+            status: None,
         },
     )
     .await
@@ -1147,7 +1207,7 @@ async fn execution_detail_shows_fallback_when_logs_missing() {
 
     let resp = client
         .get(format!("{url}/executions/{exec_id}"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
@@ -1164,8 +1224,8 @@ async fn execution_detail_shows_fallback_when_logs_missing() {
 
 #[tokio::test]
 async fn execution_detail_shows_retry_info_when_replay() {
-    use sendword::models::execution::{self, NewExecution};
     use sendword::models::ExecutionStatus;
+    use sendword::models::execution::{self, NewExecution};
 
     let config = AppConfig {
         hooks: vec![make_test_hook("Test Hook", "test-hook", "echo hello")],
@@ -1185,7 +1245,7 @@ async fn execution_detail_shows_retry_info_when_replay() {
             trigger_source: "127.0.0.1",
             request_payload: "{}",
             retry_of: None,
-        status: None,
+            status: None,
         },
     )
     .await
@@ -1212,7 +1272,7 @@ async fn execution_detail_shows_retry_info_when_replay() {
             trigger_source: "replay",
             request_payload: "{}",
             retry_of: Some(&original.id),
-        status: None,
+            status: None,
         },
     )
     .await
@@ -1225,14 +1285,17 @@ async fn execution_detail_shows_retry_info_when_replay() {
 
     let resp = client
         .get(format!("{url}/executions/{replay_id}"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), 200);
     let body = resp.text().await.unwrap();
 
-    assert!(body.contains("Retry Info"), "should show retry info section");
+    assert!(
+        body.contains("Retry Info"),
+        "should show retry info section"
+    );
     assert!(body.contains("Replay of"), "should show 'Replay of' label");
     assert!(
         body.contains(&format!("/executions/{original_id}")),
@@ -1265,7 +1328,7 @@ async fn execution_detail_hides_retry_section_when_not_applicable() {
             trigger_source: "127.0.0.1",
             request_payload: "{}",
             retry_of: None,
-        status: None,
+            status: None,
         },
     )
     .await
@@ -1277,7 +1340,7 @@ async fn execution_detail_hides_retry_section_when_not_applicable() {
 
     let resp = client
         .get(format!("{url}/executions/{exec_id}"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
@@ -1312,7 +1375,7 @@ async fn execution_detail_shows_pending_status_with_yellow_badge() {
             trigger_source: "127.0.0.1",
             request_payload: "{}",
             retry_of: None,
-        status: None,
+            status: None,
         },
     )
     .await
@@ -1324,7 +1387,7 @@ async fn execution_detail_shows_pending_status_with_yellow_badge() {
 
     let resp = client
         .get(format!("{url}/executions/{exec_id}"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
@@ -1333,14 +1396,11 @@ async fn execution_detail_shows_pending_status_with_yellow_badge() {
 
     assert!(body.contains("pending"), "should show pending status");
     assert!(
-        body.contains("bg-yellow-100"),
+        body.contains("sw-badge-warning"),
         "should use yellow badge for pending"
     );
     // Started at should show dash when not yet started
-    assert!(
-        body.contains("Started at"),
-        "should show started at label"
-    );
+    assert!(body.contains("Started at"), "should show started at label");
 }
 
 // --- Auth redirect tests ---
@@ -1432,7 +1492,7 @@ async fn scripts_new_renders_editor() {
     let client = reqwest::Client::new();
     let resp = client
         .get(format!("{url}/scripts/new"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
@@ -1462,7 +1522,7 @@ async fn scripts_create_and_edit_flow() {
     // Create a new script
     let resp = client
         .post(format!("{url}/scripts/new"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .header("Content-Type", "application/x-www-form-urlencoded")
         .body("filename=deploy.sh&content=%23!%2Fbin%2Fbash%0Aecho+hello")
         .send()
@@ -1486,14 +1546,17 @@ async fn scripts_create_and_edit_flow() {
     {
         use std::os::unix::fs::PermissionsExt;
         let mode = std::fs::metadata(&file_path).unwrap().permissions().mode();
-        assert!(mode & 0o111 != 0, "file should be executable, mode: {mode:o}");
+        assert!(
+            mode & 0o111 != 0,
+            "file should be executable, mode: {mode:o}"
+        );
     }
 
     // Edit the script (GET)
     let client_follow = reqwest::Client::new();
     let resp = client_follow
         .get(format!("{url}/scripts/deploy.sh"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
@@ -1507,7 +1570,7 @@ async fn scripts_create_and_edit_flow() {
     // Save the script (POST)
     let resp = client
         .post(format!("{url}/scripts/deploy.sh"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .header("Content-Type", "application/x-www-form-urlencoded")
         .body("content=%23!%2Fbin%2Fbash%0Aecho+updated")
         .send()
@@ -1538,7 +1601,7 @@ async fn scripts_create_rejects_invalid_filename() {
     // Leading dot
     let resp = client
         .post(format!("{url}/scripts/new"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .header("Content-Type", "application/x-www-form-urlencoded")
         .body("filename=.hidden&content=bad")
         .send()
@@ -1546,12 +1609,15 @@ async fn scripts_create_rejects_invalid_filename() {
         .unwrap();
     assert_eq!(resp.status(), 303);
     let location = resp.headers().get("location").unwrap().to_str().unwrap();
-    assert!(location.contains("error="), "should redirect with error: {location}");
+    assert!(
+        location.contains("error="),
+        "should redirect with error: {location}"
+    );
 
     // Path traversal
     let resp = client
         .post(format!("{url}/scripts/new"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .header("Content-Type", "application/x-www-form-urlencoded")
         .body("filename=..%2Fetc%2Fpasswd&content=bad")
         .send()
@@ -1559,7 +1625,10 @@ async fn scripts_create_rejects_invalid_filename() {
         .unwrap();
     assert_eq!(resp.status(), 303);
     let location = resp.headers().get("location").unwrap().to_str().unwrap();
-    assert!(location.contains("error="), "should redirect with error: {location}");
+    assert!(
+        location.contains("error="),
+        "should redirect with error: {location}"
+    );
 }
 
 #[tokio::test]
@@ -1583,7 +1652,7 @@ async fn scripts_create_rejects_duplicate() {
 
     let resp = client
         .post(format!("{url}/scripts/new"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .header("Content-Type", "application/x-www-form-urlencoded")
         .body("filename=existing.sh&content=overwrite+attempt")
         .send()
@@ -1591,7 +1660,10 @@ async fn scripts_create_rejects_duplicate() {
         .unwrap();
     assert_eq!(resp.status(), 303);
     let location = resp.headers().get("location").unwrap().to_str().unwrap();
-    assert!(location.contains("error="), "should redirect with error: {location}");
+    assert!(
+        location.contains("error="),
+        "should redirect with error: {location}"
+    );
 
     // Original content should be untouched
     let content = std::fs::read_to_string(scripts_dir.join("existing.sh")).unwrap();
@@ -1619,14 +1691,20 @@ async fn scripts_delete_removes_file() {
 
     let resp = client
         .post(format!("{url}/scripts/doomed.sh/delete"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), 303);
     let location = resp.headers().get("location").unwrap().to_str().unwrap();
-    assert!(location.contains("/scripts"), "should redirect to scripts list: {location}");
-    assert!(location.contains("success="), "should have success flash: {location}");
+    assert!(
+        location.contains("/scripts"),
+        "should redirect to scripts list: {location}"
+    );
+    assert!(
+        location.contains("success="),
+        "should have success flash: {location}"
+    );
 
     assert!(!file_path.exists(), "file should be deleted");
 }
@@ -1649,7 +1727,7 @@ async fn scripts_edit_returns_404_for_nonexistent() {
 
     let resp = client
         .get(format!("{url}/scripts/nonexistent.sh"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
@@ -1867,29 +1945,33 @@ async fn create_hook_with_bearer_auth_via_form() {
     let config_path = dir.path().join("sendword.toml");
     std::fs::write(&config_path, "[server]\nport = 8080\n").expect("write");
 
-    let config = AppConfig::load_from(
-        config_path.to_str().unwrap(),
-        "nonexistent.json",
-    ).expect("valid config");
+    let config = AppConfig::load_from(config_path.to_str().unwrap(), "nonexistent.json")
+        .expect("valid config");
 
     let db = Db::new_in_memory().await.expect("db");
     db.migrate().await.expect("migrate");
+    let ath = AllowThemBuilder::with_pool(db.pool().clone())
+        .cookie_secure(false)
+        .build()
+        .await
+        .expect("allowthem build");
+    let auth_client = Arc::new(EmbeddedAuthClient::new(ath.clone(), "/login"));
     let templates = Templates::new(Templates::default_dir());
-    let state = AppState::new(config, &config_path, db, templates);
+    let state = AppState::new(config, &config_path, db, templates, ath, auth_client);
     let token = create_test_session(&state).await;
     let url = spawn_server(state).await;
 
     let client = client_no_redirect();
     let resp = client
         .post(format!("{url}/hooks/new"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .header("Content-Type", "application/x-www-form-urlencoded")
         .body(
             "name=Bearer+Hook&slug=bearer-hook&command=echo+ok&enabled=true\
              &auth_mode=bearer&auth_token=%24%7BWEBHOOK_TOKEN%7D\
              &description=&cwd=&timeout=&env_text=\
              &retry_count=0&retry_backoff=exponential\
-             &retry_initial_delay=&retry_max_delay="
+             &retry_initial_delay=&retry_max_delay=",
         )
         .send()
         .await
@@ -1900,13 +1982,16 @@ async fn create_hook_with_bearer_auth_via_form() {
     // Verify the hook detail page shows bearer auth
     let detail = reqwest::Client::new()
         .get(format!("{url}/hooks/bearer-hook"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
     assert_eq!(detail.status(), 200);
     let body = detail.text().await.unwrap();
-    assert!(body.contains("bearer"), "detail page should show bearer auth mode");
+    assert!(
+        body.contains("bearer"),
+        "detail page should show bearer auth mode"
+    );
 }
 
 #[tokio::test]
@@ -1915,22 +2000,26 @@ async fn create_hook_with_hmac_auth_via_form() {
     let config_path = dir.path().join("sendword.toml");
     std::fs::write(&config_path, "[server]\nport = 8080\n").expect("write");
 
-    let config = AppConfig::load_from(
-        config_path.to_str().unwrap(),
-        "nonexistent.json",
-    ).expect("valid config");
+    let config = AppConfig::load_from(config_path.to_str().unwrap(), "nonexistent.json")
+        .expect("valid config");
 
     let db = Db::new_in_memory().await.expect("db");
     db.migrate().await.expect("migrate");
+    let ath = AllowThemBuilder::with_pool(db.pool().clone())
+        .cookie_secure(false)
+        .build()
+        .await
+        .expect("allowthem build");
+    let auth_client = Arc::new(EmbeddedAuthClient::new(ath.clone(), "/login"));
     let templates = Templates::new(Templates::default_dir());
-    let state = AppState::new(config, &config_path, db, templates);
+    let state = AppState::new(config, &config_path, db, templates, ath, auth_client);
     let token = create_test_session(&state).await;
     let url = spawn_server(state).await;
 
     let client = client_no_redirect();
     let resp = client
         .post(format!("{url}/hooks/new"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .header("Content-Type", "application/x-www-form-urlencoded")
         .body(
             "name=HMAC+Hook&slug=hmac-hook&command=echo+ok&enabled=true\
@@ -1938,7 +2027,7 @@ async fn create_hook_with_hmac_auth_via_form() {
              &auth_algorithm=sha256&auth_secret=%24%7BWEBHOOK_SECRET%7D\
              &description=&cwd=&timeout=&env_text=\
              &retry_count=0&retry_backoff=exponential\
-             &retry_initial_delay=&retry_max_delay="
+             &retry_initial_delay=&retry_max_delay=",
         )
         .send()
         .await
@@ -1948,8 +2037,14 @@ async fn create_hook_with_hmac_auth_via_form() {
 
     // Verify the TOML file contains the auth config
     let toml_content = std::fs::read_to_string(&config_path).unwrap();
-    assert!(toml_content.contains("mode = \"hmac\""), "TOML should contain hmac mode");
-    assert!(toml_content.contains("X-Hub-Signature-256"), "TOML should contain header name");
+    assert!(
+        toml_content.contains("mode = \"hmac\""),
+        "TOML should contain hmac mode"
+    );
+    assert!(
+        toml_content.contains("X-Hub-Signature-256"),
+        "TOML should contain header name"
+    );
 }
 
 #[tokio::test]
@@ -1969,29 +2064,33 @@ command = "echo ok"
 "#;
     std::fs::write(&config_path, initial_toml).expect("write");
 
-    let config = AppConfig::load_from(
-        config_path.to_str().unwrap(),
-        "nonexistent.json",
-    ).expect("valid config");
+    let config = AppConfig::load_from(config_path.to_str().unwrap(), "nonexistent.json")
+        .expect("valid config");
 
     let db = Db::new_in_memory().await.expect("db");
     db.migrate().await.expect("migrate");
+    let ath = AllowThemBuilder::with_pool(db.pool().clone())
+        .cookie_secure(false)
+        .build()
+        .await
+        .expect("allowthem build");
+    let auth_client = Arc::new(EmbeddedAuthClient::new(ath.clone(), "/login"));
     let templates = Templates::new(Templates::default_dir());
-    let state = AppState::new(config, &config_path, db, templates);
+    let state = AppState::new(config, &config_path, db, templates, ath, auth_client);
     let token = create_test_session(&state).await;
     let url = spawn_server(state).await;
 
     let client = client_no_redirect();
     let resp = client
         .post(format!("{url}/hooks/public-hook/edit"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .header("Content-Type", "application/x-www-form-urlencoded")
         .body(
             "name=Public+Hook&slug=public-hook&command=echo+ok&enabled=true\
              &auth_mode=bearer&auth_token=my-secret\
              &description=&cwd=&timeout=&env_text=\
              &retry_count=0&retry_backoff=exponential\
-             &retry_initial_delay=&retry_max_delay="
+             &retry_initial_delay=&retry_max_delay=",
         )
         .send()
         .await
@@ -2001,8 +2100,14 @@ command = "echo ok"
 
     // Verify TOML now has auth section
     let toml_content = std::fs::read_to_string(&config_path).unwrap();
-    assert!(toml_content.contains("mode = \"bearer\""), "TOML should contain bearer mode");
-    assert!(toml_content.contains("my-secret"), "TOML should contain token");
+    assert!(
+        toml_content.contains("mode = \"bearer\""),
+        "TOML should contain bearer mode"
+    );
+    assert!(
+        toml_content.contains("my-secret"),
+        "TOML should contain token"
+    );
 }
 
 #[tokio::test]
@@ -2136,7 +2241,9 @@ async fn trigger_creates_fired_attempt_with_execution_id() {
     assert_eq!(resp.status(), 200);
 
     let body: serde_json::Value = resp.json().await.unwrap();
-    let exec_id = body["execution_id"].as_str().expect("execution_id in response");
+    let exec_id = body["execution_id"]
+        .as_str()
+        .expect("execution_id in response");
 
     let attempts = trigger_attempt::list_by_hook(&pool, "fire-attempt", 10, 0)
         .await
@@ -2147,7 +2254,10 @@ async fn trigger_creates_fired_attempt_with_execution_id() {
     assert_eq!(attempt.hook_slug, "fire-attempt");
     assert_eq!(attempt.status, TriggerAttemptStatus::Fired);
     assert_eq!(attempt.execution_id.as_deref(), Some(exec_id));
-    assert!(!attempt.source_ip.is_empty(), "source_ip should be populated");
+    assert!(
+        !attempt.source_ip.is_empty(),
+        "source_ip should be populated"
+    );
 }
 
 #[tokio::test]
@@ -2176,8 +2286,14 @@ async fn trigger_auth_failure_creates_auth_failed_attempt() {
     let attempt = &attempts[0];
     assert_eq!(attempt.hook_slug, "auth-fail-attempt");
     assert_eq!(attempt.status, TriggerAttemptStatus::AuthFailed);
-    assert!(attempt.execution_id.is_none(), "auth_failed should have no execution_id");
-    assert!(!attempt.source_ip.is_empty(), "source_ip should be populated");
+    assert!(
+        attempt.execution_id.is_none(),
+        "auth_failed should have no execution_id"
+    );
+    assert!(
+        !attempt.source_ip.is_empty(),
+        "source_ip should be populated"
+    );
     assert!(!attempt.reason.is_empty(), "reason should describe denial");
 }
 
@@ -2237,7 +2353,10 @@ async fn trigger_invalid_json_creates_validation_failed_attempt() {
     let attempt = &attempts[0];
     assert_eq!(attempt.status, TriggerAttemptStatus::ValidationFailed);
     assert!(attempt.execution_id.is_none());
-    assert!(attempt.reason.contains("invalid JSON"), "reason should mention invalid JSON");
+    assert!(
+        attempt.reason.contains("invalid JSON"),
+        "reason should mention invalid JSON"
+    );
 }
 
 #[tokio::test]
@@ -2308,7 +2427,7 @@ async fn attempt_list_returns_404_for_unknown_hook() {
     let client = reqwest::Client::new();
     let resp = client
         .get(format!("{url}/hooks/nonexistent/attempts"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
@@ -2326,7 +2445,7 @@ async fn attempt_list_empty_shows_no_attempts_message() {
 
     let resp = client
         .get(format!("{url}/hooks/fresh-hook/attempts"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
@@ -2357,7 +2476,7 @@ async fn attempt_list_shows_fired_after_trigger() {
     // Fetch the attempts partial
     let resp = client
         .get(format!("{url}/hooks/list-fired/attempts"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
@@ -2365,7 +2484,10 @@ async fn attempt_list_shows_fired_after_trigger() {
     let body = resp.text().await.unwrap();
 
     assert!(body.contains("fired"), "should contain fired status");
-    assert!(body.contains("bg-green-100"), "fired badge should use green color");
+    assert!(
+        body.contains("sw-badge-success"),
+        "fired badge should use green color"
+    );
     assert!(body.contains("<table"), "should render as HTML table");
 }
 
@@ -2400,25 +2522,33 @@ async fn attempt_list_status_filter_shows_only_matching() {
 
     // Filter by auth_failed: should show auth_failed but not fired
     let resp = client
-        .get(format!("{url}/hooks/filter-test/attempts?status=auth_failed"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .get(format!(
+            "{url}/hooks/filter-test/attempts?status=auth_failed"
+        ))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), 200);
     let body = resp.text().await.unwrap();
-    assert!(body.contains("auth_failed"), "should show auth_failed attempt");
-    assert!(body.contains("bg-red-100"), "auth_failed badge should use red color");
+    assert!(
+        body.contains("auth_failed"),
+        "should show auth_failed attempt"
+    );
+    assert!(
+        body.contains("sw-badge-error"),
+        "auth_failed badge should use red color"
+    );
     // The fired attempt should not be in the filtered results
     assert!(
-        !body.contains("bg-green-100"),
+        !body.contains("sw-badge-success"),
         "filtered list should not contain fired (green) badge"
     );
 
     // Filter by fired: should show only fired
     let resp = client
         .get(format!("{url}/hooks/filter-test/attempts?status=fired"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
@@ -2433,14 +2563,17 @@ async fn attempt_list_status_filter_shows_only_matching() {
     // All (no filter): should show both
     let resp = client
         .get(format!("{url}/hooks/filter-test/attempts"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), 200);
     let body = resp.text().await.unwrap();
     assert!(body.contains("fired"), "unfiltered should show fired");
-    assert!(body.contains("auth_failed"), "unfiltered should show auth_failed");
+    assert!(
+        body.contains("auth_failed"),
+        "unfiltered should show auth_failed"
+    );
 }
 
 #[tokio::test]
@@ -2461,13 +2594,16 @@ async fn attempt_list_unknown_status_filter_returns_all() {
     // Unknown status filter falls through to unfiltered (parse returns None)
     let resp = client
         .get(format!("{url}/hooks/unknown-filter/attempts?status=bogus"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), 200);
     let body = resp.text().await.unwrap();
-    assert!(body.contains("fired"), "unknown filter should fall through to showing all");
+    assert!(
+        body.contains("fired"),
+        "unknown filter should fall through to showing all"
+    );
 }
 
 #[tokio::test]
@@ -2481,7 +2617,7 @@ async fn hook_detail_contains_trigger_attempts_section() {
 
     let resp = client
         .get(format!("{url}/hooks/attempt-hook"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
@@ -2554,13 +2690,18 @@ async fn attempt_list_filtered_by_new_m4_statuses() {
         (TriggerAttemptStatus::CooldownSkipped, "m4-filter-hook"),
         (TriggerAttemptStatus::Fired, "m4-filter-hook"),
     ] {
-        trigger_attempt::insert(pool, &NewTriggerAttempt {
-            hook_slug: slug,
-            source_ip: "127.0.0.1",
-            status,
-            reason: "test",
-            execution_id: None,
-        }).await.unwrap();
+        trigger_attempt::insert(
+            pool,
+            &NewTriggerAttempt {
+                hook_slug: slug,
+                source_ip: "127.0.0.1",
+                status,
+                reason: "test",
+                execution_id: None,
+            },
+        )
+        .await
+        .unwrap();
     }
 
     let url = spawn_server(state).await;
@@ -2568,60 +2709,86 @@ async fn attempt_list_filtered_by_new_m4_statuses() {
 
     // Filtered status filter returns only filtered attempts
     let resp = client
-        .get(format!("{url}/hooks/m4-filter-hook/attempts?status=filtered"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .get(format!(
+            "{url}/hooks/m4-filter-hook/attempts?status=filtered"
+        ))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), 200);
     let body = resp.text().await.unwrap();
     assert!(body.contains("filtered"), "filtered status should appear");
-    assert!(!body.contains("fired"), "fired status should not appear when filtering by filtered");
+    assert!(
+        !body.contains("fired"),
+        "fired status should not appear when filtering by filtered"
+    );
 
     // Rate limited filter
     let resp = client
-        .get(format!("{url}/hooks/m4-filter-hook/attempts?status=rate_limited"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .get(format!(
+            "{url}/hooks/m4-filter-hook/attempts?status=rate_limited"
+        ))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), 200);
     let body = resp.text().await.unwrap();
-    assert!(body.contains("rate_limited"), "rate_limited status should appear");
+    assert!(
+        body.contains("rate_limited"),
+        "rate_limited status should appear"
+    );
 
     // Schedule skipped filter
     let resp = client
-        .get(format!("{url}/hooks/m4-filter-hook/attempts?status=schedule_skipped"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .get(format!(
+            "{url}/hooks/m4-filter-hook/attempts?status=schedule_skipped"
+        ))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), 200);
     let body = resp.text().await.unwrap();
-    assert!(body.contains("schedule_skipped"), "schedule_skipped status should appear");
+    assert!(
+        body.contains("schedule_skipped"),
+        "schedule_skipped status should appear"
+    );
 
     // Cooldown skipped filter
     let resp = client
-        .get(format!("{url}/hooks/m4-filter-hook/attempts?status=cooldown_skipped"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .get(format!(
+            "{url}/hooks/m4-filter-hook/attempts?status=cooldown_skipped"
+        ))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), 200);
     let body = resp.text().await.unwrap();
-    assert!(body.contains("cooldown_skipped"), "cooldown_skipped status should appear");
+    assert!(
+        body.contains("cooldown_skipped"),
+        "cooldown_skipped status should appear"
+    );
 
     // Unfiltered returns all
     let resp = client
         .get(format!("{url}/hooks/m4-filter-hook/attempts"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), 200);
     let body = resp.text().await.unwrap();
-    assert!(body.contains("fired"), "all attempts should appear unfiltered");
-    assert!(body.contains("filtered"), "filtered attempt should appear unfiltered");
+    assert!(
+        body.contains("fired"),
+        "all attempts should appear unfiltered"
+    );
+    assert!(
+        body.contains("filtered"),
+        "filtered attempt should appear unfiltered"
+    );
 }
 
 #[tokio::test]
@@ -2651,20 +2818,26 @@ async fn attempt_list_requires_auth() {
 
 /// Set up a test server backed by an on-disk TOML config file so that
 /// config_writer round-trips can be verified.
-async fn spawn_file_backed_server(initial_toml: &str) -> (String, String, std::path::PathBuf, tempfile::TempDir) {
+async fn spawn_file_backed_server(
+    initial_toml: &str,
+) -> (String, String, std::path::PathBuf, tempfile::TempDir) {
     let dir = tempfile::TempDir::new().expect("temp dir");
     let config_path = dir.path().join("sendword.toml");
     std::fs::write(&config_path, initial_toml).expect("write toml");
 
-    let config = AppConfig::load_from(
-        config_path.to_str().unwrap(),
-        "nonexistent.json",
-    ).expect("valid config");
+    let config = AppConfig::load_from(config_path.to_str().unwrap(), "nonexistent.json")
+        .expect("valid config");
 
     let db = Db::new_in_memory().await.expect("db");
     db.migrate().await.expect("migrate");
+    let ath = AllowThemBuilder::with_pool(db.pool().clone())
+        .cookie_secure(false)
+        .build()
+        .await
+        .expect("allowthem build");
+    let auth_client = Arc::new(EmbeddedAuthClient::new(ath.clone(), "/login"));
     let templates = Templates::new(Templates::default_dir());
-    let state = AppState::new(config, &config_path, db, templates);
+    let state = AppState::new(config, &config_path, db, templates, ath, auth_client);
     let token = create_test_session(&state).await;
     let url = spawn_server(state).await;
     (url, token, config_path, dir)
@@ -2677,7 +2850,7 @@ async fn create_hook_with_payload_filters_via_form() {
 
     let resp = client
         .post(format!("{url}/hooks/new"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .header("Content-Type", "application/x-www-form-urlencoded")
         .body(
             "name=Filter+Hook&slug=filter-hook&command=echo+ok&enabled=true\
@@ -2686,7 +2859,7 @@ async fn create_hook_with_payload_filters_via_form() {
              &retry_initial_delay=&retry_max_delay=\
              &auth_mode=none\
              &trigger_filters_text=action%3Aequals%3Adeploy%0Aenv%3Acontains%3Aprod\
-             &trigger_windows_text=&trigger_cooldown=&trigger_rate_max=&trigger_rate_window="
+             &trigger_windows_text=&trigger_cooldown=&trigger_rate_max=&trigger_rate_window=",
         )
         .send()
         .await
@@ -2695,12 +2868,30 @@ async fn create_hook_with_payload_filters_via_form() {
     assert_eq!(resp.status(), 303, "expected redirect after create");
 
     let toml_content = std::fs::read_to_string(&config_path).unwrap();
-    assert!(toml_content.contains("payload_filters"), "TOML should contain payload_filters");
-    assert!(toml_content.contains("\"action\""), "TOML should contain field 'action'");
-    assert!(toml_content.contains("\"equals\""), "TOML should contain operator 'equals'");
-    assert!(toml_content.contains("\"deploy\""), "TOML should contain value 'deploy'");
-    assert!(toml_content.contains("\"env\""), "TOML should contain field 'env'");
-    assert!(toml_content.contains("\"contains\""), "TOML should contain operator 'contains'");
+    assert!(
+        toml_content.contains("payload_filters"),
+        "TOML should contain payload_filters"
+    );
+    assert!(
+        toml_content.contains("\"action\""),
+        "TOML should contain field 'action'"
+    );
+    assert!(
+        toml_content.contains("\"equals\""),
+        "TOML should contain operator 'equals'"
+    );
+    assert!(
+        toml_content.contains("\"deploy\""),
+        "TOML should contain value 'deploy'"
+    );
+    assert!(
+        toml_content.contains("\"env\""),
+        "TOML should contain field 'env'"
+    );
+    assert!(
+        toml_content.contains("\"contains\""),
+        "TOML should contain operator 'contains'"
+    );
 }
 
 #[tokio::test]
@@ -2738,23 +2929,50 @@ async fn hook_detail_displays_trigger_rules() {
 
     let resp = client
         .get(format!("{url}/hooks/ruled-hook"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), 200);
     let body = resp.text().await.unwrap();
 
-    assert!(body.contains("Trigger Rules"), "detail page should show Trigger Rules section");
-    assert!(body.contains("action"), "detail page should show filter field");
-    assert!(body.contains("equals"), "detail page should show filter operator");
-    assert!(body.contains("deploy"), "detail page should show filter value");
-    assert!(body.contains("Mon"), "detail page should show time window days");
-    assert!(body.contains("09:00"), "detail page should show window start time");
-    assert!(body.contains("17:00"), "detail page should show window end time");
+    assert!(
+        body.contains("Trigger Rules"),
+        "detail page should show Trigger Rules section"
+    );
+    assert!(
+        body.contains("action"),
+        "detail page should show filter field"
+    );
+    assert!(
+        body.contains("equals"),
+        "detail page should show filter operator"
+    );
+    assert!(
+        body.contains("deploy"),
+        "detail page should show filter value"
+    );
+    assert!(
+        body.contains("Mon"),
+        "detail page should show time window days"
+    );
+    assert!(
+        body.contains("09:00"),
+        "detail page should show window start time"
+    );
+    assert!(
+        body.contains("17:00"),
+        "detail page should show window end time"
+    );
     assert!(body.contains("5m"), "detail page should show cooldown");
-    assert!(body.contains("10"), "detail page should show rate limit max");
-    assert!(body.contains("1h"), "detail page should show rate limit window");
+    assert!(
+        body.contains("10"),
+        "detail page should show rate limit max"
+    );
+    assert!(
+        body.contains("1h"),
+        "detail page should show rate limit window"
+    );
 }
 
 #[tokio::test]
@@ -2768,14 +2986,17 @@ async fn hook_without_trigger_rules_shows_no_trigger_rules_section() {
 
     let resp = client
         .get(format!("{url}/hooks/plain-hook"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), 200);
     let body = resp.text().await.unwrap();
 
-    assert!(!body.contains("Trigger Rules"), "detail page should not show Trigger Rules section when none configured");
+    assert!(
+        !body.contains("Trigger Rules"),
+        "detail page should not show Trigger Rules section when none configured"
+    );
 }
 
 #[tokio::test]
@@ -2785,7 +3006,7 @@ async fn create_hook_with_time_windows_and_cooldown() {
 
     let resp = client
         .post(format!("{url}/hooks/new"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .header("Content-Type", "application/x-www-form-urlencoded")
         .body(
             "name=Window+Hook&slug=window-hook&command=echo+ok&enabled=true\
@@ -2796,7 +3017,7 @@ async fn create_hook_with_time_windows_and_cooldown() {
              &trigger_filters_text=\
              &trigger_windows_text=Mon%2CTue%3A09%3A00-17%3A00\
              &trigger_cooldown=5m\
-             &trigger_rate_max=&trigger_rate_window="
+             &trigger_rate_max=&trigger_rate_window=",
         )
         .send()
         .await
@@ -2805,10 +3026,22 @@ async fn create_hook_with_time_windows_and_cooldown() {
     assert_eq!(resp.status(), 303, "expected redirect after create");
 
     let toml_content = std::fs::read_to_string(&config_path).unwrap();
-    assert!(toml_content.contains("time_windows"), "TOML should contain time_windows");
-    assert!(toml_content.contains("09:00"), "TOML should contain start_time");
-    assert!(toml_content.contains("17:00"), "TOML should contain end_time");
-    assert!(toml_content.contains(r#"cooldown = "5m""#), "TOML should contain cooldown");
+    assert!(
+        toml_content.contains("time_windows"),
+        "TOML should contain time_windows"
+    );
+    assert!(
+        toml_content.contains("09:00"),
+        "TOML should contain start_time"
+    );
+    assert!(
+        toml_content.contains("17:00"),
+        "TOML should contain end_time"
+    );
+    assert!(
+        toml_content.contains(r#"cooldown = "5m""#),
+        "TOML should contain cooldown"
+    );
 }
 
 #[tokio::test]
@@ -2818,7 +3051,7 @@ async fn create_hook_with_rate_limit_via_form() {
 
     let resp = client
         .post(format!("{url}/hooks/new"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .header("Content-Type", "application/x-www-form-urlencoded")
         .body(
             "name=Rate+Hook&slug=rate-hook&command=echo+ok&enabled=true\
@@ -2827,7 +3060,7 @@ async fn create_hook_with_rate_limit_via_form() {
              &retry_initial_delay=&retry_max_delay=\
              &auth_mode=none\
              &trigger_filters_text=&trigger_windows_text=&trigger_cooldown=\
-             &trigger_rate_max=10&trigger_rate_window=1h"
+             &trigger_rate_max=10&trigger_rate_window=1h",
         )
         .send()
         .await
@@ -2836,8 +3069,14 @@ async fn create_hook_with_rate_limit_via_form() {
     assert_eq!(resp.status(), 303, "expected redirect after create");
 
     let toml_content = std::fs::read_to_string(&config_path).unwrap();
-    assert!(toml_content.contains("max_requests = 10"), "TOML should contain max_requests");
-    assert!(toml_content.contains(r#"window = "1h""#), "TOML should contain window");
+    assert!(
+        toml_content.contains("max_requests = 10"),
+        "TOML should contain max_requests"
+    );
+    assert!(
+        toml_content.contains(r#"window = "1h""#),
+        "TOML should contain window"
+    );
 }
 
 #[tokio::test]
@@ -2865,14 +3104,17 @@ async fn edit_hook_form_repopulates_trigger_rules() {
 
     let resp = client
         .get(format!("{url}/hooks/editable-hook/edit"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), 200);
     let body = resp.text().await.unwrap();
 
-    assert!(body.contains("tag:contains:release"), "edit form should repopulate filter field");
+    assert!(
+        body.contains("tag:contains:release"),
+        "edit form should repopulate filter field"
+    );
 }
 
 #[tokio::test]
@@ -2893,7 +3135,7 @@ command = "echo ok"
 
     let resp = client
         .post(format!("{url}/hooks/plain-hook/edit"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .header("Content-Type", "application/x-www-form-urlencoded")
         .body(
             "name=Plain+Hook&slug=plain-hook&command=echo+ok&enabled=true\
@@ -2902,7 +3144,7 @@ command = "echo ok"
              &retry_initial_delay=&retry_max_delay=\
              &auth_mode=none\
              &trigger_filters_text=status%3Aequals%3Asuccess\
-             &trigger_windows_text=&trigger_cooldown=&trigger_rate_max=&trigger_rate_window="
+             &trigger_windows_text=&trigger_cooldown=&trigger_rate_max=&trigger_rate_window=",
         )
         .send()
         .await
@@ -2911,9 +3153,18 @@ command = "echo ok"
     assert_eq!(resp.status(), 303, "expected redirect after edit");
 
     let toml_content = std::fs::read_to_string(&config_path).unwrap();
-    assert!(toml_content.contains("\"status\""), "TOML should have status filter field");
-    assert!(toml_content.contains("\"equals\""), "TOML should have equals operator");
-    assert!(toml_content.contains("\"success\""), "TOML should have success value");
+    assert!(
+        toml_content.contains("\"status\""),
+        "TOML should have status filter field"
+    );
+    assert!(
+        toml_content.contains("\"equals\""),
+        "TOML should have equals operator"
+    );
+    assert!(
+        toml_content.contains("\"success\""),
+        "TOML should have success value"
+    );
 }
 
 #[tokio::test]
@@ -2937,7 +3188,7 @@ cooldown = "5m"
 
     let resp = client
         .post(format!("{url}/hooks/ruled-hook/edit"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .header("Content-Type", "application/x-www-form-urlencoded")
         .body(
             "name=Ruled+Hook&slug=ruled-hook&command=echo+ok&enabled=true\
@@ -2946,7 +3197,7 @@ cooldown = "5m"
              &retry_initial_delay=&retry_max_delay=\
              &auth_mode=none\
              &trigger_filters_text=&trigger_windows_text=&trigger_cooldown=\
-             &trigger_rate_max=&trigger_rate_window="
+             &trigger_rate_max=&trigger_rate_window=",
         )
         .send()
         .await
@@ -2955,18 +3206,25 @@ cooldown = "5m"
     assert_eq!(resp.status(), 303, "expected redirect after edit");
 
     let toml_content = std::fs::read_to_string(&config_path).unwrap();
-    assert!(!toml_content.contains("trigger_rules"), "TOML should not contain trigger_rules when cleared");
-    assert!(!toml_content.contains("cooldown"), "TOML should not contain cooldown when cleared");
+    assert!(
+        !toml_content.contains("trigger_rules"),
+        "TOML should not contain trigger_rules when cleared"
+    );
+    assert!(
+        !toml_content.contains("cooldown"),
+        "TOML should not contain cooldown when cleared"
+    );
 }
 
 #[tokio::test]
 async fn invalid_filter_line_returns_error() {
-    let (url, token, _config_path, _dir) = spawn_file_backed_server("[server]\nport = 8080\n").await;
+    let (url, token, _config_path, _dir) =
+        spawn_file_backed_server("[server]\nport = 8080\n").await;
     let client = client_no_redirect();
 
     let resp = client
         .post(format!("{url}/hooks/new"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .header("Content-Type", "application/x-www-form-urlencoded")
         .body(
             "name=Bad+Hook&slug=bad-hook&command=echo+ok&enabled=true\
@@ -2975,16 +3233,23 @@ async fn invalid_filter_line_returns_error() {
              &retry_initial_delay=&retry_max_delay=\
              &auth_mode=none\
              &trigger_filters_text=nooperator\
-             &trigger_windows_text=&trigger_cooldown=&trigger_rate_max=&trigger_rate_window="
+             &trigger_windows_text=&trigger_cooldown=&trigger_rate_max=&trigger_rate_window=",
         )
         .send()
         .await
         .unwrap();
 
     // Should redirect back with error query param
-    assert_eq!(resp.status(), 303, "invalid filter should cause redirect with error");
+    assert_eq!(
+        resp.status(),
+        303,
+        "invalid filter should cause redirect with error"
+    );
     let location = resp.headers().get("location").unwrap().to_str().unwrap();
-    assert!(location.contains("error="), "redirect should contain error param");
+    assert!(
+        location.contains("error="),
+        "redirect should contain error param"
+    );
 }
 
 #[tokio::test]
@@ -2994,7 +3259,7 @@ async fn exists_filter_requires_no_value() {
 
     let resp = client
         .post(format!("{url}/hooks/new"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .header("Content-Type", "application/x-www-form-urlencoded")
         .body(
             "name=Exists+Hook&slug=exists-hook&command=echo+ok&enabled=true\
@@ -3003,7 +3268,7 @@ async fn exists_filter_requires_no_value() {
              &retry_initial_delay=&retry_max_delay=\
              &auth_mode=none\
              &trigger_filters_text=tag%3Aexists\
-             &trigger_windows_text=&trigger_cooldown=&trigger_rate_max=&trigger_rate_window="
+             &trigger_windows_text=&trigger_cooldown=&trigger_rate_max=&trigger_rate_window=",
         )
         .send()
         .await
@@ -3012,10 +3277,19 @@ async fn exists_filter_requires_no_value() {
     assert_eq!(resp.status(), 303, "exists filter should succeed");
 
     let toml_content = std::fs::read_to_string(&config_path).unwrap();
-    assert!(toml_content.contains("\"tag\""), "TOML should contain field 'tag'");
-    assert!(toml_content.contains("\"exists\""), "TOML should contain operator 'exists'");
+    assert!(
+        toml_content.contains("\"tag\""),
+        "TOML should contain field 'tag'"
+    );
+    assert!(
+        toml_content.contains("\"exists\""),
+        "TOML should contain operator 'exists'"
+    );
     // exists filter should not write a value key
-    assert!(!toml_content.contains("value = "), "exists filter should not write value");
+    assert!(
+        !toml_content.contains("value = "),
+        "exists filter should not write value"
+    );
 }
 
 // --- Trigger rule pipeline integration tests ---
@@ -3034,7 +3308,10 @@ async fn trigger_no_rules_fires_normally() {
 
     assert_eq!(resp.status(), 200);
     let body: serde_json::Value = resp.json().await.unwrap();
-    assert!(body["execution_id"].is_string(), "should return execution_id");
+    assert!(
+        body["execution_id"].is_string(),
+        "should return execution_id"
+    );
 }
 
 #[tokio::test]
@@ -3091,7 +3368,10 @@ async fn trigger_payload_filter_allows_matching() {
 
     assert_eq!(resp.status(), 200);
     let body: serde_json::Value = resp.json().await.unwrap();
-    assert!(body["execution_id"].is_string(), "matching payload should fire");
+    assert!(
+        body["execution_id"].is_string(),
+        "matching payload should fire"
+    );
 }
 
 #[tokio::test]
@@ -3151,9 +3431,24 @@ async fn trigger_rate_limit_rejects_over_limit() {
     let url = spawn_server(test_state(config_with_hook(hook)).await).await;
     let client = reqwest::Client::new();
 
-    let r1 = client.post(format!("{url}/hook/rate-limited-hook")).json(&serde_json::json!({})).send().await.unwrap();
-    let r2 = client.post(format!("{url}/hook/rate-limited-hook")).json(&serde_json::json!({})).send().await.unwrap();
-    let r3 = client.post(format!("{url}/hook/rate-limited-hook")).json(&serde_json::json!({})).send().await.unwrap();
+    let r1 = client
+        .post(format!("{url}/hook/rate-limited-hook"))
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    let r2 = client
+        .post(format!("{url}/hook/rate-limited-hook"))
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    let r3 = client
+        .post(format!("{url}/hook/rate-limited-hook"))
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
 
     assert_eq!(r1.status(), 200, "first request allowed");
     assert_eq!(r2.status(), 200, "second request allowed");
@@ -3191,7 +3486,9 @@ async fn trigger_attempts_logged_for_rejections() {
 
     // Verify trigger_attempt was logged with filtered status
     let pool = state.db.pool();
-    let attempts = trigger_attempt::list_by_hook(pool, "log-test-hook", 10, 0).await.unwrap();
+    let attempts = trigger_attempt::list_by_hook(pool, "log-test-hook", 10, 0)
+        .await
+        .unwrap();
     assert_eq!(attempts.len(), 1);
     assert_eq!(attempts[0].status, TriggerAttemptStatus::Filtered);
     assert!(!attempts[0].reason.is_empty());
@@ -3205,11 +3502,14 @@ async fn trigger_attempts_logged_for_rejections() {
 #[tokio::test]
 async fn approve_execution_transitions_and_runs() {
     use sendword::config::ApprovalConfig;
-    use sendword::models::execution::{self, NewExecution};
     use sendword::models::ExecutionStatus;
+    use sendword::models::execution::{self, NewExecution};
 
     let mut hook = shell_hook("approve-run-hook");
-    hook.approval = Some(ApprovalConfig { required: true, timeout: None });
+    hook.approval = Some(ApprovalConfig {
+        required: true,
+        timeout: None,
+    });
     let config = config_with_hook(hook);
 
     let state = test_state(config).await;
@@ -3235,7 +3535,7 @@ async fn approve_execution_transitions_and_runs() {
     let client = client_no_redirect();
     let resp = client
         .post(format!("{url}/executions/{}/approve", exec.id))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
@@ -3264,11 +3564,14 @@ async fn approve_execution_transitions_and_runs() {
 #[tokio::test]
 async fn reject_execution_marks_rejected() {
     use sendword::config::ApprovalConfig;
-    use sendword::models::execution::{self, NewExecution};
     use sendword::models::ExecutionStatus;
+    use sendword::models::execution::{self, NewExecution};
 
     let mut hook = shell_hook("reject-hook");
-    hook.approval = Some(ApprovalConfig { required: true, timeout: None });
+    hook.approval = Some(ApprovalConfig {
+        required: true,
+        timeout: None,
+    });
     let config = config_with_hook(hook);
 
     let state = test_state(config).await;
@@ -3293,14 +3596,16 @@ async fn reject_execution_marks_rejected() {
     let client = client_no_redirect();
     let resp = client
         .post(format!("{url}/executions/{}/reject", exec.id))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
 
     assert_eq!(resp.status(), 303);
 
-    let updated = execution::get_by_id(state.db.pool(), &exec.id).await.unwrap();
+    let updated = execution::get_by_id(state.db.pool(), &exec.id)
+        .await
+        .unwrap();
     assert_eq!(updated.status, ExecutionStatus::Rejected);
     assert!(updated.completed_at.is_some());
 }
@@ -3333,7 +3638,7 @@ async fn approve_wrong_status_returns_409() {
     let client = client_no_redirect();
     let resp = client
         .post(format!("{url}/executions/{}/approve", exec.id))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
@@ -3344,11 +3649,14 @@ async fn approve_wrong_status_returns_409() {
 #[tokio::test]
 async fn pending_approvals_page_lists_pending() {
     use sendword::config::ApprovalConfig;
-    use sendword::models::execution::{self, NewExecution};
     use sendword::models::ExecutionStatus;
+    use sendword::models::execution::{self, NewExecution};
 
     let mut hook = shell_hook("approvals-page-hook");
-    hook.approval = Some(ApprovalConfig { required: true, timeout: None });
+    hook.approval = Some(ApprovalConfig {
+        required: true,
+        timeout: None,
+    });
     let config = config_with_hook(hook);
 
     let state = test_state(config).await;
@@ -3373,15 +3681,21 @@ async fn pending_approvals_page_lists_pending() {
     let client = reqwest::Client::new();
     let resp = client
         .get(format!("{url}/approvals"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
 
     assert_eq!(resp.status(), 200);
     let body = resp.text().await.unwrap();
-    assert!(body.contains(&exec.id), "approvals page should list execution id");
-    assert!(body.contains("approvals-page-hook"), "approvals page should list hook slug");
+    assert!(
+        body.contains(&exec.id),
+        "approvals page should list execution id"
+    );
+    assert!(
+        body.contains("approvals-page-hook"),
+        "approvals page should list hook slug"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -3393,8 +3707,13 @@ async fn mutex_blocks_concurrent_execution() {
     use sendword::config::{ConcurrencyConfig, ConcurrencyMode};
 
     let mut hook = shell_hook("mutex-hook");
-    hook.executor = ExecutorConfig::Shell { command: "sleep 3".to_owned() };
-    hook.concurrency = Some(ConcurrencyConfig { mode: ConcurrencyMode::Mutex, queue_depth: 0 });
+    hook.executor = ExecutorConfig::Shell {
+        command: "sleep 3".to_owned(),
+    };
+    hook.concurrency = Some(ConcurrencyConfig {
+        mode: ConcurrencyMode::Mutex,
+        queue_depth: 0,
+    });
     let url = spawn_server(test_state(config_with_hook(hook)).await).await;
 
     let client = reqwest::Client::new();
@@ -3426,11 +3745,13 @@ async fn mutex_blocks_concurrent_execution() {
 #[tokio::test]
 async fn queue_defers_and_processes() {
     use sendword::config::{ConcurrencyConfig, ConcurrencyMode};
-    use sendword::models::execution;
     use sendword::models::ExecutionStatus;
+    use sendword::models::execution;
 
     let mut hook = shell_hook("queue-hook");
-    hook.executor = ExecutorConfig::Shell { command: "sleep 1".to_owned() };
+    hook.executor = ExecutorConfig::Shell {
+        command: "sleep 1".to_owned(),
+    };
     hook.concurrency = Some(ConcurrencyConfig {
         mode: ConcurrencyMode::Queue,
         queue_depth: 5,
@@ -3487,11 +3808,14 @@ async fn queue_defers_and_processes() {
 #[tokio::test]
 async fn approval_defers_execution() {
     use sendword::config::ApprovalConfig;
-    use sendword::models::execution;
     use sendword::models::ExecutionStatus;
+    use sendword::models::execution;
 
     let mut hook = shell_hook("approval-defer-hook");
-    hook.approval = Some(ApprovalConfig { required: true, timeout: None });
+    hook.approval = Some(ApprovalConfig {
+        required: true,
+        timeout: None,
+    });
     let state = test_state(config_with_hook(hook)).await;
     let url = spawn_server(Arc::clone(&state)).await;
 
@@ -3508,18 +3832,23 @@ async fn approval_defers_execution() {
     let exec_id = body["execution_id"].as_str().unwrap();
 
     // Execution should be in pending_approval state, not running
-    let exec = execution::get_by_id(state.db.pool(), exec_id).await.unwrap();
+    let exec = execution::get_by_id(state.db.pool(), exec_id)
+        .await
+        .unwrap();
     assert_eq!(exec.status, ExecutionStatus::PendingApproval);
 }
 
 #[tokio::test]
 async fn approval_reject_prevents_execution() {
     use sendword::config::ApprovalConfig;
-    use sendword::models::execution;
     use sendword::models::ExecutionStatus;
+    use sendword::models::execution;
 
     let mut hook = shell_hook("approval-reject-hook");
-    hook.approval = Some(ApprovalConfig { required: true, timeout: None });
+    hook.approval = Some(ApprovalConfig {
+        required: true,
+        timeout: None,
+    });
     let state = test_state(config_with_hook(hook)).await;
     let token = create_test_session(&state).await;
     let url = spawn_server(Arc::clone(&state)).await;
@@ -3538,21 +3867,23 @@ async fn approval_reject_prevents_execution() {
     let client = client_no_redirect();
     let resp = client
         .post(format!("{url}/executions/{exec_id}/reject"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), 303);
 
     // Execution should be rejected, never ran
-    let exec = execution::get_by_id(state.db.pool(), &exec_id).await.unwrap();
+    let exec = execution::get_by_id(state.db.pool(), &exec_id)
+        .await
+        .unwrap();
     assert_eq!(exec.status, ExecutionStatus::Rejected);
 }
 
 #[tokio::test]
 async fn mutex_plus_approval_holds_lock_until_approved() {
-    use sendword::config::{ApprovalConfig, ConcurrencyConfig, ConcurrencyMode};
     use sendword::barriers::execution_lock;
+    use sendword::config::{ApprovalConfig, ConcurrencyConfig, ConcurrencyMode};
     use sendword::models::execution;
 
     let mut hook = shell_hook("mutex-approval-hook");
@@ -3560,7 +3891,10 @@ async fn mutex_plus_approval_holds_lock_until_approved() {
         mode: ConcurrencyMode::Mutex,
         queue_depth: 0,
     });
-    hook.approval = Some(ApprovalConfig { required: true, timeout: None });
+    hook.approval = Some(ApprovalConfig {
+        required: true,
+        timeout: None,
+    });
     let state = test_state(config_with_hook(hook)).await;
     let token = create_test_session(&state).await;
     let url = spawn_server(Arc::clone(&state)).await;
@@ -3582,13 +3916,17 @@ async fn mutex_plus_approval_holds_lock_until_approved() {
     let holder = execution_lock::get_holder(pool, "mutex-approval-hook")
         .await
         .unwrap();
-    assert_eq!(holder.as_deref(), Some(exec_id.as_str()), "lock should be held by pending_approval execution");
+    assert_eq!(
+        holder.as_deref(),
+        Some(exec_id.as_str()),
+        "lock should be held by pending_approval execution"
+    );
 
     // Approve the execution
     let client = client_no_redirect();
     client
         .post(format!("{url}/executions/{exec_id}/approve"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
@@ -3610,8 +3948,8 @@ async fn mutex_plus_approval_holds_lock_until_approved() {
 #[tokio::test]
 async fn recovery_cleans_orphaned_locks() {
     use sendword::barriers::{self, execution_lock};
-    use sendword::models::execution::{self, NewExecution};
     use sendword::models::ExecutionStatus;
+    use sendword::models::execution::{self, NewExecution};
 
     let state = test_state(AppConfig::default()).await;
     let pool = state.db.pool();
@@ -3639,18 +3977,25 @@ async fn recovery_cleans_orphaned_locks() {
         .unwrap();
 
     // Manually insert an orphaned lock pointing to this terminal execution
-    execution_lock::try_acquire(pool, "any-hook", &exec.id).await.unwrap();
+    execution_lock::try_acquire(pool, "any-hook", &exec.id)
+        .await
+        .unwrap();
     let holder = execution_lock::get_holder(pool, "any-hook").await.unwrap();
-    assert!(holder.is_some(), "orphaned lock should exist before recovery");
+    assert!(
+        holder.is_some(),
+        "orphaned lock should exist before recovery"
+    );
 
     // Run recovery
     barriers::recover_barriers(pool).await;
 
     // Lock should be gone
     let holder_after = execution_lock::get_holder(pool, "any-hook").await.unwrap();
-    assert!(holder_after.is_none(), "orphaned lock should be cleaned up by recovery");
+    assert!(
+        holder_after.is_none(),
+        "orphaned lock should be cleaned up by recovery"
+    );
 }
-
 
 /// Verifies that the dashboard renders colored status dots for each hook based on
 /// the last 5 executions. Hooks with no executions should show the "No executions yet"
@@ -3669,7 +4014,9 @@ async fn dashboard_shows_status_indicators() {
                 description: String::new(),
                 enabled: true,
                 auth: None,
-                executor: ExecutorConfig::Shell { command: "echo ok".into() },
+                executor: ExecutorConfig::Shell {
+                    command: "echo ok".into(),
+                },
                 env: HashMap::new(),
                 cwd: None,
                 timeout: None,
@@ -3687,7 +4034,9 @@ async fn dashboard_shows_status_indicators() {
                 description: String::new(),
                 enabled: true,
                 auth: None,
-                executor: ExecutorConfig::Shell { command: "echo hi".into() },
+                executor: ExecutorConfig::Shell {
+                    command: "echo hi".into(),
+                },
                 env: HashMap::new(),
                 cwd: None,
                 timeout: None,
@@ -3750,7 +4099,7 @@ async fn dashboard_shows_status_indicators() {
     let client = reqwest::Client::new();
     let resp = client
         .get(format!("{url}/"))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .unwrap();
@@ -3758,8 +4107,14 @@ async fn dashboard_shows_status_indicators() {
     let body = resp.text().await.unwrap();
 
     // The hook names should appear.
-    assert!(body.contains("Active Hook"), "dashboard should show hook name");
-    assert!(body.contains("Empty Hook"), "dashboard should show empty hook name");
+    assert!(
+        body.contains("Active Hook"),
+        "dashboard should show hook name"
+    );
+    assert!(
+        body.contains("Empty Hook"),
+        "dashboard should show empty hook name"
+    );
 
     // "empty-hook" has no executions — the template shows the fallback text.
     assert!(
@@ -3771,12 +4126,12 @@ async fn dashboard_shows_status_indicators() {
     // The dots are <span> elements with color classes based on status.
     // Green dot for success:
     assert!(
-        body.contains("bg-green-500"),
+        body.contains("sw-dot-success"),
         "dashboard should render a green dot for a successful execution"
     );
     // Red dot for failed:
     assert!(
-        body.contains("bg-red-500"),
+        body.contains("sw-dot-error"),
         "dashboard should render a red dot for a failed execution"
     );
 }
@@ -3820,7 +4175,7 @@ async fn sse_returns_done_for_terminal_execution() {
     let client = reqwest::Client::new();
     let resp = client
         .get(format!("{url}/executions/{}/logs/stream", exec.id))
-        .header("Cookie", format!("sendword_session={token}"))
+        .header("Cookie", format!("allowthem_session={token}"))
         .send()
         .await
         .expect("request SSE endpoint");

@@ -32,9 +32,7 @@ impl MaskingConfig {
         for (i, pattern) in self.patterns.iter().enumerate() {
             match Regex::new(pattern) {
                 Ok(re) => compiled.push(re),
-                Err(e) => errors.push(format!(
-                    "masking.patterns[{i}] '{}': {e}", pattern
-                )),
+                Err(e) => errors.push(format!("masking.patterns[{i}] '{}': {e}", pattern)),
             }
         }
 
@@ -75,9 +73,10 @@ pub fn mask_secrets(
             .or_else(|| std::env::var(var_name).ok());
 
         if let Some(val) = value
-            && !val.is_empty() {
-                result = result.replace(&val, MASK);
-            }
+            && !val.is_empty()
+        {
+            result = result.replace(&val, MASK);
+        }
     }
 
     // 2. Apply regex patterns
@@ -125,11 +124,7 @@ mod tests {
     #[test]
     fn compile_reports_all_invalid_patterns() {
         let mut cfg = MaskingConfig {
-            patterns: vec![
-                "[valid".into(),
-                r"ok_pattern".into(),
-                "(unclosed".into(),
-            ],
+            patterns: vec!["[valid".into(), r"ok_pattern".into(), "(unclosed".into()],
             ..Default::default()
         };
         let errors = cfg.compile().unwrap_err();
@@ -214,10 +209,7 @@ mod tests {
 
     #[test]
     fn multiple_env_vars_and_patterns_all_applied() {
-        let cfg = config_with_both(
-            &["DB_PASS", "API_KEY"],
-            &[r"ghp_[A-Za-z0-9]{8}"],
-        );
+        let cfg = config_with_both(&["DB_PASS", "API_KEY"], &[r"ghp_[A-Za-z0-9]{8}"]);
         let env = HashMap::from([
             ("DB_PASS".into(), "dbpass123".into()),
             ("API_KEY".into(), "apikey456".into()),
@@ -241,10 +233,7 @@ mod tests {
         // If the env var value "secret123" also matches the regex pattern,
         // env var masking runs first (replacing "secret123" with "***"),
         // so the regex never sees the original value.
-        let cfg = config_with_both(
-            &["MY_TOKEN"],
-            &[r"secret\d+"],
-        );
+        let cfg = config_with_both(&["MY_TOKEN"], &[r"secret\d+"]);
         let env = HashMap::from([("MY_TOKEN".into(), "secret123".into())]);
         let text = "token is secret123 here";
         let result = mask_secrets(text, &cfg, &env);
@@ -255,10 +244,7 @@ mod tests {
 
     #[test]
     fn non_matching_patterns_leave_text_unchanged() {
-        let cfg = config_with_both(
-            &["NONEXISTENT_VAR_zz9q"],
-            &[r"ghp_[A-Za-z0-9]{36}"],
-        );
+        let cfg = config_with_both(&["NONEXISTENT_VAR_zz9q"], &[r"ghp_[A-Za-z0-9]{36}"]);
         let env = HashMap::new();
         let text = "nothing matches here at all";
         let result = mask_secrets(text, &cfg, &env);
@@ -269,15 +255,18 @@ mod tests {
     fn deleted_hook_env_empty_but_regex_still_masks() {
         // Simulates a hook that was deleted from config: hook_env is empty,
         // but regex patterns should still be applied.
-        let cfg = config_with_both(
-            &["DELETED_HOOK_SECRET"],
-            &[r"Bearer [A-Za-z0-9._~+/=-]+"],
-        );
+        let cfg = config_with_both(&["DELETED_HOOK_SECRET"], &[r"Bearer [A-Za-z0-9._~+/=-]+"]);
         let env = HashMap::new(); // hook was deleted, no env map
         let text = "Authorization: Bearer abc123.xyz\nUsing key: actual_secret";
         let result = mask_secrets(text, &cfg, &env);
-        assert!(result.contains("***"), "regex should still mask bearer token");
-        assert!(result.contains("actual_secret"), "env var not resolvable, value not masked");
+        assert!(
+            result.contains("***"),
+            "regex should still mask bearer token"
+        );
+        assert!(
+            result.contains("actual_secret"),
+            "env var not resolvable, value not masked"
+        );
         assert_eq!(result, "Authorization: ***\nUsing key: actual_secret");
     }
 
@@ -310,9 +299,21 @@ mod tests {
 
         let result = mask_secrets(log_output, &cfg, &hook_env);
 
-        assert!(!result.contains("production-key"), "env var value should be masked");
-        assert!(!result.contains("Bearer eyJ"), "bearer token should be masked");
-        assert!(result.contains("Starting deploy"), "non-secret content preserved");
-        assert!(result.contains("Deploy complete"), "non-secret content preserved");
+        assert!(
+            !result.contains("production-key"),
+            "env var value should be masked"
+        );
+        assert!(
+            !result.contains("Bearer eyJ"),
+            "bearer token should be masked"
+        );
+        assert!(
+            result.contains("Starting deploy"),
+            "non-secret content preserved"
+        );
+        assert!(
+            result.contains("Deploy complete"),
+            "non-secret content preserved"
+        );
     }
 }

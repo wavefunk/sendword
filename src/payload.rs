@@ -86,10 +86,7 @@ impl PayloadSchema {
                     if field.required {
                         errors.push(FieldValidationError {
                             field: field.name.clone(),
-                            message: format!(
-                                "required field '{}' is missing",
-                                field.name,
-                            ),
+                            message: format!("required field '{}' is missing", field.name,),
                         });
                     }
                 }

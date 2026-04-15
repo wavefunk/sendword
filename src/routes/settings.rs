@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
+use axum::Form;
+use axum::Router;
 use axum::extract::{Path, Query, State};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::get;
-use axum::Form;
-use axum::Router;
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -18,8 +18,14 @@ use crate::templates::context;
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/settings/users", get(list_users).post(create_user))
-        .route("/settings/users/{id}/delete", axum::routing::post(delete_user))
-        .route("/settings/password", get(password_page).post(change_password))
+        .route(
+            "/settings/users/{id}/delete",
+            axum::routing::post(delete_user),
+        )
+        .route(
+            "/settings/password",
+            get(password_page).post(change_password),
+        )
 }
 
 // --- Query params for flash messages ---
@@ -90,7 +96,12 @@ async fn create_user(
         }
     };
 
-    match state.ath.db().create_user(email, &form.password, None).await {
+    match state
+        .ath
+        .db()
+        .create_user(email, &form.password, None)
+        .await
+    {
         Ok(created) => {
             let msg = format!("User '{}' created", created.email.as_str());
             let encoded = urlencoding::encode(&msg);
@@ -173,8 +184,7 @@ async fn change_password(
 ) -> Response {
     // Validate new password matches confirmation
     if form.new_password != form.confirm_password {
-        return Redirect::to("/settings/password?error=New+passwords+do+not+match")
-            .into_response();
+        return Redirect::to("/settings/password?error=New+passwords+do+not+match").into_response();
     }
 
     if form.new_password.is_empty() {
@@ -194,8 +204,7 @@ async fn change_password(
 
     // Verify current password
     let Some(pw_hash) = &current_user.password_hash else {
-        return Redirect::to("/settings/password?error=Failed+to+change+password")
-            .into_response();
+        return Redirect::to("/settings/password?error=Failed+to+change+password").into_response();
     };
 
     match password::verify_password(&form.current_password, pw_hash) {
@@ -212,10 +221,14 @@ async fn change_password(
     }
 
     // Update password
-    match state.ath.db().update_user_password(auth.id, &form.new_password).await {
+    match state
+        .ath
+        .db()
+        .update_user_password(auth.id, &form.new_password)
+        .await
+    {
         Ok(()) => {
-            Redirect::to("/settings/password?success=Password+updated+successfully")
-                .into_response()
+            Redirect::to("/settings/password?success=Password+updated+successfully").into_response()
         }
         Err(e) => {
             tracing::error!(error = %e, "failed to update password");
@@ -258,7 +271,12 @@ mod tests {
     /// Create a test user and return a session cookie value for authenticated requests.
     async fn create_test_session(state: &Arc<AppState>) -> String {
         let email = Email::new("admin@example.com".into()).unwrap();
-        let user = state.ath.db().create_user(email, "password123", None).await.unwrap();
+        let user = state
+            .ath
+            .db()
+            .create_user(email, "password123", None)
+            .await
+            .unwrap();
 
         let token = generate_token();
         let token_hash = hash_token(&token);
@@ -404,7 +422,12 @@ mod tests {
 
         // Create another user to delete
         let other_email = Email::new("other@example.com".into()).unwrap();
-        let other = state.ath.db().create_user(other_email, "password", None).await.unwrap();
+        let other = state
+            .ath
+            .db()
+            .create_user(other_email, "password", None)
+            .await
+            .unwrap();
 
         let resp = app(state.clone())
             .oneshot(

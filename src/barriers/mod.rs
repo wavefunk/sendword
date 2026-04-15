@@ -11,7 +11,7 @@ use crate::config::{ApprovalConfig, ConcurrencyConfig, ConcurrencyMode, Executor
 use crate::executor::ResolvedExecutor;
 use crate::interpolation::interpolate_command;
 use crate::models::trigger_attempt::TriggerAttemptStatus;
-use crate::models::{execution, ExecutionStatus};
+use crate::models::{ExecutionStatus, execution};
 use crate::server::AppState;
 
 /// Outcome of an execution barrier check.
@@ -53,7 +53,10 @@ pub async fn on_execution_complete(
     }
 
     // Peek at the queue without changing status yet
-    let next = execution_queue::peek_next(pool, hook_slug).await.ok().flatten();
+    let next = execution_queue::peek_next(pool, hook_slug)
+        .await
+        .ok()
+        .flatten();
 
     match next {
         None => {
@@ -71,9 +74,7 @@ pub async fn on_execution_complete(
 
             // Check if approval is needed for the dequeued execution
             if approval::requires_approval(approval.as_ref()) {
-                if let Err(e) =
-                    execution::mark_pending_approval(pool, &queued.execution_id).await
-                {
+                if let Err(e) = execution::mark_pending_approval(pool, &queued.execution_id).await {
                     tracing::warn!(
                         execution_id = %queued.execution_id,
                         "failed to transition dequeued execution to pending_approval: {e}"
@@ -110,7 +111,13 @@ fn spawn_dequeued_task(
     concurrency: Option<ConcurrencyConfig>,
     approval: Option<ApprovalConfig>,
 ) {
-    tokio::spawn(run_dequeued(state, hook_slug, execution_id, concurrency, approval));
+    tokio::spawn(run_dequeued(
+        state,
+        hook_slug,
+        execution_id,
+        concurrency,
+        approval,
+    ));
 }
 
 /// Run a dequeued execution to completion, then hand off to the next queue item.
@@ -157,17 +164,25 @@ async fn run_dequeued(
             } else {
                 command.clone()
             };
-            ResolvedExecutor::Shell { command: interpolated }
+            ResolvedExecutor::Shell {
+                command: interpolated,
+            }
         }
-        ExecutorConfig::Script { path } => {
-            ResolvedExecutor::Script { path: std::path::PathBuf::from(path) }
-        }
-        ExecutorConfig::Http { method, url, headers, body, follow_redirects } => {
-            let payload_value: serde_json::Value =
-                serde_json::from_str(&exec.request_payload)
-                    .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+        ExecutorConfig::Script { path } => ResolvedExecutor::Script {
+            path: std::path::PathBuf::from(path),
+        },
+        ExecutorConfig::Http {
+            method,
+            url,
+            headers,
+            body,
+            follow_redirects,
+        } => {
+            let payload_value: serde_json::Value = serde_json::from_str(&exec.request_payload)
+                .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
             let interpolated_url = interpolate_command(url, &payload_value).into_owned();
-            let interpolated_body = body.as_deref()
+            let interpolated_body = body
+                .as_deref()
                 .map(|b| interpolate_command(b, &payload_value).into_owned());
             ResolvedExecutor::Http {
                 method: *method,
@@ -208,16 +223,16 @@ async fn run_dequeued(
     if let Some(ref nc) = notification_config
         && let Ok(exec_record) =
             crate::models::execution::get_by_id(&pool_clone, &execution_id_clone).await
-        {
-            crate::notification::send_notification(
-                &state.http_client,
-                nc,
-                &hook_snapshot,
-                &result,
-                &exec_record,
-            )
-            .await;
-        }
+    {
+        crate::notification::send_notification(
+            &state.http_client,
+            nc,
+            &hook_snapshot,
+            &result,
+            &exec_record,
+        )
+        .await;
+    }
 
     // After the execution finishes, hand off to the next queue item (or release the lock).
     // Calling on_execution_complete here is safe because run_dequeued is only ever called
@@ -241,7 +256,10 @@ pub async fn recover_barriers(pool: &SqlitePool) {
     .await
     {
         Ok(r) if r.rows_affected() > 0 => {
-            tracing::info!(count = r.rows_affected(), "recovered stuck running executions");
+            tracing::info!(
+                count = r.rows_affected(),
+                "recovered stuck running executions"
+            );
         }
         Err(e) => tracing::warn!("failed to recover running executions: {e}"),
         _ => {}

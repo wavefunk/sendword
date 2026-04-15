@@ -45,7 +45,7 @@ pub fn spawn_backup_scheduler(state: Arc<AppState>) -> tokio::task::JoinHandle<(
             let delay = next_time.signed_duration_since(now);
             if delay.num_milliseconds() > 0 {
                 tokio::time::sleep(std::time::Duration::from_millis(
-                    delay.num_milliseconds() as u64,
+                    delay.num_milliseconds() as u64
                 ))
                 .await;
             }

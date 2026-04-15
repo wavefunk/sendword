@@ -1,8 +1,8 @@
 use crate::config::{HookConfig, NotificationConfig, NotifyOutcome};
 use crate::executor::ExecutionResult;
 use crate::interpolation::interpolate_command;
-use crate::models::execution::Execution;
 use crate::models::ExecutionStatus;
+use crate::models::execution::Execution;
 
 /// Build a JSON context for notification template interpolation.
 fn notification_context(

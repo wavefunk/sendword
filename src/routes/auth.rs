@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
+use axum::Form;
+use axum::Router;
 use axum::extract::State;
 use axum::http::header::SET_COOKIE;
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::get;
-use axum::Form;
-use axum::Router;
 use chrono::Utc;
 use serde::Deserialize;
 
@@ -31,16 +31,15 @@ async fn login_page(
         && let Ok(cookie_str) = cookie_header.to_str()
     {
         let cookie_name = state.auth_client.session_cookie_name();
-        if let Some(token) = allowthem_core::parse_session_cookie(cookie_str, cookie_name) {
-            if state
+        if let Some(token) = allowthem_core::parse_session_cookie(cookie_str, cookie_name)
+            && state
                 .auth_client
                 .validate_session(&token)
                 .await
                 .unwrap_or(None)
                 .is_some()
-            {
-                return Ok(Redirect::to("/").into_response());
-            }
+        {
+            return Ok(Redirect::to("/").into_response());
         }
     }
 
@@ -100,18 +99,15 @@ async fn login_submit(
 }
 
 /// GET /logout — delete session, clear cookie, redirect to /login.
-async fn logout(
-    State(state): State<Arc<AppState>>,
-    headers: axum::http::HeaderMap,
-) -> Response {
+async fn logout(State(state): State<Arc<AppState>>, headers: axum::http::HeaderMap) -> Response {
     if let Some(cookie_header) = headers.get(axum::http::header::COOKIE)
         && let Ok(cookie_str) = cookie_header.to_str()
     {
         let cookie_name = state.auth_client.session_cookie_name();
-        if let Some(token) = allowthem_core::parse_session_cookie(cookie_str, cookie_name) {
-            if let Err(e) = state.auth_client.logout(&token).await {
-                tracing::warn!(error = %e, "failed to delete session during logout");
-            }
+        if let Some(token) = allowthem_core::parse_session_cookie(cookie_str, cookie_name)
+            && let Err(e) = state.auth_client.logout(&token).await
+        {
+            tracing::warn!(error = %e, "failed to delete session during logout");
         }
     }
 

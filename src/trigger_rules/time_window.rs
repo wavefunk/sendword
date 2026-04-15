@@ -10,8 +10,8 @@ pub fn evaluate(windows: &[TimeWindow]) -> EvalOutcome {
 }
 
 pub fn evaluate_at(windows: &[TimeWindow], now: DateTime<Utc>) -> EvalOutcome {
-    let current_time = NaiveTime::from_hms_opt(now.hour(), now.minute(), now.second())
-        .unwrap_or(NaiveTime::MIN);
+    let current_time =
+        NaiveTime::from_hms_opt(now.hour(), now.minute(), now.second()).unwrap_or(NaiveTime::MIN);
     let current_day = weekday_abbrev(now.weekday());
 
     for window in windows {
@@ -71,7 +71,8 @@ mod tests {
     }
 
     fn utc(year: i32, month: u32, day: u32, hour: u32, min: u32) -> DateTime<Utc> {
-        Utc.with_ymd_and_hms(year, month, day, hour, min, 0).unwrap()
+        Utc.with_ymd_and_hms(year, month, day, hour, min, 0)
+            .unwrap()
     }
 
     // 2026-04-13 is a Monday
@@ -80,21 +81,42 @@ mod tests {
     #[test]
     fn within_window_allows() {
         let now = utc(2026, 4, 13, 10, 0); // Monday 10:00
-        let result = evaluate_at(&[window(&["Mon", "Tue", "Wed", "Thu", "Fri"], "09:00", "17:00")], now);
+        let result = evaluate_at(
+            &[window(
+                &["Mon", "Tue", "Wed", "Thu", "Fri"],
+                "09:00",
+                "17:00",
+            )],
+            now,
+        );
         assert!(matches!(result, EvalOutcome::Allow));
     }
 
     #[test]
     fn outside_window_rejects() {
         let now = utc(2026, 4, 13, 20, 0); // Monday 20:00
-        let result = evaluate_at(&[window(&["Mon", "Tue", "Wed", "Thu", "Fri"], "09:00", "17:00")], now);
+        let result = evaluate_at(
+            &[window(
+                &["Mon", "Tue", "Wed", "Thu", "Fri"],
+                "09:00",
+                "17:00",
+            )],
+            now,
+        );
         assert!(matches!(result, EvalOutcome::Reject { .. }));
     }
 
     #[test]
     fn wrong_day_rejects() {
         let now = utc(2026, 4, 18, 10, 0); // Saturday 10:00
-        let result = evaluate_at(&[window(&["Mon", "Tue", "Wed", "Thu", "Fri"], "09:00", "17:00")], now);
+        let result = evaluate_at(
+            &[window(
+                &["Mon", "Tue", "Wed", "Thu", "Fri"],
+                "09:00",
+                "17:00",
+            )],
+            now,
+        );
         assert!(matches!(result, EvalOutcome::Reject { .. }));
     }
 

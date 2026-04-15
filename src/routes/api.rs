@@ -7,9 +7,9 @@ use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::extractors::AuthUser;
 use crate::backup::BackupEntry;
 use crate::config::AppConfig;
+use crate::extractors::AuthUser;
 use crate::server::AppState;
 
 pub fn router() -> Router<Arc<AppState>> {
@@ -123,7 +123,9 @@ async fn list_backups(
     })?;
 
     match crate::backup::list_backups(backup_config).await {
-        Ok(entries) => Ok(Json(entries.into_iter().map(BackupListItem::from).collect())),
+        Ok(entries) => Ok(Json(
+            entries.into_iter().map(BackupListItem::from).collect(),
+        )),
         Err(e) => Err((
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": e.to_string() })),
@@ -200,9 +202,7 @@ async fn restore_backup(
     })?;
 
     let output_dir = tmp.path().to_path_buf();
-    if let Err(e) =
-        crate::backup::restore_backup(backup_config, &body.key, &output_dir).await
-    {
+    if let Err(e) = crate::backup::restore_backup(backup_config, &body.key, &output_dir).await {
         return Err((
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": e.to_string() })),
@@ -227,9 +227,9 @@ async fn restore_backup(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::Router;
     use axum::body::Body;
     use axum::http::{Method, Request};
-    use axum::Router;
     use tower::ServiceExt;
 
     use allowthem_core::{AllowThemBuilder, Email, EmbeddedAuthClient, generate_token, hash_token};
@@ -244,11 +244,9 @@ mod tests {
         let config_path = dir.path().join("sendword.toml");
         std::fs::write(&config_path, toml_content).expect("write config");
 
-        let config = AppConfig::load_from(
-            config_path.to_str().unwrap(),
-            "nonexistent_overlay.json",
-        )
-        .expect("load config");
+        let config =
+            AppConfig::load_from(config_path.to_str().unwrap(), "nonexistent_overlay.json")
+                .expect("load config");
 
         let db = Db::new_in_memory().await.expect("db");
         db.migrate().await.expect("migrate");
@@ -260,7 +258,8 @@ mod tests {
             .expect("allowthem build");
         let auth_client = Arc::new(EmbeddedAuthClient::new(ath.clone(), "/login"));
 
-        let templates = crate::templates::Templates::new(crate::templates::Templates::default_dir());
+        let templates =
+            crate::templates::Templates::new(crate::templates::Templates::default_dir());
         let state = AppState::new(config, &config_path, db, templates, ath, auth_client);
         (state, dir)
     }
@@ -271,7 +270,12 @@ mod tests {
 
     async fn create_test_session(state: &Arc<AppState>) -> String {
         let email = Email::new("admin@example.com".into()).unwrap();
-        let user = state.ath.db().create_user(email, "password123", None).await.unwrap();
+        let user = state
+            .ath
+            .db()
+            .create_user(email, "password123", None)
+            .await
+            .unwrap();
         let token = generate_token();
         let token_hash = hash_token(&token);
         let expires = Utc::now() + Duration::hours(24);
@@ -304,7 +308,9 @@ mod tests {
             .unwrap();
 
         assert_eq!(resp.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let value: Value = serde_json::from_slice(&body).unwrap();
 
         // Verify key fields round-trip correctly
@@ -358,7 +364,9 @@ mod tests {
             )
             .await
             .unwrap();
-        let body = axum::body::to_bytes(export_resp.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(export_resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let mut config: Value = serde_json::from_slice(&body).unwrap();
         config["server"]["port"] = Value::from(9999u64);
 

@@ -242,10 +242,7 @@ pub async fn list_recent(pool: &SqlitePool, limit: i64) -> DbResult<Vec<Executio
 }
 
 /// Get the most recent execution for a given hook slug.
-pub async fn get_latest_by_hook(
-    pool: &SqlitePool,
-    hook_slug: &str,
-) -> DbResult<Option<Execution>> {
+pub async fn get_latest_by_hook(pool: &SqlitePool, hook_slug: &str) -> DbResult<Option<Execution>> {
     let row = sqlx::query_as::<_, Execution>(
         "SELECT id, hook_slug, triggered_at, started_at, completed_at, \
                 status, exit_code, log_path, trigger_source, request_payload, \
@@ -282,11 +279,10 @@ pub async fn list_recent_by_hook(
 
 /// Count total executions for a hook (for pagination).
 pub async fn count_by_hook(pool: &SqlitePool, hook_slug: &str) -> DbResult<i64> {
-    let row: (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM executions WHERE hook_slug = ?")
-            .bind(hook_slug)
-            .fetch_one(pool)
-            .await?;
+    let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM executions WHERE hook_slug = ?")
+        .bind(hook_slug)
+        .fetch_one(pool)
+        .await?;
     Ok(row.0)
 }
 
@@ -313,15 +309,21 @@ pub async fn list_by_hook_filtered(
 ) -> DbResult<Vec<Execution>> {
     let rows = match (filters.status, filters.from_date, filters.to_date) {
         (None, None, None) => list_by_hook(pool, hook_slug, limit, offset).await?,
-        (Some(s), None, None) => sqlx::query_as::<_, Execution>(
+        (Some(s), None, None) => {
+            sqlx::query_as::<_, Execution>(
                 "SELECT id, hook_slug, triggered_at, started_at, completed_at, \
                         status, exit_code, log_path, trigger_source, request_payload, \
                         retry_count, retry_of, approved_at, approved_by \
                  FROM executions WHERE hook_slug = ? AND status = ? \
                  ORDER BY triggered_at DESC LIMIT ? OFFSET ?",
             )
-            .bind(hook_slug).bind(s).bind(limit).bind(offset)
-            .fetch_all(pool).await?,
+            .bind(hook_slug)
+            .bind(s)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(pool)
+            .await?
+        }
         (status, from_date, to_date) => {
             // Fetch with status filter only, then apply dates in Rust.
             let candidates = if let Some(s) = status {
@@ -364,7 +366,9 @@ pub async fn list_by_hook_filtered(
                         // Include everything up to and including the to_date day.
                         // triggered_at is an ISO8601 timestamp; compare prefix.
                         let day = &e.triggered_at[..to.len().min(e.triggered_at.len())];
-                        if day > to { return false; }
+                        if day > to {
+                            return false;
+                        }
                     }
                     true
                 })
@@ -401,7 +405,11 @@ pub async fn count_by_hook_filtered(
             let all = list_by_hook_filtered(
                 pool,
                 hook_slug,
-                &ExecutionFilters { status, from_date, to_date },
+                &ExecutionFilters {
+                    status,
+                    from_date,
+                    to_date,
+                },
                 i64::MAX / 2,
                 0,
             )

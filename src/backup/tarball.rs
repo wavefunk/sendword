@@ -2,9 +2,9 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
+use flate2::Compression;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
-use flate2::Compression;
 use tar::{Archive, Builder};
 
 /// Create a `.tar.gz` archive containing the config file, optional JSON overlay,
@@ -95,7 +95,10 @@ mod tests {
         // Extracting the tarball must succeed even though sendword.json is absent.
         let extract_dir = tmp.path().join("extracted");
         let result = extract_tarball(&tarball_path, &extract_dir);
-        assert!(result.is_ok(), "extraction should succeed without sendword.json: {result:?}");
+        assert!(
+            result.is_ok(),
+            "extraction should succeed without sendword.json: {result:?}"
+        );
 
         // The TOML config and DB snapshot are present.
         assert!(

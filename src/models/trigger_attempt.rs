@@ -203,7 +203,10 @@ mod tests {
             (TriggerAttemptStatus::RateLimited, "rate_limited"),
             (TriggerAttemptStatus::ScheduleSkipped, "schedule_skipped"),
             (TriggerAttemptStatus::CooldownSkipped, "cooldown_skipped"),
-            (TriggerAttemptStatus::ConcurrencyRejected, "concurrency_rejected"),
+            (
+                TriggerAttemptStatus::ConcurrencyRejected,
+                "concurrency_rejected",
+            ),
             (TriggerAttemptStatus::PendingApproval, "pending_approval"),
         ];
         for (variant, expected) in cases {

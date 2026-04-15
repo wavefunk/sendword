@@ -1,6 +1,6 @@
 use sqlx::SqlitePool;
 
-use crate::barriers::{execution_lock, execution_queue, BarrierOutcome};
+use crate::barriers::{BarrierOutcome, execution_lock, execution_queue};
 use crate::config::{ConcurrencyConfig, ConcurrencyMode};
 use crate::models::execution::{self, NewExecution};
 use crate::models::trigger_attempt::TriggerAttemptStatus;
@@ -126,38 +126,70 @@ mod tests {
     #[tokio::test]
     async fn mutex_proceeds_when_no_lock() {
         let pool = test_pool().await;
-        let outcome = evaluate(&pool, "hook-a", "exec-1", &mutex_config(), &new_exec_params("exec-1", "hook-a")).await;
+        let outcome = evaluate(
+            &pool,
+            "hook-a",
+            "exec-1",
+            &mutex_config(),
+            &new_exec_params("exec-1", "hook-a"),
+        )
+        .await;
         assert!(matches!(outcome, BarrierOutcome::Proceed));
     }
 
     #[tokio::test]
     async fn mutex_rejects_when_lock_held() {
         let pool = test_pool().await;
-        execution_lock::try_acquire(&pool, "hook-a", "exec-1").await.unwrap();
+        execution_lock::try_acquire(&pool, "hook-a", "exec-1")
+            .await
+            .unwrap();
 
-        let outcome = evaluate(&pool, "hook-a", "exec-2", &mutex_config(), &new_exec_params("exec-2", "hook-a")).await;
+        let outcome = evaluate(
+            &pool,
+            "hook-a",
+            "exec-2",
+            &mutex_config(),
+            &new_exec_params("exec-2", "hook-a"),
+        )
+        .await;
         assert!(matches!(
             outcome,
-            BarrierOutcome::Reject { status: TriggerAttemptStatus::ConcurrencyRejected, .. }
+            BarrierOutcome::Reject {
+                status: TriggerAttemptStatus::ConcurrencyRejected,
+                ..
+            }
         ));
     }
 
     #[tokio::test]
     async fn queue_proceeds_when_no_lock() {
         let pool = test_pool().await;
-        let outcome = evaluate(&pool, "hook-a", "exec-1", &queue_config(5), &new_exec_params("exec-1", "hook-a")).await;
+        let outcome = evaluate(
+            &pool,
+            "hook-a",
+            "exec-1",
+            &queue_config(5),
+            &new_exec_params("exec-1", "hook-a"),
+        )
+        .await;
         assert!(matches!(outcome, BarrierOutcome::Proceed));
     }
 
     #[tokio::test]
     async fn queue_defers_when_lock_held() {
         let pool = test_pool().await;
-        execution_lock::try_acquire(&pool, "hook-a", "exec-1").await.unwrap();
+        execution_lock::try_acquire(&pool, "hook-a", "exec-1")
+            .await
+            .unwrap();
 
         let exec = new_exec_params("exec-2", "hook-a");
         let outcome = evaluate(&pool, "hook-a", "exec-2", &queue_config(5), &exec).await;
         match outcome {
-            BarrierOutcome::Defer { execution_id, reason, .. } => {
+            BarrierOutcome::Defer {
+                execution_id,
+                reason,
+                ..
+            } => {
                 assert_eq!(execution_id, "exec-2");
                 assert!(reason.contains("position"));
             }
@@ -171,26 +203,61 @@ mod tests {
     #[tokio::test]
     async fn queue_rejects_when_full() {
         let pool = test_pool().await;
-        execution_lock::try_acquire(&pool, "hook-a", "exec-1").await.unwrap();
+        execution_lock::try_acquire(&pool, "hook-a", "exec-1")
+            .await
+            .unwrap();
 
         // Fill the queue (depth=2)
-        evaluate(&pool, "hook-a", "exec-2", &queue_config(2), &new_exec_params("exec-2", "hook-a")).await;
-        evaluate(&pool, "hook-a", "exec-3", &queue_config(2), &new_exec_params("exec-3", "hook-a")).await;
+        evaluate(
+            &pool,
+            "hook-a",
+            "exec-2",
+            &queue_config(2),
+            &new_exec_params("exec-2", "hook-a"),
+        )
+        .await;
+        evaluate(
+            &pool,
+            "hook-a",
+            "exec-3",
+            &queue_config(2),
+            &new_exec_params("exec-3", "hook-a"),
+        )
+        .await;
 
         // Third should be rejected (queue full at 2)
-        let outcome = evaluate(&pool, "hook-a", "exec-4", &queue_config(2), &new_exec_params("exec-4", "hook-a")).await;
+        let outcome = evaluate(
+            &pool,
+            "hook-a",
+            "exec-4",
+            &queue_config(2),
+            &new_exec_params("exec-4", "hook-a"),
+        )
+        .await;
         assert!(matches!(
             outcome,
-            BarrierOutcome::Reject { status: TriggerAttemptStatus::ConcurrencyRejected, .. }
+            BarrierOutcome::Reject {
+                status: TriggerAttemptStatus::ConcurrencyRejected,
+                ..
+            }
         ));
     }
 
     #[tokio::test]
     async fn different_hooks_independent_locks() {
         let pool = test_pool().await;
-        execution_lock::try_acquire(&pool, "hook-a", "exec-1").await.unwrap();
+        execution_lock::try_acquire(&pool, "hook-a", "exec-1")
+            .await
+            .unwrap();
 
-        let outcome = evaluate(&pool, "hook-b", "exec-2", &mutex_config(), &new_exec_params("exec-2", "hook-b")).await;
+        let outcome = evaluate(
+            &pool,
+            "hook-b",
+            "exec-2",
+            &mutex_config(),
+            &new_exec_params("exec-2", "hook-b"),
+        )
+        .await;
         assert!(matches!(outcome, BarrierOutcome::Proceed));
     }
 }

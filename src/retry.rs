@@ -6,8 +6,8 @@ use tokio::io::AsyncWriteExt;
 
 use crate::config::{BackoffStrategy, HookConfig, RetryConfig};
 use crate::executor::{self, ExecutionContext, ExecutionResult};
-use crate::models::execution;
 use crate::models::ExecutionStatus;
+use crate::models::execution;
 
 /// Resolved retry configuration for a single execution.
 /// Uses hook-level overrides when present, otherwise falls back to global defaults.
@@ -21,10 +21,7 @@ pub struct EffectiveRetryConfig {
 
 /// Resolve the effective retry config for a hook.
 /// Hook-level retries override global defaults entirely (not field-by-field).
-pub fn resolve_retry_config(
-    hook: &HookConfig,
-    global: &RetryConfig,
-) -> EffectiveRetryConfig {
+pub fn resolve_retry_config(hook: &HookConfig, global: &RetryConfig) -> EffectiveRetryConfig {
     let retry = hook.retries.as_ref().unwrap_or(global);
     EffectiveRetryConfig {
         count: retry.count,
@@ -91,8 +88,7 @@ pub async fn run_with_retries(
     for attempt in 1..=retry_config.count {
         // Only retry on failed with a non-zero exit code.
         // Don't retry on: success, timed_out, or spawn failures (exit_code == None).
-        let should_retry = result.status == ExecutionStatus::Failed
-            && result.exit_code.is_some();
+        let should_retry = result.status == ExecutionStatus::Failed && result.exit_code.is_some();
 
         if !should_retry {
             break;
@@ -154,9 +150,7 @@ async fn reset_to_pending(pool: &SqlitePool, id: &str) -> crate::error::DbResult
     .await?;
 
     if result.rows_affected() == 0 {
-        return Err(crate::error::DbError::NotFound(format!(
-            "execution {id}"
-        )));
+        return Err(crate::error::DbError::NotFound(format!("execution {id}")));
     }
     Ok(())
 }
@@ -164,7 +158,7 @@ async fn reset_to_pending(pool: &SqlitePool, id: &str) -> crate::error::DbResult
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{BackoffStrategy, HookConfig, ExecutorConfig, RetryConfig};
+    use crate::config::{BackoffStrategy, ExecutorConfig, HookConfig, RetryConfig};
     use std::collections::HashMap;
 
     // --- Backoff calculation tests ---
@@ -394,11 +388,7 @@ mod tests {
         db.pool().clone()
     }
 
-    async fn setup_execution(
-        pool: &SqlitePool,
-        logs_dir: &str,
-        command: &str,
-    ) -> ExecutionContext {
+    async fn setup_execution(pool: &SqlitePool, logs_dir: &str, command: &str) -> ExecutionContext {
         let exec = execution::create(
             pool,
             &execution::NewExecution {
@@ -417,7 +407,9 @@ mod tests {
         ExecutionContext {
             execution_id: exec.id,
             hook_slug: "test-hook".into(),
-            executor: crate::executor::ResolvedExecutor::Shell { command: command.into() },
+            executor: crate::executor::ResolvedExecutor::Shell {
+                command: command.into(),
+            },
             env: HashMap::new(),
             cwd: None,
             timeout: Duration::from_secs(10),
@@ -559,6 +551,9 @@ mod tests {
         assert_eq!(result.status, ExecutionStatus::TimedOut);
 
         let exec = execution::get_by_id(&pool, &exec_id).await.expect("get");
-        assert_eq!(exec.retry_count, 0, "timed out commands should not be retried");
+        assert_eq!(
+            exec.retry_count, 0,
+            "timed out commands should not be retried"
+        );
     }
 }

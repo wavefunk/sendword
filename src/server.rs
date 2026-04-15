@@ -2,10 +2,10 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
-use axum::extract::{connect_info::IntoMakeServiceWithConnectInfo, State};
+use axum::Router;
+use axum::extract::{State, connect_info::IntoMakeServiceWithConnectInfo};
 use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse};
-use axum::Router;
 use minijinja::context;
 use tokio::net::TcpListener;
 use tower_http::services::ServeDir;
@@ -38,9 +38,7 @@ impl AppState {
         auth_client: Arc<dyn AuthClient>,
     ) -> Arc<Self> {
         let config_path = config_path.into();
-        let http_client = reqwest::Client::builder()
-            .build()
-            .unwrap_or_default();
+        let http_client = reqwest::Client::builder().build().unwrap_or_default();
         Arc::new(Self {
             config: ArcSwap::from_pointee(config),
             config_writer: ConfigWriter::new(config_path),
@@ -57,7 +55,11 @@ impl AppState {
     /// Reads and validates the config file, then atomically swaps the live
     /// config. Returns an error if the file cannot be read or fails validation.
     pub fn reload_config(&self) -> Result<(), crate::config::ConfigError> {
-        let path_str = self.config_writer.path().to_str().unwrap_or("sendword.toml");
+        let path_str = self
+            .config_writer
+            .path()
+            .to_str()
+            .unwrap_or("sendword.toml");
         let new_config = AppConfig::load_from(path_str, "nonexistent.json")?;
         self.config.store(Arc::new(new_config));
         Ok(())
@@ -90,9 +92,7 @@ async fn fallback_404(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 
 /// Build the router as a service that provides `ConnectInfo<SocketAddr>` to
 /// handlers. Use this when serving via `axum::serve`.
-pub fn into_service(
-    state: Arc<AppState>,
-) -> IntoMakeServiceWithConnectInfo<Router, SocketAddr> {
+pub fn into_service(state: Arc<AppState>) -> IntoMakeServiceWithConnectInfo<Router, SocketAddr> {
     router(state).into_make_service_with_connect_info::<SocketAddr>()
 }
 

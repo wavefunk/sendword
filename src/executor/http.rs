@@ -4,10 +4,10 @@ use sqlx::SqlitePool;
 use tokio::io::AsyncWriteExt;
 
 use crate::config::HttpMethod;
-use crate::models::execution;
 use crate::models::ExecutionStatus;
+use crate::models::execution;
 
-use super::{prepare_log_files, ExecutionContext, ExecutionResult, ResolvedExecutor};
+use super::{ExecutionContext, ExecutionResult, ResolvedExecutor, prepare_log_files};
 
 /// Run an HTTP request executor.
 ///
@@ -59,22 +59,28 @@ pub async fn run_http(
 
     // 3. Extract HTTP config from the resolved executor
     let (method, url, headers, body, follow_redirects) = match &ctx.executor {
-        ResolvedExecutor::Http { method, url, headers, body, follow_redirects } => {
-            (*method, url.as_str(), headers, body.as_deref(), *follow_redirects)
-        }
+        ResolvedExecutor::Http {
+            method,
+            url,
+            headers,
+            body,
+            follow_redirects,
+        } => (
+            *method,
+            url.as_str(),
+            headers,
+            body.as_deref(),
+            *follow_redirects,
+        ),
         _ => {
             // Should not happen -- run_http is only called for Http executors
             tracing::error!(
                 execution_id = %ctx.execution_id,
                 "run_http called with non-Http executor"
             );
-            let _ = execution::mark_completed(
-                pool,
-                &ctx.execution_id,
-                ExecutionStatus::Failed,
-                None,
-            )
-            .await;
+            let _ =
+                execution::mark_completed(pool, &ctx.execution_id, ExecutionStatus::Failed, None)
+                    .await;
             return ExecutionResult {
                 status: ExecutionStatus::Failed,
                 exit_code: None,
@@ -136,13 +142,9 @@ pub async fn run_http(
                 ctx.timeout.as_millis()
             );
             let _ = stderr_file.write_all(meta.as_bytes()).await;
-            let _ = execution::mark_completed(
-                pool,
-                &ctx.execution_id,
-                ExecutionStatus::TimedOut,
-                None,
-            )
-            .await;
+            let _ =
+                execution::mark_completed(pool, &ctx.execution_id, ExecutionStatus::TimedOut, None)
+                    .await;
             return ExecutionResult {
                 status: ExecutionStatus::TimedOut,
                 exit_code: None,

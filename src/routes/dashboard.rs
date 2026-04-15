@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
+use axum::Router;
 use axum::extract::{Query, State};
 use axum::response::Html;
 use axum::routing::get;
-use axum::Router;
 use serde::Deserialize;
 
-use crate::extractors::AuthUser;
 use crate::error::AppError;
+use crate::extractors::AuthUser;
 use crate::models::execution;
 use crate::server::AppState;
 use crate::templates::context;
@@ -44,11 +44,8 @@ async fn dashboard(
 
         // Build a list of status strings for the last 5 executions (oldest last,
         // displayed as dots left-to-right from oldest to newest).
-        let recent_statuses: Vec<String> = recent
-            .iter()
-            .rev()
-            .map(|e| e.status.to_string())
-            .collect();
+        let recent_statuses: Vec<String> =
+            recent.iter().rev().map(|e| e.status.to_string()).collect();
 
         hooks.push(context! {
             name => h.name,

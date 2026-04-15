@@ -31,14 +31,14 @@ pub async fn evaluate_at(
         return EvalOutcome::Allow;
     };
 
-    let Ok(started_at) = DateTime::parse_from_rfc3339(started_at_str)
-        .or_else(|_| {
-            // Timestamps in the DB may not have timezone suffix; assume UTC.
-            chrono::NaiveDateTime::parse_from_str(started_at_str, "%Y-%m-%dT%H:%M:%S")
-                .or_else(|_| chrono::NaiveDateTime::parse_from_str(started_at_str, "%Y-%m-%dT%H:%M:%S%.f"))
-                .map(|ndt| ndt.and_utc().fixed_offset())
-        })
-    else {
+    let Ok(started_at) = DateTime::parse_from_rfc3339(started_at_str).or_else(|_| {
+        // Timestamps in the DB may not have timezone suffix; assume UTC.
+        chrono::NaiveDateTime::parse_from_str(started_at_str, "%Y-%m-%dT%H:%M:%S")
+            .or_else(|_| {
+                chrono::NaiveDateTime::parse_from_str(started_at_str, "%Y-%m-%dT%H:%M:%S%.f")
+            })
+            .map(|ndt| ndt.and_utc().fixed_offset())
+    }) else {
         tracing::warn!(
             hook_slug = %hook_slug,
             started_at = %started_at_str,
@@ -60,16 +60,12 @@ pub async fn evaluate_at(
         let remaining_secs = remaining.num_seconds().max(0);
         EvalOutcome::Reject {
             status: TriggerAttemptStatus::CooldownSkipped,
-            reason: format!(
-                "cooldown active, {}s remaining",
-                remaining_secs,
-            ),
+            reason: format!("cooldown active, {}s remaining", remaining_secs,),
         }
     } else {
         EvalOutcome::Allow
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -124,7 +120,13 @@ mod tests {
     #[tokio::test]
     async fn no_prior_execution_allows() {
         let pool = setup_db().await;
-        let result = evaluate_at(&pool, "test-hook", Duration::from_secs(300), utc(2026, 4, 13, 10, 0)).await;
+        let result = evaluate_at(
+            &pool,
+            "test-hook",
+            Duration::from_secs(300),
+            utc(2026, 4, 13, 10, 0),
+        )
+        .await;
         assert!(matches!(result, EvalOutcome::Allow));
     }
 
@@ -173,7 +175,13 @@ mod tests {
         // Create execution but don't mark it as running (started_at is NULL)
         create_execution(&pool, "test-hook").await;
 
-        let result = evaluate_at(&pool, "test-hook", Duration::from_secs(300), utc(2026, 4, 13, 10, 0)).await;
+        let result = evaluate_at(
+            &pool,
+            "test-hook",
+            Duration::from_secs(300),
+            utc(2026, 4, 13, 10, 0),
+        )
+        .await;
         assert!(matches!(result, EvalOutcome::Allow));
     }
 
@@ -193,7 +201,10 @@ mod tests {
         let EvalOutcome::Reject { reason, .. } = result else {
             panic!("expected Reject");
         };
-        assert!(reason.contains("remaining"), "reason should mention remaining: {reason}");
+        assert!(
+            reason.contains("remaining"),
+            "reason should mention remaining: {reason}"
+        );
     }
 
     #[tokio::test]

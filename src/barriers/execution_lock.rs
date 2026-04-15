@@ -31,20 +31,14 @@ pub async fn release(pool: &SqlitePool, hook_slug: &str) -> DbResult<()> {
 /// Hand off the lock atomically to a new execution without releasing it.
 /// UPDATE replaces the holder in-place, preventing a race where a new
 /// trigger steals the lock between a release and re-acquire.
-pub async fn hand_off(
-    pool: &SqlitePool,
-    hook_slug: &str,
-    next_execution_id: &str,
-) -> DbResult<()> {
+pub async fn hand_off(pool: &SqlitePool, hook_slug: &str, next_execution_id: &str) -> DbResult<()> {
     let acquired_at = timestamp::now_utc();
-    sqlx::query(
-        "UPDATE execution_locks SET execution_id = ?, acquired_at = ? WHERE hook_slug = ?",
-    )
-    .bind(next_execution_id)
-    .bind(&acquired_at)
-    .bind(hook_slug)
-    .execute(pool)
-    .await?;
+    sqlx::query("UPDATE execution_locks SET execution_id = ?, acquired_at = ? WHERE hook_slug = ?")
+        .bind(next_execution_id)
+        .bind(&acquired_at)
+        .bind(hook_slug)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 

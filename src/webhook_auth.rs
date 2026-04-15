@@ -83,11 +83,7 @@ fn hex_digit(b: u8) -> Option<u8> {
 ///
 /// Returns `AuthResult::Ok` if auth succeeds or is not configured.
 /// Returns `AuthResult::Denied` with a reason string on failure.
-pub fn verify(
-    auth: Option<&HookAuthConfig>,
-    headers: &HeaderMap,
-    body: &[u8],
-) -> AuthResult {
+pub fn verify(auth: Option<&HookAuthConfig>, headers: &HeaderMap, body: &[u8]) -> AuthResult {
     let auth = match auth {
         None => return AuthResult::Ok,
         Some(auth) => auth,
@@ -96,9 +92,11 @@ pub fn verify(
     match auth {
         HookAuthConfig::None => AuthResult::Ok,
         HookAuthConfig::Bearer { token } => verify_bearer(token, headers),
-        HookAuthConfig::Hmac { header, algorithm, secret } => {
-            verify_hmac(header, *algorithm, secret, headers, body)
-        }
+        HookAuthConfig::Hmac {
+            header,
+            algorithm,
+            secret,
+        } => verify_hmac(header, *algorithm, secret, headers, body),
     }
 }
 
@@ -106,9 +104,7 @@ fn verify_bearer(token_config: &str, headers: &HeaderMap) -> AuthResult {
     let expected = match resolve_env_ref(token_config) {
         Some(t) => t,
         None => {
-            tracing::warn!(
-                "webhook auth: bearer token env var not set: {token_config}"
-            );
+            tracing::warn!("webhook auth: bearer token env var not set: {token_config}");
             return AuthResult::Denied("server misconfiguration: token env var not set".into());
         }
     };
@@ -146,9 +142,7 @@ fn verify_hmac(
     let secret = match resolve_env_ref(secret_config) {
         Some(s) => s,
         None => {
-            tracing::warn!(
-                "webhook auth: HMAC secret env var not set: {secret_config}"
-            );
+            tracing::warn!("webhook auth: HMAC secret env var not set: {secret_config}");
             return AuthResult::Denied(
                 "server misconfiguration: HMAC secret env var not set".into(),
             );
@@ -158,9 +152,7 @@ fn verify_hmac(
     let header_value = match headers.get(header_name) {
         Some(v) => v,
         None => {
-            return AuthResult::Denied(
-                format!("missing signature header: {header_name}"),
-            );
+            return AuthResult::Denied(format!("missing signature header: {header_name}"));
         }
     };
 
@@ -171,9 +163,7 @@ fn verify_hmac(
 
     // Strip algorithm prefix if present (e.g., "sha256=<hex>")
     let hex_sig = match algorithm {
-        HmacAlgorithm::Sha256 => header_str
-            .strip_prefix("sha256=")
-            .unwrap_or(header_str),
+        HmacAlgorithm::Sha256 => header_str.strip_prefix("sha256=").unwrap_or(header_str),
     };
 
     let sig_bytes = match hex_decode(hex_sig) {
@@ -287,10 +277,7 @@ mod tests {
             token: "${NONEXISTENT_TOKEN_VAR_XYZ}".to_owned(),
         };
         let mut headers = HeaderMap::new();
-        headers.insert(
-            "authorization",
-            HeaderValue::from_static("Bearer anything"),
-        );
+        headers.insert("authorization", HeaderValue::from_static("Bearer anything"));
         let result = verify(Some(&auth), &headers, &[]);
         assert!(matches!(result, AuthResult::Denied(_)));
     }
@@ -353,7 +340,9 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             HeaderName::from_static("x-hub-signature-256"),
-            HeaderValue::from_static("sha256=0000000000000000000000000000000000000000000000000000000000000000"),
+            HeaderValue::from_static(
+                "sha256=0000000000000000000000000000000000000000000000000000000000000000",
+            ),
         );
         let result = verify(Some(&auth), &headers, b"body");
         assert!(matches!(result, AuthResult::Denied(_)));

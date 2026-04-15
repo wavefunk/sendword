@@ -8,8 +8,8 @@ use axum::{Form, Router};
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
-use crate::extractors::AuthUser;
 use crate::error::AppError;
+use crate::extractors::AuthUser;
 use crate::server::AppState;
 use crate::templates::context;
 
@@ -20,10 +20,7 @@ pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/scripts", get(list_scripts))
         .route("/scripts/new", get(new_script).post(create_script))
-        .route(
-            "/scripts/{filename}",
-            get(edit_script).post(save_script),
-        )
+        .route("/scripts/{filename}", get(edit_script).post(save_script))
         .route("/scripts/{filename}/delete", post(delete_script))
 }
 
@@ -61,7 +58,9 @@ fn validate_filename(filename: &str, scripts_dir: &Path) -> Result<PathBuf, &'st
     // Canonicalize the scripts dir for comparison. If the scripts dir
     // doesn't exist yet, use the joined path directly — the directory
     // will be created on write.
-    let canon_dir = scripts_dir.canonicalize().unwrap_or_else(|_| scripts_dir.to_path_buf());
+    let canon_dir = scripts_dir
+        .canonicalize()
+        .unwrap_or_else(|_| scripts_dir.to_path_buf());
 
     // Canonicalize the candidate. If the file doesn't exist yet, canonicalize
     // the parent and append the filename so we can still verify containment.
@@ -71,7 +70,9 @@ fn validate_filename(filename: &str, scripts_dir: &Path) -> Result<PathBuf, &'st
             .map_err(|_| "Failed to resolve file path")?
     } else {
         let parent = candidate.parent().ok_or("Invalid path")?;
-        let canon_parent = parent.canonicalize().unwrap_or_else(|_| parent.to_path_buf());
+        let canon_parent = parent
+            .canonicalize()
+            .unwrap_or_else(|_| parent.to_path_buf());
         canon_parent.join(filename)
     };
 
@@ -188,10 +189,7 @@ async fn list_scripts(
 
         let name = entry.file_name().to_string_lossy().into_owned();
         let size = format_size(metadata.len());
-        let modified = metadata
-            .modified()
-            .map(format_modified)
-            .unwrap_or_default();
+        let modified = metadata.modified().map(format_modified).unwrap_or_default();
 
         entries.push(ScriptEntry {
             name,
@@ -310,8 +308,7 @@ async fn edit_script(
 ) -> Result<Html<String>, AppError> {
     let scripts_dir = ensure_scripts_dir(&state).await;
 
-    let path = validate_filename(&filename, &scripts_dir)
-        .map_err(|msg| eyre::eyre!(msg))?;
+    let path = validate_filename(&filename, &scripts_dir).map_err(|msg| eyre::eyre!(msg))?;
 
     if !path.is_file() {
         return Err(AppError::not_found("script"));

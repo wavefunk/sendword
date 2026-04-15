@@ -129,7 +129,9 @@ impl ConfigWriter {
             .as_array_of_tables_mut()
             .expect("hooks is array of tables");
 
-        let table = hooks.get_mut(idx).expect("index validated by find_hook_index");
+        let table = hooks
+            .get_mut(idx)
+            .expect("index validated by find_hook_index");
         apply_hook_fields(table, data);
 
         self.validate_and_write(&doc)?;
@@ -288,7 +290,11 @@ fn apply_hook_fields(table: &mut Table, data: &HookFormData) {
             auth_table.insert("token", toml_string(token));
             table.insert("auth", Item::Table(auth_table));
         }
-        Some(HookAuthConfig::Hmac { header, algorithm, secret }) => {
+        Some(HookAuthConfig::Hmac {
+            header,
+            algorithm,
+            secret,
+        }) => {
             let mut auth_table = Table::new();
             auth_table.insert("mode", toml_string("hmac"));
             auth_table.insert("header", toml_string(header));
@@ -316,10 +322,7 @@ fn apply_hook_fields(table: &mut Table, data: &HookFormData) {
                 ft.insert("required", field.required.into());
                 fields_array.push(ft);
             }
-            payload_table.insert(
-                "fields",
-                Item::Value(Value::Array(fields_array)),
-            );
+            payload_table.insert("fields", Item::Value(Value::Array(fields_array)));
             table.insert("payload", Item::Table(payload_table));
         }
         _ => {
@@ -340,42 +343,38 @@ fn apply_hook_fields(table: &mut Table, data: &HookFormData) {
         let mut rules_table = Table::new();
 
         if let Some(filters) = &rules.payload_filters
-            && !filters.is_empty() {
-                let mut filters_array = Array::new();
-                for f in filters {
-                    let mut ft = InlineTable::new();
-                    ft.insert("field", f.field.as_str().into());
-                    ft.insert("operator", filter_operator_str(f.operator).into());
-                    if let Some(val) = &f.value {
-                        ft.insert("value", val.as_str().into());
-                    }
-                    filters_array.push(ft);
+            && !filters.is_empty()
+        {
+            let mut filters_array = Array::new();
+            for f in filters {
+                let mut ft = InlineTable::new();
+                ft.insert("field", f.field.as_str().into());
+                ft.insert("operator", filter_operator_str(f.operator).into());
+                if let Some(val) = &f.value {
+                    ft.insert("value", val.as_str().into());
                 }
-                rules_table.insert(
-                    "payload_filters",
-                    Item::Value(Value::Array(filters_array)),
-                );
+                filters_array.push(ft);
             }
+            rules_table.insert("payload_filters", Item::Value(Value::Array(filters_array)));
+        }
 
         if let Some(windows) = &rules.time_windows
-            && !windows.is_empty() {
-                let mut windows_array = Array::new();
-                for w in windows {
-                    let mut wt = InlineTable::new();
-                    let mut days_arr = Array::new();
-                    for day in &w.days {
-                        days_arr.push(day.as_str());
-                    }
-                    wt.insert("days", Value::Array(days_arr));
-                    wt.insert("start_time", w.start_time.as_str().into());
-                    wt.insert("end_time", w.end_time.as_str().into());
-                    windows_array.push(wt);
+            && !windows.is_empty()
+        {
+            let mut windows_array = Array::new();
+            for w in windows {
+                let mut wt = InlineTable::new();
+                let mut days_arr = Array::new();
+                for day in &w.days {
+                    days_arr.push(day.as_str());
                 }
-                rules_table.insert(
-                    "time_windows",
-                    Item::Value(Value::Array(windows_array)),
-                );
+                wt.insert("days", Value::Array(days_arr));
+                wt.insert("start_time", w.start_time.as_str().into());
+                wt.insert("end_time", w.end_time.as_str().into());
+                windows_array.push(wt);
             }
+            rules_table.insert("time_windows", Item::Value(Value::Array(windows_array)));
+        }
 
         if let Some(cooldown) = rules.cooldown {
             rules_table.insert("cooldown", toml_string(&format_duration(cooldown)));
@@ -385,7 +384,9 @@ fn apply_hook_fields(table: &mut Table, data: &HookFormData) {
             let mut rl_table = Table::new();
             rl_table.insert(
                 "max_requests",
-                Item::Value(Value::Integer(Formatted::new(i64::try_from(rl.max_requests).unwrap_or(i64::MAX)))),
+                Item::Value(Value::Integer(Formatted::new(
+                    i64::try_from(rl.max_requests).unwrap_or(i64::MAX),
+                ))),
             );
             rl_table.insert("window", toml_string(&format_duration(rl.window)));
             rules_table.insert("rate_limit", Item::Table(rl_table));
@@ -753,7 +754,7 @@ port = 8080
 
     #[test]
     fn add_hook_with_payload_schema() {
-        use crate::payload::{PayloadField, PayloadSchema, FieldType};
+        use crate::payload::{FieldType, PayloadField, PayloadSchema};
 
         let (_dir, writer) = tmp_config("[server]\nport = 8080\n");
 
@@ -777,8 +778,7 @@ port = 8080
 
         // Re-load and verify
         let config =
-            AppConfig::load_from(writer.path().to_str().unwrap(), "nonexistent.json")
-                .unwrap();
+            AppConfig::load_from(writer.path().to_str().unwrap(), "nonexistent.json").unwrap();
         let hook = &config.hooks[0];
         let schema = hook.payload.as_ref().expect("payload should be present");
         assert_eq!(schema.fields.len(), 2);
@@ -813,8 +813,7 @@ required = true
         writer.update_hook("test-hook", &data).unwrap();
 
         let config =
-            AppConfig::load_from(writer.path().to_str().unwrap(), "nonexistent.json")
-                .unwrap();
+            AppConfig::load_from(writer.path().to_str().unwrap(), "nonexistent.json").unwrap();
         assert!(config.hooks[0].payload.is_none());
     }
 }

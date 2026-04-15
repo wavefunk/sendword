@@ -15,8 +15,12 @@ use crate::models::ExecutionStatus;
 /// Which executor to use for a hook.
 #[derive(Clone)]
 pub enum ResolvedExecutor {
-    Shell { command: String },
-    Script { path: PathBuf },
+    Shell {
+        command: String,
+    },
+    Script {
+        path: PathBuf,
+    },
     Http {
         method: HttpMethod,
         url: String,
@@ -188,11 +192,7 @@ mod tests {
     }
 
     /// Create a pending execution record and return a matching ExecutionContext.
-    async fn setup_execution(
-        pool: &SqlitePool,
-        logs_dir: &str,
-        command: &str,
-    ) -> ExecutionContext {
+    async fn setup_execution(pool: &SqlitePool, logs_dir: &str, command: &str) -> ExecutionContext {
         let exec = execution::create(
             pool,
             &execution::NewExecution {
@@ -211,7 +211,9 @@ mod tests {
         ExecutionContext {
             execution_id: exec.id,
             hook_slug: "test-hook".into(),
-            executor: ResolvedExecutor::Shell { command: command.into() },
+            executor: ResolvedExecutor::Shell {
+                command: command.into(),
+            },
             env: HashMap::new(),
             cwd: None,
             timeout: Duration::from_secs(10),
@@ -224,9 +226,7 @@ mod tests {
     /// Read a log file to a string.
     async fn read_log(logs_dir: &str, exec_id: &str, file: &str) -> String {
         let path = Path::new(logs_dir).join(exec_id).join(file);
-        tokio::fs::read_to_string(path)
-            .await
-            .unwrap_or_default()
+        tokio::fs::read_to_string(path).await.unwrap_or_default()
     }
 
     // --- Integration tests ---
@@ -375,10 +375,7 @@ mod tests {
         let _result = run(&pool, ctx).await;
 
         let stdout = read_log(logs_dir, &exec_id, "stdout.log").await;
-        assert_eq!(
-            stdout.trim(),
-            work_path.to_str().expect("utf-8")
-        );
+        assert_eq!(stdout.trim(), work_path.to_str().expect("utf-8"));
     }
 
     #[tokio::test]
@@ -538,6 +535,9 @@ mod tests {
         let contents = tokio::fs::read_to_string(log_dir.join("payload.json"))
             .await
             .expect("read payload.json");
-        assert_eq!(contents, payload_v2, "payload.json should be overwritten, not appended");
+        assert_eq!(
+            contents, payload_v2,
+            "payload.json should be overwritten, not appended"
+        );
     }
 }
