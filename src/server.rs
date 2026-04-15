@@ -11,6 +11,8 @@ use tokio::net::TcpListener;
 use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 
+use allowthem_core::{AllowThem, AuthClient};
+
 use crate::config::AppConfig;
 use crate::config_writer::ConfigWriter;
 use crate::db::Db;
@@ -22,6 +24,8 @@ pub struct AppState {
     pub db: Db,
     pub templates: Templates,
     pub http_client: reqwest::Client,
+    pub ath: AllowThem,
+    pub auth_client: Arc<dyn AuthClient>,
 }
 
 impl AppState {
@@ -30,6 +34,8 @@ impl AppState {
         config_path: impl Into<std::path::PathBuf>,
         db: Db,
         templates: Templates,
+        ath: AllowThem,
+        auth_client: Arc<dyn AuthClient>,
     ) -> Arc<Self> {
         let config_path = config_path.into();
         let http_client = reqwest::Client::builder()
@@ -41,6 +47,8 @@ impl AppState {
             db,
             templates,
             http_client,
+            ath,
+            auth_client,
         })
     }
 

@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod backup;
+pub mod extractors;
 pub mod barriers;
 pub mod config;
 pub mod config_writer;
