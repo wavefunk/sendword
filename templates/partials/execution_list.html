@@ -1,106 +1,71 @@
-{# Filter bar — passes current filters through on pagination requests #}
-<div class="flex flex-wrap gap-2 mb-3 items-end">
-  <div>
-    <label class="sw-label">Status</label>
-    <select
-      id="exec-status-filter"
-      class="sw-input text-sm"
-      hx-get="/hooks/{{ slug }}/executions"
-      hx-target="#execution-list"
-      hx-swap="innerHTML"
-      hx-include="#exec-from-filter, #exec-to-filter"
-      name="status">
-      <option value="" {% if not active_status %}selected{% endif %}>All statuses</option>
-      <option value="success"          {% if active_status == 'success' %}selected{% endif %}>Success</option>
-      <option value="failed"           {% if active_status == 'failed' %}selected{% endif %}>Failed</option>
-      <option value="timed_out"        {% if active_status == 'timed_out' %}selected{% endif %}>Timed out</option>
-      <option value="running"          {% if active_status == 'running' %}selected{% endif %}>Running</option>
-      <option value="pending"          {% if active_status == 'pending' %}selected{% endif %}>Pending</option>
-      <option value="pending_approval" {% if active_status == 'pending_approval' %}selected{% endif %}>Pending approval</option>
-      <option value="rejected"         {% if active_status == 'rejected' %}selected{% endif %}>Rejected</option>
-      <option value="expired"          {% if active_status == 'expired' %}selected{% endif %}>Expired</option>
-    </select>
-  </div>
-  <div>
-    <label class="sw-label">From</label>
-    <input
-      id="exec-from-filter"
-      type="date"
-      name="from_date"
-      value="{{ active_from }}"
-      class="sw-input text-sm"
-      hx-get="/hooks/{{ slug }}/executions"
-      hx-target="#execution-list"
-      hx-swap="innerHTML"
-      hx-include="#exec-status-filter, #exec-to-filter"
-      hx-trigger="change">
-  </div>
-  <div>
-    <label class="sw-label">To</label>
-    <input
-      id="exec-to-filter"
-      type="date"
-      name="to_date"
-      value="{{ active_to }}"
-      class="sw-input text-sm"
-      hx-get="/hooks/{{ slug }}/executions"
-      hx-target="#execution-list"
-      hx-swap="innerHTML"
-      hx-include="#exec-status-filter, #exec-from-filter"
-      hx-trigger="change">
-  </div>
+<div class="wf-filterbar" style="margin-bottom: 12px;">
+  <select class="wf-select sm" name="status"
+    hx-get="/hooks/{{ slug }}/executions" hx-target="#execution-list" hx-swap="innerHTML"
+    hx-include="[name='from_date'],[name='to_date']">
+    <option value="" {% if not active_status %}selected{% endif %}>ALL STATUS</option>
+    <option value="success" {{ 'selected' if active_status == 'success' }}>SUCCESS</option>
+    <option value="failed" {{ 'selected' if active_status == 'failed' }}>FAILED</option>
+    <option value="timed_out" {{ 'selected' if active_status == 'timed_out' }}>TIMED OUT</option>
+    <option value="running" {{ 'selected' if active_status == 'running' }}>RUNNING</option>
+    <option value="pending" {{ 'selected' if active_status == 'pending' }}>PENDING</option>
+    <option value="pending_approval" {{ 'selected' if active_status == 'pending_approval' }}>PENDING APPROVAL</option>
+    <option value="rejected" {{ 'selected' if active_status == 'rejected' }}>REJECTED</option>
+    <option value="expired" {{ 'selected' if active_status == 'expired' }}>EXPIRED</option>
+  </select>
+  <input class="wf-input sm" type="date" name="from_date" value="{{ active_from }}"
+    hx-get="/hooks/{{ slug }}/executions" hx-target="#execution-list" hx-swap="innerHTML"
+    hx-include="[name='status'],[name='to_date']" hx-trigger="change">
+  <input class="wf-input sm" type="date" name="to_date" value="{{ active_to }}"
+    hx-get="/hooks/{{ slug }}/executions" hx-target="#execution-list" hx-swap="innerHTML"
+    hx-include="[name='status'],[name='from_date']" hx-trigger="change">
 </div>
 
-{% if executions %}
-<div class="overflow-x-auto">
-  <table class="sw-table">
-    <thead>
-      <tr>
-        <th>ID</th>
-        <th>Triggered</th>
-        <th>Status</th>
-        <th>Exit Code</th>
-        <th>Duration</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for exec in executions %}
-      <tr>
-        <td>
-          <a href="/executions/{{ exec.id }}" class="font-mono text-sw-amber hover:text-sw-cream">{{ exec.id[:8] }}</a>
-        </td>
-        <td class="text-sw-dim"><span data-timestamp="{{ exec.triggered_at }}">{{ exec.triggered_at }}</span></td>
-        <td>
-          <span class="sw-badge
-            {%- if exec.status == 'success' %} sw-badge-success
-            {%- elif exec.status == 'failed' or exec.status == 'timed_out' %} sw-badge-error
-            {%- elif exec.status == 'running' %} sw-badge-info
-            {%- elif exec.status == 'pending' or exec.status == 'pending_approval' %} sw-badge-warning
-            {%- else %} sw-badge-muted
-            {%- endif %}">
-            {{ exec.status }}
-          </span>
-        </td>
-        <td class="font-mono text-sw-dim">{{ exec.exit_code if exec.exit_code is defined and exec.exit_code is not none else "-" }}</td>
-        <td class="font-mono text-sw-dim">{{ exec.duration if exec.duration is defined and exec.duration is not none else "-" }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+{% if executions | length == 0 %}
+<div class="wf-empty">
+  <div class="wf-empty-msg">No executions{% if active_status %} matching "{{ active_status }}"{% endif %}.</div>
 </div>
-
+{% else %}
+<table class="wf-table is-interactive">
+  <thead>
+    <tr>
+      <th>ID</th>
+      <th>TRIGGERED</th>
+      <th>STATUS</th>
+      <th class="num">EXIT</th>
+      <th class="num">DURATION</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for exec in executions %}
+    <tr onclick="location.href='/executions/{{ exec.id }}'">
+      <td class="strong"><code>{{ exec.id[:8] }}</code></td>
+      <td><span data-ts="{{ exec.triggered_at }}">{{ exec.triggered_at }}</span></td>
+      <td>
+        <span class="wf-tag
+          {%- if exec.status == 'success' %} ok
+          {%- elif exec.status == 'failed' or exec.status == 'timed_out' %} err
+          {%- elif exec.status == 'running' %} warn
+          {%- elif exec.status == 'pending' or exec.status == 'pending_approval' %} info
+          {%- elif exec.status == 'rejected' or exec.status == 'expired' %} err
+          {%- endif %}">
+          <span class="dot"></span>{{ exec.status | upper }}
+        </span>
+      </td>
+      <td class="num">{{ exec.exit_code if exec.exit_code is defined and exec.exit_code is not none else '—' }}</td>
+      <td class="num">{{ exec.duration if exec.duration is defined and exec.duration is not none else '—' }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
 {% if has_more %}
-<div class="mt-4 text-center">
-  <button
+<div class="wf-tablefoot">
+  <span>PAGE {{ page }} OF {{ total_pages }}</span>
+  <span style="flex: 1;"></span>
+  <button class="wf-btn sm"
     hx-get="/hooks/{{ slug }}/executions?page={{ page + 1 }}&status={{ active_status }}&from_date={{ active_from }}&to_date={{ active_to }}"
-    hx-target="#execution-list"
-    hx-swap="innerHTML"
-    class="sw-btn sw-btn-secondary sw-btn-sm">
-    Load more (page {{ page + 1 }} of {{ total_pages }})
+    hx-target="#execution-list" hx-swap="innerHTML">
+    LOAD MORE
   </button>
 </div>
 {% endif %}
-
-{% else %}
-<p class="text-sw-muted text-sm font-mono">No executions yet.</p>
 {% endif %}

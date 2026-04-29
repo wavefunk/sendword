@@ -1,45 +1,55 @@
 {% extends "base.html" %}
 
-{% block title %}sendword - Pending Approvals{% endblock %}
+{% block title %}sendword — approvals{% endblock %}
+
+{% block crumbs %}
+<div class="wf-crumbs">
+  <span aria-current="page">APPROVALS</span>
+</div>
+{% endblock %}
 
 {% block content %}
-<main class="max-w-4xl mx-auto px-4 py-8">
-  <h1 class="text-2xl font-bold mb-6">Pending Approvals</h1>
+<div class="page-head">
+  <h1 class="page-title">Approvals</h1>
+</div>
+<p class="page-sub">{{ executions | length }} pending</p>
 
-  {% if executions %}
-  <div class="sw-card p-0">
-    <table class="sw-table">
-      <thead>
-        <tr>
-          <th>Hook</th>
-          <th>Triggered</th>
-          <th>Source</th>
-          <th class="text-right">Actions</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for exec in executions %}
-        <tr>
-          <td>
-            <a href="/executions/{{ exec.id }}" class="font-mono text-sw-amber hover:text-sw-cream">{{ exec.hook_slug }}</a>
-          </td>
-          <td class="text-sw-dim"><span data-timestamp="{{ exec.triggered_at }}">{{ exec.triggered_at }}</span></td>
-          <td class="text-sw-muted font-mono text-xs">{{ exec.trigger_source }}</td>
-          <td class="text-right space-x-2">
-            <form method="post" action="/executions/{{ exec.id }}/approve" class="inline">
-              <button type="submit" class="sw-btn sw-btn-primary sw-btn-sm">Approve</button>
+{% if executions | length == 0 %}
+<div class="wf-empty">
+  <div class="wf-empty-title">ALL CLEAR</div>
+  <div class="wf-empty-msg">No executions pending approval.</div>
+</div>
+{% else %}
+<div class="wf-panel">
+  <table class="wf-table">
+    <thead>
+      <tr>
+        <th>HOOK</th>
+        <th>TRIGGERED</th>
+        <th>SOURCE</th>
+        <th>ACTIONS</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for exec in executions %}
+      <tr>
+        <td class="strong"><a href="/hooks/{{ exec.hook_slug }}">{{ exec.hook_slug }}</a></td>
+        <td><span data-ts="{{ exec.triggered_at }}">{{ exec.triggered_at }}</span></td>
+        <td>{{ exec.trigger_source }}</td>
+        <td>
+          <div class="wf-btn-group">
+            <form method="post" action="/executions/{{ exec.id }}/approve" style="display: inline;">
+              <button type="submit" class="wf-btn sm">APPROVE</button>
             </form>
-            <form method="post" action="/executions/{{ exec.id }}/reject" class="inline">
-              <button type="submit" class="sw-btn sw-btn-danger sw-btn-sm">Reject</button>
+            <form method="post" action="/executions/{{ exec.id }}/reject" style="display: inline;">
+              <button type="submit" class="wf-btn sm danger">REJECT</button>
             </form>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-  {% else %}
-  <div class="text-sw-dim text-center py-12 font-mono text-sm">No executions pending approval.</div>
-  {% endif %}
-</main>
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
 {% endblock %}

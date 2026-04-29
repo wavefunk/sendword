@@ -1,40 +1,104 @@
 <!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{% block title %}sendword{% endblock %}</title>
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='2' y='6' width='28' height='20' rx='3' fill='%230c0a09' stroke='%23f59e0b' stroke-width='2'/%3E%3Cpath d='M2 8l14 10 14-10' fill='none' stroke='%23f59e0b' stroke-width='2' stroke-linecap='round'/%3E%3Ccircle cx='26' cy='8' r='5' fill='%23ef4444'/%3E%3C/svg%3E">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/dist/app.css">
-    <script src="https://unpkg.com/htmx.org@2" defer></script>
-  </head>
-  <body hx-boost="true">
-    {% block nav %}
-      {% if username is defined and username %}
-        <nav class="border-b border-sw-lighter bg-sw-deep">
-          <div class="max-w-4xl mx-auto px-4 flex items-center justify-between h-12">
-            <div class="flex items-center gap-6">
-              <a href="/" class="font-mono text-sm font-bold text-sw-fg tracking-wide hover:text-sw-fg">SENDWORD</a>
-              <div class="flex items-center gap-4">
-                <a href="/" class="font-mono text-xs uppercase tracking-wider {{ 'text-sw-amber hover:text-sw-amber' if nav_active == 'dashboard' else 'text-sw-dim hover:text-sw-amber' }}">Dashboard</a>
-                <a href="/approvals" class="font-mono text-xs uppercase tracking-wider {{ 'text-sw-amber hover:text-sw-amber' if nav_active == 'approvals' else 'text-sw-dim hover:text-sw-amber' }}">Approvals</a>
-                <a href="/scripts" class="font-mono text-xs uppercase tracking-wider {{ 'text-sw-amber hover:text-sw-amber' if nav_active == 'scripts' else 'text-sw-dim hover:text-sw-amber' }}">Scripts</a>
-                <a href="/settings/users" class="font-mono text-xs uppercase tracking-wider {{ 'text-sw-amber hover:text-sw-amber' if nav_active == 'settings' else 'text-sw-dim hover:text-sw-amber' }}">Settings</a>
-              </div>
-            </div>
-            <div class="flex items-center gap-4">
-              <span class="font-mono text-xs text-sw-muted">{{ username }}</span>
-              <a href="/logout" class="font-mono text-xs text-sw-dim hover:text-sw-amber uppercase tracking-wider">Logout</a>
-            </div>
-          </div>
-        </nav>
-      {% endif %}
+<html lang="en" data-mode="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}sendword{% endblock %}</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='2' y='6' width='28' height='20' rx='3' fill='%230c0a09' stroke='%23f59e0b' stroke-width='2'/%3E%3Cpath d='M2 8l14 10 14-10' fill='none' stroke='%23f59e0b' stroke-width='2' stroke-linecap='round'/%3E%3Ccircle cx='26' cy='8' r='5' fill='%23ef4444'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/css/wavefunk.css">
+  <script src="https://unpkg.com/htmx.org@2.0.4" defer></script>
+  <script src="https://unpkg.com/htmx-ext-sse@2.2.2/sse.js" defer></script>
+  <script src="/static/js/sendword.js" defer></script>
+  <style>
+    body { overflow: hidden; height: 100vh; }
+    .app {
+      display: grid;
+      grid-template-columns: 240px 1fr;
+      grid-template-rows: 56px 1fr 28px;
+      grid-template-areas:
+        "side   top"
+        "side   main"
+        "status status";
+      height: 100vh;
+    }
+    .app > .wf-sidebar   { grid-area: side; }
+    .app > .wf-topbar    { grid-area: top; border-bottom: 1px solid var(--hairline); }
+    .app > main          { grid-area: main; overflow: auto; background: var(--bg); }
+    .app > .wf-statusbar { grid-area: status; }
+    .page     { padding: 28px 32px 96px; max-width: 1200px; }
+    .page-head { display: flex; align-items: baseline; gap: 16px; margin-bottom: 4px; }
+    .page-title {
+      font-family: var(--font-mono); font-size: 28px; font-weight: 800;
+      letter-spacing: -0.02em; text-transform: uppercase;
+      color: var(--fg-strong); margin: 0;
+    }
+    .page-sub { color: var(--fg-muted); font-size: 13px; margin: 0 0 28px; }
+  </style>
+</head>
+<body class="density-dense" hx-boost="true">
+
+<div class="app">
+
+  <aside class="wf-sidebar">
+    <div class="wf-brand">
+      <div style="width: 22px; height: 22px; background: var(--accent); color: var(--accent-ink); display: inline-flex; align-items: center; justify-content: center; font-family: var(--font-mono); font-weight: 800; font-size: 13px;">S</div>
+      <span class="wf-brand-name">SENDWORD</span>
+    </div>
+    <nav class="wf-nav-list">
+      <div class="wf-nav-section">HOOKS</div>
+      <a class="wf-nav-item{{ ' is-active' if nav_active == 'dashboard' }}" href="/">&#x25B8; Hooks</a>
+      <a class="wf-nav-item{{ ' is-active' if nav_active == 'approvals' }}" href="/approvals">&#x25B8; Approvals</a>
+      <div class="wf-nav-section">TOOLS</div>
+      <a class="wf-nav-item{{ ' is-active' if nav_active == 'scripts' }}" href="/scripts">&#x25B8; Scripts</a>
+      <div class="wf-nav-section">ADMIN</div>
+      <a class="wf-nav-item{{ ' is-active' if nav_active == 'settings' }}" href="/settings/users">&#x25B8; Users</a>
+    </nav>
+    <div class="wf-pop-anchor" style="display: block;">
+      <button class="wf-user" data-popover-toggle>
+        <div class="wf-avatar accent">{{ username | first | upper }}</div>
+        <div class="wf-user-id">
+          <div class="wf-user-name">{{ username }}</div>
+        </div>
+        <span class="wf-user-caret">&#x25B4;</span>
+      </button>
+      <div class="wf-popover" data-side="top" style="left: 8px; right: 8px;">
+        <div class="wf-popover-head">{{ username | upper }}</div>
+        <div class="wf-menu">
+          <a class="wf-menu-item" href="/settings/password">Change password</a>
+          <div class="wf-menu-sep"></div>
+          <a class="wf-menu-item danger" href="/logout">Log out</a>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <header class="wf-topbar">
+    {% block crumbs %}
+    <div class="wf-crumbs">
+      <span aria-current="page">SENDWORD</span>
+    </div>
     {% endblock %}
-    {% block content %}{% endblock %}
-    <div id="toasts" class="fixed top-4 right-4 z-50 flex flex-col gap-2 pointer-events-none"></div>
-    <script type="module" src="/static/dist/main.js"></script>
-  </body>
+    <div style="flex: 1;"></div>
+    {% block actions %}{% endblock %}
+  </header>
+
+  <main>
+    <div class="page">
+      {% if success %}<div class="wf-alert ok" style="margin-bottom: 20px;"><div class="wf-alert-bar"></div><div>{{ success }}</div></div>{% endif %}
+      {% if error %}<div class="wf-alert err" style="margin-bottom: 20px;"><div class="wf-alert-bar"></div><div>{{ error }}</div></div>{% endif %}
+      {% block content %}{% endblock %}
+    </div>
+  </main>
+
+  <div class="wf-statusbar" style="border-top: 1px solid var(--hairline);">
+    <span>SENDWORD</span>
+    <span style="flex: 1;"></span>
+    <span>V1.0</span>
+  </div>
+
+</div>
+
+<div class="wf-toast-host" id="toast-host"></div>
+
+</body>
 </html>

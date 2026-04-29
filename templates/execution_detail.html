@@ -1,105 +1,81 @@
 {% extends "base.html" %}
 
-{% block title %}sendword - execution {{ id[:8] }}{% endblock %}
+{% block title %}sendword — execution {{ id[:8] }}{% endblock %}
+
+{% block crumbs %}
+<div class="wf-crumbs">
+  <a href="/">HOOKS</a><span class="sep">/</span>
+  <a href="/hooks/{{ hook_slug }}">{{ hook_slug | upper }}</a><span class="sep">/</span>
+  <span aria-current="page">{{ id[:8] | upper }}</span>
+</div>
+{% endblock %}
+
+{% block actions %}
+<form method="post" style="display: inline;"
+  hx-post="/executions/{{ id }}/replay" hx-swap="none"
+  hx-on::after-request="if(event.detail.successful){var d=JSON.parse(event.detail.xhr.responseText);location.href='/executions/'+d.id;}">
+  <button type="submit" class="wf-btn sm">REPLAY</button>
+</form>
+{% endblock %}
 
 {% block content %}
-<main class="max-w-4xl mx-auto px-4 py-8"
-  data-execution-id="{{ id }}"
-  data-execution-status="{{ status }}">
-  <div class="mb-6">
-    <a href="/hooks/{{ hook_slug }}" class="sw-back">&larr; Back to {{ hook_slug }}</a>
-  </div>
+<div class="page-head">
+  <h1 class="page-title">Execution {{ id[:8] }}</h1>
+  <span id="exec-status" class="wf-tag {% if status == 'success' %}ok{% elif status == 'failed' %}err{% elif status == 'running' %}warn{% endif %}">
+    <span class="dot"></span>{{ status | upper }}
+  </span>
+</div>
 
-  <div class="flex items-center justify-between mb-6">
-    <h1 class="text-2xl font-bold font-mono">{{ id[:8] }}</h1>
-    <span id="status-badge" class="sw-badge
-      {%- if status == 'success' %} sw-badge-success
-      {%- elif status == 'failed' or status == 'timed_out' %} sw-badge-error
-      {%- elif status == 'running' %} sw-badge-info
-      {%- elif status == 'pending' or status == 'pending_approval' %} sw-badge-warning
-      {%- else %} sw-badge-muted
-      {%- endif %}">
-      {{ status }}
-    </span>
-  </div>
-
-  {# --- Metadata --- #}
-  <div class="sw-card mb-6">
-    <h2 class="text-lg font-bold mb-3">Details</h2>
-    <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
-      <dt class="sw-dt">Execution ID</dt>
-      <dd class="font-mono text-sw-fg">{{ id }}</dd>
-
-      <dt class="sw-dt">Hook</dt>
-      <dd><a href="/hooks/{{ hook_slug }}" class="font-mono text-sw-amber hover:text-sw-cream">{{ hook_slug }}</a></dd>
-
-      <dt class="sw-dt">Exit code</dt>
-      <dd class="font-mono text-sw-fg">{{ exit_code if exit_code is not none else "-" }}</dd>
-
-      <dt class="sw-dt">Source</dt>
-      <dd class="font-mono text-sw-fg">{{ trigger_source }}</dd>
-    </dl>
-  </div>
-
-  {# --- Timing --- #}
-  <div class="sw-card mb-6">
-    <h2 class="text-lg font-bold mb-3">Timing</h2>
-    <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
-      <dt class="sw-dt">Triggered at</dt>
-      <dd class="font-mono text-sw-fg"><span data-timestamp="{{ triggered_at }}">{{ triggered_at }}</span></dd>
-
-      <dt class="sw-dt">Started at</dt>
-      <dd class="font-mono text-sw-fg">{% if started_at %}<span data-timestamp="{{ started_at }}">{{ started_at }}</span>{% else %}-{% endif %}</dd>
-
-      <dt class="sw-dt">Completed at</dt>
-      <dd class="font-mono text-sw-fg">{% if completed_at %}<span data-timestamp="{{ completed_at }}">{{ completed_at }}</span>{% else %}-{% endif %}</dd>
-
-      <dt class="sw-dt">Duration</dt>
-      <dd class="font-mono text-sw-fg">{{ duration if duration else "-" }}</dd>
-    </dl>
-  </div>
-
-  {# --- Retry info --- #}
-  {% if retry_count > 0 or retry_of %}
-  <div class="sw-card mb-6">
-    <h2 class="text-lg font-bold mb-3">Retry Info</h2>
-    <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
-      {% if retry_count > 0 %}
-      <dt class="sw-dt">Retry count</dt>
-      <dd class="font-mono text-sw-fg">{{ retry_count }}</dd>
-      {% endif %}
-
-      {% if retry_of %}
-      <dt class="sw-dt">Replay of</dt>
-      <dd>
-        <a href="/executions/{{ retry_of }}" class="font-mono text-sw-amber hover:text-sw-cream">{{ retry_of[:8] }}</a>
-      </dd>
+<div class="wf-panel" style="margin-bottom: 20px;">
+  <div class="wf-panel-head"><span class="wf-panel-title">DETAILS</span></div>
+  <div class="wf-panel-body">
+    <dl class="wf-dl flush">
+      <div class="wf-dl-row"><dt>ID</dt><dd><code>{{ id }}</code></dd></div>
+      <div class="wf-dl-row"><dt>HOOK</dt><dd><a href="/hooks/{{ hook_slug }}">{{ hook_slug }}</a></dd></div>
+      {% if exit_code is defined and exit_code is not none %}<div class="wf-dl-row"><dt>EXIT CODE</dt><dd>{{ exit_code }}</dd></div>{% endif %}
+      <div class="wf-dl-row"><dt>SOURCE</dt><dd>{{ trigger_source }}</dd></div>
+      <div class="wf-dl-row"><dt>TRIGGERED</dt><dd><span data-ts="{{ triggered_at }}">{{ triggered_at }}</span></dd></div>
+      {% if started_at %}<div class="wf-dl-row"><dt>STARTED</dt><dd><span data-ts="{{ started_at }}">{{ started_at }}</span></dd></div>{% endif %}
+      {% if completed_at %}<div class="wf-dl-row"><dt>COMPLETED</dt><dd><span data-ts="{{ completed_at }}">{{ completed_at }}</span></dd></div>{% endif %}
+      {% if duration %}<div class="wf-dl-row"><dt>DURATION</dt><dd>{{ duration }}</dd></div>{% endif %}
+      {% if retry_count and retry_count > 0 %}
+      <div class="wf-dl-row"><dt>RETRY</dt><dd>#{{ retry_count }}{% if retry_of %} of <a href="/executions/{{ retry_of }}">{{ retry_of[:8] }}</a>{% endif %}</dd></div>
       {% endif %}
     </dl>
   </div>
-  {% endif %}
+</div>
 
-  {# --- stdout --- #}
-  <div class="mb-6">
-    <h2 class="text-lg font-bold mb-2">stdout</h2>
-    <pre id="stdout-log" class="sw-pre">{{ stdout }}</pre>
+{% if status == 'running' %}
+<div hx-ext="sse" sse-connect="/executions/{{ id }}/logs/stream">
+  <div class="wf-panel" style="margin-bottom: 20px;">
+    <div class="wf-panel-head"><span class="wf-panel-title">STDOUT</span></div>
+    <div class="wf-panel-body">
+      <pre id="log-stdout" sse-swap="stdout" hx-swap="beforeend" style="min-height: 80px; max-height: 600px; overflow: auto; margin: 0;"></pre>
+    </div>
   </div>
-
-  {# --- stderr --- #}
-  <div class="mb-6">
-    <h2 class="text-lg font-bold mb-2">stderr</h2>
-    <pre id="stderr-log" class="sw-pre">{{ stderr }}</pre>
+  <div class="wf-panel" style="margin-bottom: 20px;">
+    <div class="wf-panel-head"><span class="wf-panel-title">STDERR</span></div>
+    <div class="wf-panel-body">
+      <pre id="log-stderr" sse-swap="stderr" hx-swap="beforeend" style="min-height: 40px; max-height: 400px; overflow: auto; margin: 0;"></pre>
+    </div>
   </div>
-
-  {# --- Actions --- #}
-  <div class="flex gap-4 mb-8">
-    <button
-      hx-post="/executions/{{ id }}/replay"
-      hx-swap="none"
-      hx-on::after-request="if(event.detail.successful) { const r = JSON.parse(event.detail.xhr.responseText); window.location.href = '/executions/' + r.execution_id; }"
-      class="sw-btn sw-btn-primary">
-      Replay
-    </button>
+  <div sse-swap="done" hx-swap="innerHTML" style="display: none;"
+    hx-on::after-settle="setTimeout(function(){location.reload()},500)"></div>
+</div>
+{% else %}
+<div class="wf-panel" style="margin-bottom: 20px;">
+  <div class="wf-panel-head"><span class="wf-panel-title">STDOUT</span></div>
+  <div class="wf-panel-body">
+    <pre style="min-height: 80px; max-height: 600px; overflow: auto; margin: 0;">{{ stdout }}</pre>
   </div>
-</main>
+</div>
+{% if stderr %}
+<div class="wf-panel" style="margin-bottom: 20px;">
+  <div class="wf-panel-head"><span class="wf-panel-title">STDERR</span></div>
+  <div class="wf-panel-body">
+    <pre style="min-height: 40px; max-height: 400px; overflow: auto; margin: 0;">{{ stderr }}</pre>
+  </div>
+</div>
+{% endif %}
+{% endif %}
 {% endblock %}

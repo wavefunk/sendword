@@ -1,94 +1,60 @@
 {% extends "base.html" %}
 
-{% block title %}sendword - Users{% endblock %}
+{% block title %}sendword — users{% endblock %}
+
+{% block crumbs %}
+<div class="wf-crumbs">
+  <span aria-current="page">USERS</span>
+</div>
+{% endblock %}
 
 {% block content %}
-<main class="max-w-4xl mx-auto px-4 py-8">
-  <div class="flex items-center justify-between mb-6">
-    <h1 class="text-2xl font-bold">Users</h1>
-    <a href="/settings/password" class="sw-btn sw-btn-secondary sw-btn-sm">Change password</a>
-  </div>
+<div class="page-head">
+  <h1 class="page-title">Users</h1>
+</div>
 
-  {% if success %}
-  <div class="sw-alert sw-alert-success">{{ success }}</div>
-  {% endif %}
-
-  {% if error %}
-  <div class="sw-alert sw-alert-error">{{ error }}</div>
-  {% endif %}
-
-  {# Create user form #}
-  <div class="sw-card mb-6">
-    <h2 class="text-sm font-bold mb-3">Create User</h2>
-    <form method="post" action="/settings/users" class="flex items-end gap-3">
-      <div class="flex-1">
-        <label for="username" class="sw-label">Username</label>
-        <input
-          type="text"
-          id="username"
-          name="username"
-          required
-          minlength="3"
-          maxlength="32"
-          pattern="[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9]"
-          placeholder="3-32 chars, alphanumeric + hyphens"
-          autocomplete="off"
-          class="sw-input"
-        >
+<div class="wf-panel" style="margin-bottom: 20px;">
+  <div class="wf-panel-head"><span class="wf-panel-title">ADD USER</span></div>
+  <div class="wf-panel-body">
+    <form method="post" action="/settings/users" style="display: flex; gap: 12px; align-items: flex-end;">
+      <div class="wf-field" style="flex: 1;">
+        <label for="new-email">EMAIL</label>
+        <input class="wf-input" type="email" id="new-email" name="username" required>
       </div>
-      <div class="flex-1">
-        <label for="password" class="sw-label">Password</label>
-        <input
-          type="password"
-          id="password"
-          name="password"
-          required
-          autocomplete="new-password"
-          class="sw-input"
-        >
+      <div class="wf-field" style="flex: 1;">
+        <label for="new-password">PASSWORD</label>
+        <input class="wf-input" type="password" id="new-password" name="password" required>
       </div>
-      <button type="submit" class="sw-btn sw-btn-primary">Create</button>
+      <button type="submit" class="wf-btn primary sm">ADD USER</button>
     </form>
   </div>
+</div>
 
-  {# User list #}
-  {% if users %}
-  <div class="sw-card p-0">
-    <table class="sw-table">
-      <thead>
-        <tr>
-          <th>Username</th>
-          <th>Created</th>
-          <th class="w-24"></th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for user in users %}
-        <tr>
-          <td class="font-medium text-sw-fg">
-            {{ user.username }}
-            {% if user.is_self %}
-            <span class="ml-1 text-xs text-sw-muted font-mono">(you)</span>
-            {% endif %}
-          </td>
-          <td class="text-sw-dim"><span data-timestamp="{{ user.created_at }}">{{ user.created_at }}</span></td>
-          <td class="text-right">
-            {% if user.is_self %}
-            <button disabled class="sw-btn sw-btn-sm sw-btn-secondary opacity-30 cursor-not-allowed" title="Cannot delete yourself">Delete</button>
-            {% else %}
-            <form method="post" action="/settings/users/{{ user.id }}/delete"
-                  onsubmit="return confirm('Delete user {{ user.username }}?')">
-              <button type="submit" class="sw-btn sw-btn-danger sw-btn-sm">Delete</button>
-            </form>
-            {% endif %}
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-  {% else %}
-  <p class="text-sw-dim font-mono text-sm">No users found.</p>
-  {% endif %}
-</main>
+<div class="wf-panel">
+  <div class="wf-panel-head"><span class="wf-panel-title">ALL USERS</span></div>
+  <table class="wf-table">
+    <thead>
+      <tr>
+        <th>EMAIL</th>
+        <th>CREATED</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for user in users %}
+      <tr>
+        <td class="strong">{{ user.username }}{% if user.is_self %} <span class="wf-tag accent">YOU</span>{% endif %}</td>
+        <td><span data-ts="{{ user.created_at }}">{{ user.created_at }}</span></td>
+        <td class="num">
+          {% if not user.is_self %}
+          <form method="post" action="/settings/users/{{ user.id }}/delete" style="display: inline;" onsubmit="return confirm('Delete user {{ user.username }}?');">
+            <button type="submit" class="wf-btn sm danger">DELETE</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
 {% endblock %}

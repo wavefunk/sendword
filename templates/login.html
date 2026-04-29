@@ -1,27 +1,30 @@
-{% extends "base.html" %}
+{% extends "base_auth.html" %}
 
-{% block title %}sendword - Login{% endblock %}
+{% block title %}sendword — login{% endblock %}
 
 {% block content %}
-<main class="min-h-screen flex items-center justify-center px-4">
-  <div class="w-full max-w-sm">
-    <h1 class="text-2xl font-bold text-center mb-8">Sendword</h1>
-
-    {% if error %}
-    <div class="sw-alert sw-alert-error">{{ error }}</div>
-    {% endif %}
-
-    <form method="post" action="/login" class="space-y-4">
-      <div>
-        <label for="email" class="sw-label">Email</label>
-        <input type="email" id="email" name="email" autocomplete="email" required class="sw-input">
-      </div>
-      <div>
-        <label for="password" class="sw-label">Password</label>
-        <input type="password" id="password" name="password" autocomplete="current-password" required class="sw-input">
-      </div>
-      <button type="submit" class="sw-btn sw-btn-primary w-full justify-center">Sign in</button>
-    </form>
+<div style="width: 100%; max-width: 380px; padding: 0 16px;">
+  <div style="text-align: center; margin-bottom: 32px;">
+    <div style="display: inline-flex; align-items: center; gap: 10px;">
+      <div style="width: 28px; height: 28px; background: var(--accent); color: var(--accent-ink); display: inline-flex; align-items: center; justify-content: center; font-family: var(--font-mono); font-weight: 800; font-size: 16px;">S</div>
+      <span style="font-family: var(--font-mono); font-size: 18px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; color: var(--fg-strong);">SENDWORD</span>
+    </div>
   </div>
-</main>
+
+  {% if error %}
+  <div class="wf-alert err" style="margin-bottom: 20px;"><div class="wf-alert-bar"></div><div>{{ error }}</div></div>
+  {% endif %}
+
+  <form method="post" action="/login">
+    <div class="wf-field" style="margin-bottom: 16px;">
+      <label for="email">EMAIL</label>
+      <input class="wf-input" type="email" id="email" name="email" autocomplete="email" required>
+    </div>
+    <div class="wf-field" style="margin-bottom: 24px;">
+      <label for="password">PASSWORD</label>
+      <input class="wf-input" type="password" id="password" name="password" autocomplete="current-password" required>
+    </div>
+    <button type="submit" class="wf-btn primary" style="width: 100%; justify-content: center;">SIGN IN</button>
+  </form>
+</div>
 {% endblock %}

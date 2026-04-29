@@ -1,47 +1,43 @@
-{% if attempts %}
-<div class="overflow-x-auto">
-  <table class="sw-table">
-    <thead>
-      <tr>
-        <th>Time</th>
-        <th>Status</th>
-        <th>Source IP</th>
-        <th>Reason</th>
-        <th>Execution</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for attempt in attempts %}
-      <tr>
-        <td class="text-sw-dim whitespace-nowrap"><span data-timestamp="{{ attempt.attempted_at }}">{{ attempt.attempted_at }}</span></td>
-        <td>
-          <span class="sw-badge
-            {%- if attempt.status == 'fired' %} sw-badge-success
-            {%- elif attempt.status == 'auth_failed' %} sw-badge-error
-            {%- elif attempt.status == 'validation_failed' %} sw-badge-warning
-            {%- elif attempt.status == 'filtered' %} sw-badge-purple
-            {%- elif attempt.status == 'rate_limited' %} sw-badge-orange
-            {%- elif attempt.status == 'schedule_skipped' %} sw-badge-info
-            {%- elif attempt.status == 'cooldown_skipped' %} sw-badge-cyan
-            {%- else %} sw-badge-muted
-            {%- endif %}">
-            {{ attempt.status }}
-          </span>
-        </td>
-        <td class="font-mono text-sw-dim">{{ attempt.source_ip }}</td>
-        <td class="text-sw-dim max-w-xs truncate" title="{{ attempt.reason }}">{{ attempt.reason }}</td>
-        <td>
-          {% if attempt.execution_id %}
-          <a href="/executions/{{ attempt.execution_id }}" class="font-mono text-sw-amber hover:text-sw-cream">{{ attempt.execution_id[:8] }}</a>
-          {% else %}
-          <span class="text-sw-muted">-</span>
-          {% endif %}
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+{% if attempts | length == 0 %}
+<div class="wf-empty">
+  <div class="wf-empty-msg">No trigger attempts{% if active_status %} matching "{{ active_status }}"{% endif %}.</div>
 </div>
 {% else %}
-<p class="text-sw-muted text-sm font-mono">No trigger attempts{% if active_status %} matching "{{ active_status }}"{% endif %}.</p>
+<table class="wf-table">
+  <thead>
+    <tr>
+      <th>TIME</th>
+      <th>STATUS</th>
+      <th>SOURCE IP</th>
+      <th>REASON</th>
+      <th>EXECUTION</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for attempt in attempts %}
+    <tr>
+      <td><span data-ts="{{ attempt.attempted_at }}">{{ attempt.attempted_at }}</span></td>
+      <td>
+        <span class="wf-tag
+          {%- if attempt.status == 'fired' %} ok
+          {%- elif attempt.status == 'auth_failed' or attempt.status == 'validation_failed' %} err
+          {%- elif attempt.status == 'rate_limited' %} warn
+          {%- elif attempt.status == 'filtered' or attempt.status == 'schedule_skipped' or attempt.status == 'cooldown_skipped' %} info
+          {%- endif %}">
+          <span class="dot"></span>{{ attempt.status | upper }}
+        </span>
+      </td>
+      <td><code>{{ attempt.source_ip }}</code></td>
+      <td>{{ attempt.reason if attempt.reason else '—' }}</td>
+      <td>
+        {% if attempt.execution_id %}
+          <a href="/executions/{{ attempt.execution_id }}"><code>{{ attempt.execution_id[:8] }}</code></a>
+        {% else %}
+          —
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
 {% endif %}
