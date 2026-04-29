@@ -43,7 +43,7 @@ slug = "deploy-app"
 description = "Triggers app deployment"
 enabled = true
 cwd = "/opt/app"
-timeout = "60s"
+timeout = "1m"
 
 [hooks.executor]
 type = "shell"
