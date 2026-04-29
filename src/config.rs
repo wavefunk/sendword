@@ -407,11 +407,26 @@ impl Default for LogsConfig {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SmtpConfig {
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    pub password: String,
+    pub from: String,
+    #[serde(default = "default_true")]
+    pub starttls: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AuthConfig {
     #[serde(default = "default_session_lifetime", with = "humantime_serde")]
     pub session_lifetime: Duration,
     #[serde(default)]
     pub secure_cookie: bool,
+    #[serde(default)]
+    pub base_url: Option<String>,
+    #[serde(default)]
+    pub smtp: Option<SmtpConfig>,
 }
 
 impl Default for AuthConfig {
@@ -419,6 +434,8 @@ impl Default for AuthConfig {
         Self {
             session_lifetime: default_session_lifetime(),
             secure_cookie: false,
+            base_url: None,
+            smtp: None,
         }
     }
 }
