@@ -82,6 +82,20 @@ async fn main() -> eyre::Result<()> {
     }
 }
 
+async fn csrf_key_or_create() -> eyre::Result<[u8; 32]> {
+    let path = std::path::Path::new("data/csrf_key");
+    if path.exists() {
+        let bytes = tokio::fs::read(path).await?;
+        let key: [u8; 32] = bytes
+            .try_into()
+            .map_err(|v: Vec<u8>| eyre::eyre!("csrf_key file is {} bytes, expected 32", v.len()))?;
+        return Ok(key);
+    }
+    let key: [u8; 32] = rand::random();
+    tokio::fs::write(path, key).await?;
+    Ok(key)
+}
+
 async fn serve() -> eyre::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -108,11 +122,15 @@ async fn serve() -> eyre::Result<()> {
     sendword::barriers::recover_barriers(db.pool()).await;
     tracing::info!("barrier state recovered");
 
+    let csrf_key = csrf_key_or_create().await?;
+    tracing::info!("CSRF key ready");
+
     let session_ttl = chrono::Duration::from_std(config.auth.session_lifetime)
         .unwrap_or(chrono::Duration::hours(24));
     let ath = AllowThemBuilder::with_pool(db.pool().clone())
         .session_ttl(session_ttl)
         .cookie_secure(config.auth.secure_cookie)
+        .csrf_key(csrf_key)
         .build()
         .await?;
     let auth_client = Arc::new(EmbeddedAuthClient::new(ath.clone(), "/login"));
