@@ -32,51 +32,20 @@ sqlx-reset:
     rm -f data/sendword.db data/sendword.db-wal data/sendword.db-shm
     just migrate
 
-npm-install:
-    npm install
-
-build-css *ARGS:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    tmpfile=$(mktemp)
-    trap "rm -f $tmpfile" EXIT
-    while IFS= read -r line; do
-      if [[ "$line" =~ ^@import\ \"\./(.*)\"\; ]]; then
-        cat "static/css/src/${BASH_REMATCH[1]}"
-      else
-        echo "$line"
-      fi
-    done < static/css/src/app.css > "$tmpfile"
-    tailwindcss -i "$tmpfile" -o static/dist/app.css {{ARGS}}
-
-watch-css:
-    tailwindcss -i static/css/src/app.css -o static/dist/app.css --watch
-
-build-ts:
-    esbuild static/ts/main.ts --bundle --outdir=static/dist --format=esm --target=es2020 --minify
-
-build-ts-dev:
-    esbuild static/ts/main.ts --bundle --outdir=static/dist --format=esm --target=es2020 --sourcemap
-
-watch-ts:
-    esbuild static/ts/main.ts --bundle --outdir=static/dist --format=esm --target=es2020 --sourcemap --watch
-
 dev:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    just npm-install
-    mkdir -p static/dist
-    just build-css
-    just build-ts-dev
-    just watch-css &
-    CSS_PID=$!
-    just watch-ts &
-    TS_PID=$!
-    trap "kill $CSS_PID $TS_PID 2>/dev/null" EXIT
     cargo run
 
 build:
-    just npm-install
-    just build-css --minify
-    just build-ts
     cargo build --release
+
+vendor-design:
+    cp ../design/css/wavefunk.css static/css/wavefunk.css
+    cp ../design/css/01-tokens.css static/css/01-tokens.css
+    cp ../design/css/02-base.css static/css/02-base.css
+    cp ../design/css/03-layout.css static/css/03-layout.css
+    cp ../design/css/04-components.css static/css/04-components.css
+    cp ../design/css/05-utilities.css static/css/05-utilities.css
+    cp ../design/css/06-marketing.css static/css/06-marketing.css
+    cp ../design/css/fonts/MartianGrotesk-VF.woff2 static/css/fonts/
+    cp ../design/css/fonts/MartianMono-VF.woff2 static/css/fonts/
+    cp ../design/js/echo.js static/js/echo.js
