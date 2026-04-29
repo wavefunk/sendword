@@ -84,8 +84,8 @@
 
   <main>
     <div class="page">
-      {% if success %}<div class="wf-alert ok" style="margin-bottom: 20px;">{{ success }}</div>{% endif %}
-      {% if error %}<div class="wf-alert err" style="margin-bottom: 20px;">{{ error }}</div>{% endif %}
+      {% if success %}<div class="wf-alert ok" style="margin-bottom: 20px;"><div class="wf-alert-bar"></div><div>{{ success }}</div></div>{% endif %}
+      {% if error %}<div class="wf-alert err" style="margin-bottom: 20px;"><div class="wf-alert-bar"></div><div>{{ error }}</div></div>{% endif %}
       {% block content %}{% endblock %}
     </div>
   </main>
