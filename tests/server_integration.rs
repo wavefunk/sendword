@@ -4202,9 +4202,9 @@ async fn sse_returns_done_for_terminal_execution() {
         "SSE body should contain a done event; got:\n{body}"
     );
 
-    // The done event data must include the execution status.
+    // The done event data must include the execution status (uppercase in HTML badge).
     assert!(
-        body.contains("success"),
+        body.contains("SUCCESS"),
         "done event data should contain the terminal status; got:\n{body}"
     );
 }

@@ -34,6 +34,21 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/approvals", get(list_pending_approvals))
 }
 
+/// HTML-escape a string for safe insertion via HTMX SSE swap.
+fn html_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 /// Read a log file, returning its contents or a fallback message.
 async fn read_log_file(logs_dir: &str, execution_id: &str, filename: &str) -> String {
     let path = FsPath::new(logs_dir).join(execution_id).join(filename);
@@ -499,17 +514,22 @@ async fn log_stream(
                 .await
                 .unwrap_or_default();
             if !stdout.is_empty() {
-                yield Ok::<Event, Infallible>(Event::default().event("stdout").data(stdout));
+                yield Ok::<Event, Infallible>(Event::default().event("stdout").data(html_escape(&stdout)));
             }
             if !stderr.is_empty() {
-                yield Ok(Event::default().event("stderr").data(stderr));
+                yield Ok(Event::default().event("stderr").data(html_escape(&stderr)));
             }
             let status = execution::get_by_id(&pool, &id)
                 .await
                 .map(|e| e.status.to_string())
                 .unwrap_or_else(|_| "unknown".into());
+            let tag_class = match status.as_str() {
+                "success" => "ok",
+                "failed" => "err",
+                _ => "",
+            };
             yield Ok(Event::default().event("done").data(
-                serde_json::json!({ "status": status }).to_string()
+                format!(r#"<span class="wf-tag {tag_class}"><span class="dot"></span>{}</span>"#, status.to_uppercase())
             ));
         } else {
             // Execution is running — tail log files.
@@ -529,7 +549,7 @@ async fn log_stream(
                         if let Ok(text) = std::str::from_utf8(new)
                             && !text.is_empty() {
                                 yield Ok::<Event, Infallible>(
-                                    Event::default().event("stdout").data(text)
+                                    Event::default().event("stdout").data(html_escape(text))
                                 );
                             }
                     }
@@ -542,7 +562,7 @@ async fn log_stream(
                         if let Ok(text) = std::str::from_utf8(new)
                             && !text.is_empty() {
                                 yield Ok::<Event, Infallible>(
-                                    Event::default().event("stderr").data(text)
+                                    Event::default().event("stderr").data(html_escape(text))
                                 );
                             }
                     }
@@ -550,8 +570,14 @@ async fn log_stream(
                 // Check if execution has reached a terminal state.
                 match execution::get_by_id(&pool, &id).await {
                     Ok(e) if e.status.is_terminal() => {
+                        let status = e.status.to_string();
+                        let tag_class = match status.as_str() {
+                            "success" => "ok",
+                            "failed" => "err",
+                            _ => "",
+                        };
                         yield Ok(Event::default().event("done").data(
-                            serde_json::json!({ "status": e.status.to_string() }).to_string()
+                            format!(r#"<span class="wf-tag {tag_class}"><span class="dot"></span>{}</span>"#, status.to_uppercase())
                         ));
                         break;
                     }
