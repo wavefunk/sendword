@@ -8,7 +8,7 @@ use axum::routing::get;
 use serde::Deserialize;
 use uuid::Uuid;
 
-use allowthem_core::{AuthError, Email, UserId, password};
+use allowthem_core::{AuthError, Email, UserId};
 
 use crate::error::AppError;
 use crate::extractors::AuthUser;
@@ -17,14 +17,10 @@ use crate::templates::context;
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/settings/users", get(list_users).post(create_user))
+        .route("/admin/users", get(list_users).post(create_user))
         .route(
-            "/settings/users/{id}/delete",
+            "/admin/users/{id}/delete",
             axum::routing::post(delete_user),
-        )
-        .route(
-            "/settings/password",
-            get(password_page).post(change_password),
         )
 }
 
@@ -36,7 +32,7 @@ struct FlashParams {
     error: Option<String>,
 }
 
-// --- GET /settings/users ---
+// --- GET /admin/users ---
 
 async fn list_users(
     AuthUser(auth): AuthUser,
@@ -65,13 +61,13 @@ async fn list_users(
             success => flash.success,
             error => flash.error,
             username => auth.email.as_str(),
-            nav_active => "settings",
+            nav_active => "admin",
         },
     )?;
     Ok(Html(html))
 }
 
-// --- POST /settings/users ---
+// --- POST /admin/users ---
 
 #[derive(Deserialize)]
 struct CreateUserForm {
@@ -85,14 +81,14 @@ async fn create_user(
     Form(form): Form<CreateUserForm>,
 ) -> Response {
     if form.password.is_empty() {
-        return Redirect::to("/settings/users?error=Password+cannot+be+empty").into_response();
+        return Redirect::to("/admin/users?error=Password+cannot+be+empty").into_response();
     }
 
     let email = match Email::new(form.email.clone()) {
         Ok(e) => e,
         Err(_) => {
             let encoded = urlencoding::encode("Invalid email address");
-            return Redirect::to(&format!("/settings/users?error={encoded}")).into_response();
+            return Redirect::to(&format!("/admin/users?error={encoded}")).into_response();
         }
     };
 
@@ -105,20 +101,20 @@ async fn create_user(
         Ok(created) => {
             let msg = format!("User '{}' created", created.email.as_str());
             let encoded = urlencoding::encode(&msg);
-            Redirect::to(&format!("/settings/users?success={encoded}")).into_response()
+            Redirect::to(&format!("/admin/users?success={encoded}")).into_response()
         }
         Err(AuthError::Conflict(msg)) => {
             let encoded = urlencoding::encode(&msg);
-            Redirect::to(&format!("/settings/users?error={encoded}")).into_response()
+            Redirect::to(&format!("/admin/users?error={encoded}")).into_response()
         }
         Err(e) => {
             tracing::error!(error = %e, "failed to create user");
-            Redirect::to("/settings/users?error=Failed+to+create+user").into_response()
+            Redirect::to("/admin/users?error=Failed+to+create+user").into_response()
         }
     }
 }
 
-// --- POST /settings/users/:id/delete ---
+// --- POST /admin/users/:id/delete ---
 
 async fn delete_user(
     AuthUser(auth): AuthUser,
@@ -128,114 +124,27 @@ async fn delete_user(
     let user_id = match Uuid::parse_str(&id).map(UserId::from_uuid) {
         Ok(uid) => uid,
         Err(_) => {
-            return Redirect::to("/settings/users?error=Invalid+user+ID").into_response();
+            return Redirect::to("/admin/users?error=Invalid+user+ID").into_response();
         }
     };
 
     // Prevent self-deletion
     if user_id == auth.id {
-        return Redirect::to("/settings/users?error=Cannot+delete+yourself").into_response();
+        return Redirect::to("/admin/users?error=Cannot+delete+yourself").into_response();
     }
 
     match state.ath.db().delete_user(user_id).await {
-        Ok(()) => Redirect::to("/settings/users?success=User+deleted").into_response(),
+        Ok(()) => Redirect::to("/admin/users?success=User+deleted").into_response(),
         Err(AuthError::NotFound) => {
-            Redirect::to("/settings/users?error=User+not+found").into_response()
+            Redirect::to("/admin/users?error=User+not+found").into_response()
         }
         Err(e) => {
             tracing::error!(error = %e, "failed to delete user");
-            Redirect::to("/settings/users?error=Failed+to+delete+user").into_response()
+            Redirect::to("/admin/users?error=Failed+to+delete+user").into_response()
         }
     }
 }
 
-// --- GET /settings/password ---
-
-async fn password_page(
-    AuthUser(auth): AuthUser,
-    State(state): State<Arc<AppState>>,
-    Query(flash): Query<FlashParams>,
-) -> Result<Html<String>, AppError> {
-    let html = state.templates.render(
-        "password.html",
-        context! {
-            success => flash.success,
-            error => flash.error,
-            username => auth.email.as_str(),
-            nav_active => "settings",
-        },
-    )?;
-    Ok(Html(html))
-}
-
-// --- POST /settings/password ---
-
-#[derive(Deserialize)]
-struct ChangePasswordForm {
-    current_password: String,
-    new_password: String,
-    confirm_password: String,
-}
-
-async fn change_password(
-    AuthUser(auth): AuthUser,
-    State(state): State<Arc<AppState>>,
-    Form(form): Form<ChangePasswordForm>,
-) -> Response {
-    // Validate new password matches confirmation
-    if form.new_password != form.confirm_password {
-        return Redirect::to("/settings/password?error=New+passwords+do+not+match").into_response();
-    }
-
-    if form.new_password.is_empty() {
-        return Redirect::to("/settings/password?error=New+password+cannot+be+empty")
-            .into_response();
-    }
-
-    // Fetch user with password hash for verification
-    let current_user = match state.ath.db().find_for_login(auth.email.as_str()).await {
-        Ok(u) => u,
-        Err(e) => {
-            tracing::error!(error = %e, "failed to fetch user for password change");
-            return Redirect::to("/settings/password?error=Failed+to+change+password")
-                .into_response();
-        }
-    };
-
-    // Verify current password
-    let Some(pw_hash) = &current_user.password_hash else {
-        return Redirect::to("/settings/password?error=Failed+to+change+password").into_response();
-    };
-
-    match password::verify_password(&form.current_password, pw_hash) {
-        Ok(true) => {}
-        Ok(false) => {
-            return Redirect::to("/settings/password?error=Current+password+is+incorrect")
-                .into_response();
-        }
-        Err(e) => {
-            tracing::error!(error = %e, "password verification error");
-            return Redirect::to("/settings/password?error=Failed+to+change+password")
-                .into_response();
-        }
-    }
-
-    // Update password
-    match state
-        .ath
-        .db()
-        .update_user_password(auth.id, &form.new_password)
-        .await
-    {
-        Ok(()) => {
-            Redirect::to("/settings/password?success=Password+updated+successfully").into_response()
-        }
-        Err(e) => {
-            tracing::error!(error = %e, "failed to update password");
-            Redirect::to("/settings/password?error=Failed+to+change+password").into_response()
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -303,7 +212,7 @@ mod tests {
         let resp = app(state)
             .oneshot(
                 Request::builder()
-                    .uri("/settings/users")
+                    .uri("/admin/users")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -321,7 +230,7 @@ mod tests {
         let resp = app(state)
             .oneshot(
                 Request::builder()
-                    .uri("/settings/users")
+                    .uri("/admin/users")
                     .header("Cookie", &cookie)
                     .body(Body::empty())
                     .unwrap(),
@@ -348,7 +257,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri("/settings/users")
+                    .uri("/admin/users")
                     .header("Cookie", &cookie)
                     .header("Content-Type", "application/x-www-form-urlencoded")
                     .body(Body::from("email=newuser@example.com&password=secret123"))
@@ -376,7 +285,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri("/settings/users")
+                    .uri("/admin/users")
                     .header("Cookie", &cookie)
                     .header("Content-Type", "application/x-www-form-urlencoded")
                     .body(Body::from("email=admin@example.com&password=other"))
@@ -401,7 +310,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri(&format!("/settings/users/{}/delete", admin.id))
+                    .uri(&format!("/admin/users/{}/delete", admin.id))
                     .header("Cookie", &cookie)
                     .body(Body::empty())
                     .unwrap(),
@@ -433,7 +342,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri(&format!("/settings/users/{}/delete", other.id))
+                    .uri(&format!("/admin/users/{}/delete", other.id))
                     .header("Cookie", &cookie)
                     .body(Body::empty())
                     .unwrap(),

@@ -1,5 +1,4 @@
 mod api;
-mod auth;
 mod dashboard;
 mod executions;
 mod health;
@@ -17,7 +16,6 @@ pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .merge(api::router())
         .merge(health::router())
-        .merge(auth::router())
         .merge(dashboard::router())
         .merge(hooks::router())
         .merge(executions::router())
