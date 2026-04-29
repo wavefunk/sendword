@@ -3,6 +3,7 @@ pub mod barriers;
 pub mod config;
 pub mod config_writer;
 pub mod db;
+pub mod email;
 pub mod error;
 pub mod executor;
 pub mod extractors;
