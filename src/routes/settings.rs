@@ -294,7 +294,7 @@ mod tests {
     }
 
     fn app(state: Arc<AppState>) -> axum::Router {
-        crate::server::router(state)
+        crate::server::router(state, axum::Router::new())
     }
 
     #[tokio::test]

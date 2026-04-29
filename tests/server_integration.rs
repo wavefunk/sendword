@@ -34,7 +34,7 @@ async fn spawn_server(state: Arc<AppState>) -> String {
     let url = format!("http://{addr}");
 
     tokio::spawn(async move {
-        axum::serve(listener, sendword::server::into_service(state))
+        axum::serve(listener, sendword::server::into_service(state, axum::Router::new()))
             .await
             .expect("server");
     });

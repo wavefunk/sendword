@@ -1691,7 +1691,7 @@ mod tests {
     fn app(state: Arc<AppState>) -> Router {
         use std::net::{Ipv4Addr, SocketAddr};
         let peer = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
-        crate::server::router(state).layer(axum::middleware::from_fn(
+        crate::server::router(state, Router::new()).layer(axum::middleware::from_fn(
             move |mut req: axum::http::Request<Body>, next: axum::middleware::Next| {
                 req.extensions_mut().insert(ConnectInfo(peer));
                 async move { next.run(req).await }

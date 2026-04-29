@@ -66,15 +66,16 @@ impl AppState {
     }
 }
 
-pub fn router(state: Arc<AppState>) -> Router {
+pub fn router(state: Arc<AppState>, auth_router: Router) -> Router {
     let static_dir = ServeDir::new("static");
 
     Router::new()
         .merge(crate::routes::router())
         .nest_service("/static", static_dir)
         .fallback(fallback_404)
-        .layer(TraceLayer::new_for_http())
         .with_state(state)
+        .merge(auth_router)
+        .layer(TraceLayer::new_for_http())
 }
 
 async fn fallback_404(State(state): State<Arc<AppState>>) -> impl IntoResponse {
@@ -92,17 +93,20 @@ async fn fallback_404(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 
 /// Build the router as a service that provides `ConnectInfo<SocketAddr>` to
 /// handlers. Use this when serving via `axum::serve`.
-pub fn into_service(state: Arc<AppState>) -> IntoMakeServiceWithConnectInfo<Router, SocketAddr> {
-    router(state).into_make_service_with_connect_info::<SocketAddr>()
+pub fn into_service(
+    state: Arc<AppState>,
+    auth_router: Router,
+) -> IntoMakeServiceWithConnectInfo<Router, SocketAddr> {
+    router(state, auth_router).into_make_service_with_connect_info::<SocketAddr>()
 }
 
-pub async fn run(state: Arc<AppState>) -> eyre::Result<()> {
+pub async fn run(state: Arc<AppState>, auth_router: Router) -> eyre::Result<()> {
     let config = state.config.load();
     let addr = format!("{}:{}", config.server.bind, config.server.port);
     let listener = TcpListener::bind(&addr).await?;
     tracing::info!(addr = %addr, "server listening");
 
-    axum::serve(listener, into_service(state))
+    axum::serve(listener, into_service(state, auth_router))
         .with_graceful_shutdown(shutdown_signal())
         .await?;
 
