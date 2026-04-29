@@ -1,47 +1,49 @@
 {% extends "base.html" %}
 
-{% block title %}sendword - Scripts{% endblock %}
+{% block title %}sendword — scripts{% endblock %}
+
+{% block crumbs %}
+<div class="wf-crumbs">
+  <span aria-current="page">SCRIPTS</span>
+</div>
+{% endblock %}
+
+{% block actions %}
+<a class="wf-btn sm primary" href="/scripts/new">+ NEW SCRIPT</a>
+{% endblock %}
 
 {% block content %}
-<main class="max-w-4xl mx-auto px-4 py-8">
-  {% if success %}
-  <div class="sw-alert sw-alert-success">{{ success }}</div>
-  {% endif %}
+<div class="page-head">
+  <h1 class="page-title">Scripts</h1>
+</div>
+<p class="page-sub">{{ scripts | length }} file{{ 's' if scripts | length != 1 }}</p>
 
-  {% if error %}
-  <div class="sw-alert sw-alert-error">{{ error }}</div>
-  {% endif %}
-
-  <div class="flex items-center justify-between mb-6">
-    <h1 class="text-2xl font-bold">Scripts</h1>
-    <a href="/scripts/new" class="sw-btn sw-btn-primary sw-btn-sm">New script</a>
-  </div>
-
-  {% if scripts %}
-  <div class="sw-card p-0">
-    <table class="sw-table">
-      <thead>
-        <tr>
-          <th>Filename</th>
-          <th>Size</th>
-          <th>Last modified</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for script in scripts %}
-        <tr>
-          <td>
-            <a href="/scripts/{{ script.name }}" class="font-mono text-sw-amber hover:text-sw-cream">{{ script.name }}</a>
-          </td>
-          <td class="text-sw-dim">{{ script.size }}</td>
-          <td class="text-sw-dim">{{ script.modified }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-  {% else %}
-  <p class="text-sw-dim font-mono text-sm">No scripts yet. Create one to get started.</p>
-  {% endif %}
-</main>
+{% if scripts | length == 0 %}
+<div class="wf-empty">
+  <div class="wf-empty-title">NO SCRIPTS</div>
+  <div class="wf-empty-msg">Upload a script to reference in hook executors.</div>
+  <a class="wf-btn sm primary" href="/scripts/new">+ NEW SCRIPT</a>
+</div>
+{% else %}
+<div class="wf-panel">
+  <table class="wf-table is-interactive">
+    <thead>
+      <tr>
+        <th>FILENAME</th>
+        <th class="num">SIZE</th>
+        <th>MODIFIED</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for script in scripts %}
+      <tr onclick="location.href='/scripts/{{ script.name }}'">
+        <td class="strong"><code>{{ script.name }}</code></td>
+        <td class="num">{{ script.size }}</td>
+        <td><span data-ts="{{ script.modified }}">{{ script.modified }}</span></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
 {% endblock %}
