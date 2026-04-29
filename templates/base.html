@@ -51,7 +51,7 @@
       <div class="wf-nav-section">TOOLS</div>
       <a class="wf-nav-item{{ ' is-active' if nav_active == 'scripts' }}" href="/scripts">&#x25B8; Scripts</a>
       <div class="wf-nav-section">ADMIN</div>
-      <a class="wf-nav-item{{ ' is-active' if nav_active == 'settings' }}" href="/settings/users">&#x25B8; Users</a>
+      <a class="wf-nav-item{{ ' is-active' if nav_active == 'admin' }}" href="/admin/users">&#x25B8; Users</a>
     </nav>
     <div class="wf-pop-anchor" style="display: block;">
       <button class="wf-user" data-popover-toggle>
@@ -64,9 +64,11 @@
       <div class="wf-popover" data-side="top" style="left: 8px; right: 8px;">
         <div class="wf-popover-head">{{ username | upper }}</div>
         <div class="wf-menu">
-          <a class="wf-menu-item" href="/settings/password">Change password</a>
+          <a class="wf-menu-item" href="/settings">Account settings</a>
           <div class="wf-menu-sep"></div>
-          <a class="wf-menu-item danger" href="/logout">Log out</a>
+          <form method="post" action="/logout" style="margin: 0;">
+            <button type="submit" class="wf-menu-item danger" style="width: 100%; text-align: left; background: none; border: none; cursor: pointer; font: inherit; color: inherit; padding: inherit;">Log out</button>
+          </form>
         </div>
       </div>
     </div>

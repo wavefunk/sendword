@@ -16,7 +16,7 @@
 <div class="wf-panel" style="margin-bottom: 20px;">
   <div class="wf-panel-head"><span class="wf-panel-title">ADD USER</span></div>
   <div class="wf-panel-body">
-    <form method="post" action="/settings/users" style="display: flex; gap: 12px; align-items: flex-end;">
+    <form method="post" action="/admin/users" style="display: flex; gap: 12px; align-items: flex-end;">
       <div class="wf-field" style="flex: 1;">
         <label for="new-email">EMAIL</label>
         <input class="wf-input" type="email" id="new-email" name="username" required>
@@ -47,7 +47,7 @@
         <td><span data-ts="{{ user.created_at }}">{{ user.created_at }}</span></td>
         <td class="num">
           {% if not user.is_self %}
-          <form method="post" action="/settings/users/{{ user.id }}/delete" style="display: inline;" onsubmit="return confirm('Delete user {{ user.username }}?');">
+          <form method="post" action="/admin/users/{{ user.id }}/delete" style="display: inline;" onsubmit="return confirm('Delete user {{ user.username }}?');">
             <button type="submit" class="wf-btn sm danger">DELETE</button>
           </form>
           {% endif %}
