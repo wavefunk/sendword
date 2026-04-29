@@ -15,6 +15,15 @@ dir = "data/logs"
 [auth]
 session_lifetime = "24h"
 secure_cookie = false
+# base_url = "http://localhost:8080"
+
+# [auth.smtp]
+# host = "smtp.example.com"
+# port = 587
+# username = "sendword@example.com"
+# password = "your-smtp-password"
+# from = "sendword@example.com"
+# starttls = true
 
 [scripts]
 dir = "data/scripts"
@@ -43,7 +52,6 @@ slug = "deploy-app"
 description = "Triggers app deployment"
 enabled = true
 cwd = "/opt/app"
-timeout = "1m"
 
 [hooks.executor]
 type = "shell"
@@ -60,3 +68,6 @@ max_delay = "30s"
 
 [hooks.rate_limit]
 max_per_minute = 5
+
+[hooks.trigger_rules]
+payload_filters = [{ field = "action", operator = "equals", value = "deploy" }]
