@@ -203,7 +203,7 @@ async fn user_create(email_str: &str) -> eyre::Result<()> {
         .build()
         .await?;
 
-    match ath.db().create_user(email, &password, None).await {
+    match ath.db().create_user(email, &password, None, None).await {
         Ok(user) => {
             eprintln!("user '{}' created (id: {})", user.email.as_str(), user.id);
         }

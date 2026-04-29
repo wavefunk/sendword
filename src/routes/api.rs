@@ -273,7 +273,7 @@ mod tests {
         let user = state
             .ath
             .db()
-            .create_user(email, "password123", None)
+            .create_user(email, "password123", None, None)
             .await
             .unwrap();
         let token = generate_token();

@@ -1670,7 +1670,7 @@ mod tests {
         let user = state
             .ath
             .db()
-            .create_user(email, "password123", None)
+            .create_user(email, "password123", None, None)
             .await
             .unwrap();
         let token = generate_token();
@@ -1737,8 +1737,8 @@ mod tests {
             .await
             .unwrap();
         let html = String::from_utf8(body.to_vec()).unwrap();
-        assert!(html.contains("New hook"));
-        assert!(html.contains("Create hook"));
+        assert!(html.contains("new hook"));
+        assert!(html.contains("CREATE HOOK"));
     }
 
     // --- Create hook ---
@@ -1897,7 +1897,7 @@ max_delay = "30s"
             .await
             .unwrap();
         let html = String::from_utf8(body.to_vec()).unwrap();
-        assert!(html.contains("Edit Hook"));
+        assert!(html.contains("SAVE CHANGES"));
         assert!(html.contains("Deploy"));
         assert!(html.contains("make deploy"));
         assert!(html.contains("/opt/app"));

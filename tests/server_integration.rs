@@ -52,7 +52,7 @@ async fn create_test_session(state: &Arc<AppState>) -> String {
     let user = state
         .ath
         .db()
-        .create_user(email, "testpass123", None)
+        .create_user(email, "testpass123", None, None)
         .await
         .expect("create test user");
     let token = generate_token();

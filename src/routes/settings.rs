@@ -99,7 +99,7 @@ async fn create_user(
     match state
         .ath
         .db()
-        .create_user(email, &form.password, None)
+        .create_user(email, &form.password, None, None)
         .await
     {
         Ok(created) => {
@@ -274,7 +274,7 @@ mod tests {
         let user = state
             .ath
             .db()
-            .create_user(email, "password123", None)
+            .create_user(email, "password123", None, None)
             .await
             .unwrap();
 
@@ -336,7 +336,7 @@ mod tests {
         let html = String::from_utf8(body.to_vec()).unwrap();
         // user rows include email as the username field
         assert!(html.contains("admin@example.com"));
-        assert!(html.contains("(you)"));
+        assert!(html.contains("YOU"));
     }
 
     #[tokio::test]
@@ -425,7 +425,7 @@ mod tests {
         let other = state
             .ath
             .db()
-            .create_user(other_email, "password", None)
+            .create_user(other_email, "password", None, None)
             .await
             .unwrap();
 

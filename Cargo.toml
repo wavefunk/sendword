@@ -10,8 +10,8 @@ name = "sendword"
 path = "src/main.rs"
 
 [dependencies]
-allowthem-core   = { version = "0.0.1" }
-allowthem-server = { version = "0.0.1" }
+allowthem-core   = { path = "../allowthem/crates/core" }
+allowthem-server = { path = "../allowthem/crates/server" }
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 eyre = "0.6"
