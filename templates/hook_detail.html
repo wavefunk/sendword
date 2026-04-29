@@ -1,249 +1,267 @@
 {% extends "base.html" %}
 
-{% block title %}sendword - {{ name }}{% endblock %}
+{% block title %}sendword — {{ name }}{% endblock %}
+
+{% block crumbs %}
+<div class="wf-crumbs">
+  <a href="/">HOOKS</a>
+  <span aria-current="page">{{ slug | upper }}</span>
+</div>
+{% endblock %}
+
+{% block actions %}
+<a class="wf-btn sm" href="/hooks/{{ slug }}/edit">EDIT</a>
+<form method="post" action="/hooks/{{ slug }}/delete"
+      onsubmit="return confirm('Delete hook {{ name }}?')" style="display: inline;">
+  <button type="submit" class="wf-btn sm danger">DELETE</button>
+</form>
+{% endblock %}
 
 {% block content %}
-<main class="max-w-4xl mx-auto px-4 py-8">
-  <div class="mb-6">
-    <a href="/" class="sw-back">&larr; Back to dashboard</a>
-  </div>
-
-  {% if success %}
-  <div class="sw-alert sw-alert-success">{{ success }}</div>
+<div class="page-head">
+  <h1 class="page-title">{{ name }}</h1>
+  {% if enabled %}
+    <span class="wf-tag ok"><span class="dot"></span>ENABLED</span>
+  {% else %}
+    <span class="wf-tag"><span class="dot"></span>DISABLED</span>
   {% endif %}
+</div>
+{% if description %}
+<p class="page-sub">{{ description }}</p>
+{% endif %}
 
-  {% if error %}
-  <div class="sw-alert sw-alert-error">{{ error }}</div>
-  {% endif %}
-
-  <div class="flex items-center justify-between mb-2">
-    <h1 class="text-2xl font-bold">{{ name }}</h1>
-    <div class="flex items-center gap-2">
-      <span class="sw-badge {{ 'sw-badge-success' if enabled else 'sw-badge-muted' }}">
-        {{ "enabled" if enabled else "disabled" }}
-      </span>
-      <a href="/hooks/{{ slug }}/edit" class="sw-btn sw-btn-secondary sw-btn-sm">Edit</a>
-      <form method="post" action="/hooks/{{ slug }}/delete"
-            onsubmit="return confirm('Delete hook {{ name }}?')">
-        <button type="submit" class="sw-btn sw-btn-danger sw-btn-sm">Delete</button>
-      </form>
-    </div>
-  </div>
-
-  {% if description %}
-  <p class="text-sw-dim text-sm mb-4">{{ description }}</p>
-  {% endif %}
-
-  <p class="text-xs text-sw-muted font-mono mb-6">/hook/{{ slug }}</p>
-
-  {# --- Executor config summary --- #}
-  <div class="sw-card mb-6">
-    <h2 class="text-lg font-bold mb-3">Executor</h2>
-    <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
-      <dt class="sw-dt">Type</dt>
-      <dd class="font-mono text-sw-fg">{{ executor_type }}</dd>
-
-      <dt class="sw-dt">Command</dt>
-      <dd class="font-mono text-sw-teal">
-        {{ executor_command }}
-        {% if script_edit_url %}
-        <a href="{{ script_edit_url }}" class="ml-2 text-xs text-sw-amber hover:text-sw-cream">Edit script</a>
+{# --- Overview --- #}
+<div class="wf-panel">
+  <div class="wf-panel-head"><span class="wf-panel-title">OVERVIEW</span></div>
+  <dl class="wf-dl flush">
+    <div class="wf-dl-row"><dt>Slug</dt><dd><code>{{ slug }}</code></dd></div>
+    {% if description %}
+    <div class="wf-dl-row"><dt>Description</dt><dd>{{ description }}</dd></div>
+    {% endif %}
+    <div class="wf-dl-row"><dt>Endpoint</dt><dd><code>/hook/{{ slug }}</code></dd></div>
+    <div class="wf-dl-row">
+      <dt>Status</dt>
+      <dd>
+        {% if enabled %}
+          <span class="wf-tag ok"><span class="dot"></span>ENABLED</span>
+        {% else %}
+          <span class="wf-tag"><span class="dot"></span>DISABLED</span>
         {% endif %}
       </dd>
+    </div>
+  </dl>
+</div>
 
-      {% if cwd %}
-      <dt class="sw-dt">Working dir</dt>
-      <dd class="font-mono text-sw-fg">{{ cwd }}</dd>
-      {% endif %}
-
-      <dt class="sw-dt">Timeout</dt>
-      <dd class="text-sw-fg">{{ timeout_secs }}s</dd>
-
-      {% if env_vars %}
-      <dt class="sw-dt">Environment</dt>
+{# --- Executor --- #}
+<div class="wf-panel">
+  <div class="wf-panel-head"><span class="wf-panel-title">EXECUTOR</span></div>
+  <dl class="wf-dl flush">
+    <div class="wf-dl-row"><dt>Type</dt><dd>{{ executor_type }}</dd></div>
+    <div class="wf-dl-row">
+      <dt>Command</dt>
+      <dd>
+        <code>{{ executor_command }}</code>
+        {% if script_edit_url %}
+          <a class="wf-btn sm" href="{{ script_edit_url }}" style="margin-left: 8px;">EDIT SCRIPT</a>
+        {% endif %}
+      </dd>
+    </div>
+    {% if cwd %}
+    <div class="wf-dl-row"><dt>Working dir</dt><dd><code>{{ cwd }}</code></dd></div>
+    {% endif %}
+    <div class="wf-dl-row"><dt>Timeout</dt><dd>{{ timeout_secs }}s</dd></div>
+    {% if env_vars %}
+    <div class="wf-dl-row">
+      <dt>Environment</dt>
       <dd>
         {% for var in env_vars %}
-        <span class="inline-block bg-sw-bg text-sw-dim text-xs font-mono px-1.5 py-0.5 mr-1 mb-1 border border-sw-lighter">{{ var }}</span>
+        <span class="wf-tag" style="margin-right: 4px;">{{ var }}</span>
         {% endfor %}
       </dd>
-      {% endif %}
-    </dl>
-  </div>
+    </div>
+    {% endif %}
+  </dl>
+</div>
 
-  {# --- Authentication --- #}
-  {% if auth_mode is defined %}
-  <div class="sw-card mb-6">
-    <h2 class="text-lg font-bold mb-3">Authentication</h2>
-    <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
-      <dt class="sw-dt">Mode</dt>
+{# --- Authentication --- #}
+{% if auth_mode != "none" %}
+<div class="wf-panel">
+  <div class="wf-panel-head"><span class="wf-panel-title">AUTHENTICATION</span></div>
+  <dl class="wf-dl flush">
+    <div class="wf-dl-row">
+      <dt>Mode</dt>
       <dd>
-        <span class="sw-badge
-          {%- if auth_mode == 'none' %} sw-badge-muted
-          {%- elif auth_mode == 'bearer' %} sw-badge-info
-          {%- elif auth_mode == 'hmac' %} sw-badge-purple
-          {%- else %} sw-badge-muted
-          {%- endif %}">
-          {{ auth_mode }}
+        <span class="wf-tag {% if auth_mode == 'bearer' %}info{% elif auth_mode == 'hmac' %}accent{% endif %}">
+          {{ auth_mode | upper }}
         </span>
-        {% if auth_mode == "hmac" %}
-        <span class="text-xs text-sw-muted ml-1 font-mono">{{ auth_algorithm }} via {{ auth_header }}</span>
-        {% endif %}
       </dd>
-    </dl>
-  </div>
+    </div>
+    {% if auth_header %}
+    <div class="wf-dl-row"><dt>Header</dt><dd><code>{{ auth_header }}</code></dd></div>
+    {% endif %}
+    {% if auth_algorithm %}
+    <div class="wf-dl-row"><dt>Algorithm</dt><dd>{{ auth_algorithm }}</dd></div>
+    {% endif %}
+  </dl>
+</div>
+{% endif %}
+
+{# --- Payload Schema --- #}
+{% if payload_fields is defined and payload_fields %}
+<div class="wf-panel" style="padding: 0;">
+  <div class="wf-panel-head"><span class="wf-panel-title">PAYLOAD SCHEMA</span></div>
+  <table class="wf-table">
+    <thead>
+      <tr>
+        <th>NAME</th>
+        <th>TYPE</th>
+        <th>REQUIRED</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for field in payload_fields %}
+      <tr>
+        <td class="strong"><code>{{ field.name }}</code></td>
+        <td><code>{{ field.type }}</code></td>
+        <td>
+          {% if field.required %}
+            <span class="wf-tag warn">REQUIRED</span>
+          {% else %}
+            <span class="muted">optional</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{# --- Trigger Rules --- #}
+{% set has_trigger_rules = (trigger_filter_rows and trigger_filter_rows | length > 0)
+  or (trigger_window_rows and trigger_window_rows | length > 0)
+  or trigger_cooldown
+  or trigger_rate_max %}
+{% if has_trigger_rules %}
+<div class="wf-panel" style="padding: 0;">
+  <div class="wf-panel-head"><span class="wf-panel-title">TRIGGER RULES</span></div>
+
+  {% if trigger_cooldown or trigger_rate_max %}
+  <dl class="wf-dl flush">
+    {% if trigger_cooldown %}
+    <div class="wf-dl-row"><dt>Cooldown</dt><dd>{{ trigger_cooldown }}</dd></div>
+    {% endif %}
+    {% if trigger_rate_max %}
+    <div class="wf-dl-row"><dt>Rate limit</dt><dd>{{ trigger_rate_max }} per {{ trigger_rate_window }}</dd></div>
+    {% endif %}
+  </dl>
   {% endif %}
 
-  {# --- Payload Schema --- #}
-  {% if payload_fields is defined and payload_fields %}
-  <div class="sw-card mb-6">
-    <h2 class="text-lg font-bold mb-3">Payload Schema</h2>
-    <table class="sw-table">
-      <thead>
-        <tr>
-          <th>Field</th>
-          <th>Type</th>
-          <th>Required</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for field in payload_fields %}
-        <tr>
-          <td class="font-mono text-sw-fg">{{ field.name }}</td>
-          <td class="font-mono text-sw-dim">{{ field.type }}</td>
-          <td>
-            {% if field.required %}
-            <span class="sw-badge sw-badge-warning">required</span>
-            {% else %}
-            <span class="text-xs text-sw-muted font-mono">optional</span>
-            {% endif %}
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
+  {% if trigger_filter_rows and trigger_filter_rows | length > 0 %}
+  <table class="wf-table">
+    <thead>
+      <tr>
+        <th>FIELD</th>
+        <th>OPERATOR</th>
+        <th>VALUE</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in trigger_filter_rows %}
+      <tr>
+        <td class="strong"><code>{{ row.field }}</code></td>
+        <td><span class="wf-tag info">{{ row.operator }}</span></td>
+        <td>{{ row.value if row.value else "—" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
   {% endif %}
 
-  {# --- Trigger Rules --- #}
-  {% set has_trigger_rules = (trigger_filter_rows and trigger_filter_rows | length > 0)
-    or (trigger_window_rows and trigger_window_rows | length > 0)
-    or trigger_cooldown
-    or trigger_rate_max %}
-  {% if has_trigger_rules %}
-  <div class="sw-card mb-6">
-    <h2 class="text-lg font-bold mb-3">Trigger Rules</h2>
-
-    {% if trigger_filter_rows and trigger_filter_rows | length > 0 %}
-    <h3 class="text-xs font-bold text-sw-dim mb-2">Payload Filters</h3>
-    <table class="sw-table mb-4">
-      <thead>
-        <tr>
-          <th>Field</th>
-          <th>Operator</th>
-          <th>Value</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for row in trigger_filter_rows %}
-        <tr>
-          <td class="font-mono text-sw-fg">{{ row.field }}</td>
-          <td><span class="sw-badge sw-badge-info">{{ row.operator }}</span></td>
-          <td class="font-mono text-sw-dim">{{ row.value if row.value else "—" }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-    {% endif %}
-
-    {% if trigger_window_rows and trigger_window_rows | length > 0 %}
-    <h3 class="text-xs font-bold text-sw-dim mb-2">Time Windows (UTC)</h3>
-    <table class="sw-table mb-4">
-      <thead>
-        <tr>
-          <th>Days</th>
-          <th>Start</th>
-          <th>End</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for row in trigger_window_rows %}
-        <tr>
-          <td class="font-mono text-sw-fg">{{ row.days }}</td>
-          <td class="font-mono text-sw-fg">{{ row.start_time }}</td>
-          <td class="font-mono text-sw-fg">{{ row.end_time }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-    {% endif %}
-
-    {% if trigger_cooldown or trigger_rate_max %}
-    <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
-      {% if trigger_cooldown %}
-      <dt class="sw-dt">Cooldown</dt>
-      <dd class="font-mono text-sw-fg">{{ trigger_cooldown }}</dd>
-      {% endif %}
-      {% if trigger_rate_max %}
-      <dt class="sw-dt">Rate limit</dt>
-      <dd class="font-mono text-sw-fg">{{ trigger_rate_max }} per {{ trigger_rate_window }}</dd>
-      {% endif %}
-    </dl>
-    {% endif %}
-  </div>
+  {% if trigger_window_rows and trigger_window_rows | length > 0 %}
+  <table class="wf-table">
+    <thead>
+      <tr>
+        <th>DAYS</th>
+        <th>START</th>
+        <th>END</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in trigger_window_rows %}
+      <tr>
+        <td>{{ row.days }}</td>
+        <td><code>{{ row.start_time }}</code></td>
+        <td><code>{{ row.end_time }}</code></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
   {% endif %}
+</div>
+{% endif %}
 
-  {# --- Execution history --- #}
-  <div class="mb-6">
-    <div class="flex items-center justify-between mb-3">
-      <h2 class="text-lg font-bold">Execution History</h2>
-      <span class="text-xs text-sw-muted font-mono">{{ total }} total</span>
-    </div>
+{# --- Executions --- #}
+<div class="wf-panel" style="padding: 0;">
+  <div class="wf-panel-head">
+    <span class="wf-panel-title">EXECUTIONS</span>
+    <span style="flex: 1;"></span>
+    <span class="muted" style="font-size: 12px;">{{ total }} TOTAL</span>
+  </div>
+  <div id="execution-list" style="padding: 16px;"
+       hx-get="/hooks/{{ slug }}/executions?page=1"
+       hx-trigger="load"
+       hx-swap="innerHTML">
+  </div>
+</div>
 
-    <div id="execution-list"
-         hx-get="/hooks/{{ slug }}/executions?page=1"
-         hx-trigger="load"
-         hx-swap="innerHTML">
+{# --- Trigger Attempts --- #}
+<div class="wf-panel" style="padding: 0;">
+  <div class="wf-panel-head">
+    <span class="wf-panel-title">TRIGGER ATTEMPTS</span>
+  </div>
+  <div style="padding: 16px 16px 0;">
+    <div class="wf-seg sm" id="attempt-filters">
+      <button class="wf-seg-opt is-active"
+        hx-get="/hooks/{{ slug }}/attempts" hx-target="#attempt-list" hx-swap="innerHTML"
+        onclick="setActiveFilter(this)">ALL</button>
+      <button class="wf-seg-opt"
+        hx-get="/hooks/{{ slug }}/attempts?status=fired" hx-target="#attempt-list" hx-swap="innerHTML"
+        onclick="setActiveFilter(this)">FIRED</button>
+      <button class="wf-seg-opt"
+        hx-get="/hooks/{{ slug }}/attempts?status=auth_failed" hx-target="#attempt-list" hx-swap="innerHTML"
+        onclick="setActiveFilter(this)">AUTH FAILED</button>
+      <button class="wf-seg-opt"
+        hx-get="/hooks/{{ slug }}/attempts?status=validation_failed" hx-target="#attempt-list" hx-swap="innerHTML"
+        onclick="setActiveFilter(this)">VALIDATION FAILED</button>
+      <button class="wf-seg-opt"
+        hx-get="/hooks/{{ slug }}/attempts?status=filtered" hx-target="#attempt-list" hx-swap="innerHTML"
+        onclick="setActiveFilter(this)">FILTERED</button>
+      <button class="wf-seg-opt"
+        hx-get="/hooks/{{ slug }}/attempts?status=rate_limited" hx-target="#attempt-list" hx-swap="innerHTML"
+        onclick="setActiveFilter(this)">RATE LIMITED</button>
+      <button class="wf-seg-opt"
+        hx-get="/hooks/{{ slug }}/attempts?status=schedule_skipped" hx-target="#attempt-list" hx-swap="innerHTML"
+        onclick="setActiveFilter(this)">SCHEDULE SKIPPED</button>
+      <button class="wf-seg-opt"
+        hx-get="/hooks/{{ slug }}/attempts?status=cooldown_skipped" hx-target="#attempt-list" hx-swap="innerHTML"
+        onclick="setActiveFilter(this)">COOLDOWN SKIPPED</button>
     </div>
   </div>
-
-  {# --- Trigger Attempts --- #}
-  <div class="mb-6">
-    <h2 class="text-lg font-bold mb-3">Trigger Attempts</h2>
-
-    <div class="flex flex-wrap gap-2 mb-4" id="attempt-filters">
-      <button hx-get="/hooks/{{ slug }}/attempts" hx-target="#attempt-list" hx-swap="innerHTML"
-        class="sw-filter-btn active" hx-on:click="setActiveFilter(this)">All</button>
-      <button hx-get="/hooks/{{ slug }}/attempts?status=fired" hx-target="#attempt-list" hx-swap="innerHTML"
-        class="sw-filter-btn" hx-on:click="setActiveFilter(this)">Fired</button>
-      <button hx-get="/hooks/{{ slug }}/attempts?status=auth_failed" hx-target="#attempt-list" hx-swap="innerHTML"
-        class="sw-filter-btn" hx-on:click="setActiveFilter(this)">Auth Failed</button>
-      <button hx-get="/hooks/{{ slug }}/attempts?status=validation_failed" hx-target="#attempt-list" hx-swap="innerHTML"
-        class="sw-filter-btn" hx-on:click="setActiveFilter(this)">Validation Failed</button>
-      <button hx-get="/hooks/{{ slug }}/attempts?status=filtered" hx-target="#attempt-list" hx-swap="innerHTML"
-        class="sw-filter-btn" hx-on:click="setActiveFilter(this)">Filtered</button>
-      <button hx-get="/hooks/{{ slug }}/attempts?status=rate_limited" hx-target="#attempt-list" hx-swap="innerHTML"
-        class="sw-filter-btn" hx-on:click="setActiveFilter(this)">Rate Limited</button>
-      <button hx-get="/hooks/{{ slug }}/attempts?status=schedule_skipped" hx-target="#attempt-list" hx-swap="innerHTML"
-        class="sw-filter-btn" hx-on:click="setActiveFilter(this)">Schedule Skipped</button>
-      <button hx-get="/hooks/{{ slug }}/attempts?status=cooldown_skipped" hx-target="#attempt-list" hx-swap="innerHTML"
-        class="sw-filter-btn" hx-on:click="setActiveFilter(this)">Cooldown Skipped</button>
-    </div>
-
-    <script>
-      function setActiveFilter(el) {
-        var buttons = document.querySelectorAll('#attempt-filters .sw-filter-btn');
-        for (var i = 0; i < buttons.length; i++) {
-          buttons[i].classList.remove('active');
-        }
-        el.classList.add('active');
-      }
-    </script>
-
-    <div id="attempt-list"
-         hx-get="/hooks/{{ slug }}/attempts"
-         hx-trigger="load"
-         hx-swap="innerHTML">
-    </div>
+  <div id="attempt-list" style="padding: 16px;"
+       hx-get="/hooks/{{ slug }}/attempts"
+       hx-trigger="load"
+       hx-swap="innerHTML">
   </div>
-</main>
+</div>
+
+<script>
+function setActiveFilter(el) {
+  var buttons = document.querySelectorAll('#attempt-filters .wf-seg-opt');
+  for (var i = 0; i < buttons.length; i++) {
+    buttons[i].classList.remove('is-active');
+  }
+  el.classList.add('is-active');
+}
+</script>
 {% endblock %}
