@@ -1,217 +1,205 @@
 {% extends "base.html" %}
 
-{% block title %}sendword - {% if is_new %}New hook{% else %}Edit {{ slug }}{% endif %}{% endblock %}
+{% block title %}sendword — {% if is_new %}new hook{% else %}edit {{ form_name }}{% endif %}{% endblock %}
+
+{% block crumbs %}
+<div class="wf-crumbs">
+  <a href="/">HOOKS</a>
+  {% if is_new %}
+  <span aria-current="page">NEW</span>
+  {% else %}
+  <a href="/hooks/{{ slug }}">{{ slug | upper }}</a>
+  <span aria-current="page">EDIT</span>
+  {% endif %}
+</div>
+{% endblock %}
 
 {% block content %}
-<main class="max-w-4xl mx-auto px-4 py-8">
-  <div class="mb-6">
-    {% if is_new %}
-    <a href="/" class="sw-back">&larr; Back to dashboard</a>
-    {% else %}
-    <a href="/hooks/{{ slug }}" class="sw-back">&larr; Back to {{ slug }}</a>
-    {% endif %}
+<form method="post" action="{% if is_new %}/hooks/new{% else %}/hooks/{{ slug }}/edit{% endif %}">
+
+  {# --- Basic Info --- #}
+  <div class="wf-panel" style="margin-bottom: 24px;">
+    <div class="wf-panel-head"><span class="wf-panel-title">BASIC INFO</span></div>
+    <div class="wf-panel-body">
+      <div class="wf-field" style="margin-bottom: 16px;">
+        <label class="wf-label" for="name">Name</label>
+        <input type="text" id="name" name="name" value="{{ form_name }}" required placeholder="Deploy App" class="wf-input">
+      </div>
+      <div class="wf-field" style="margin-bottom: 16px;">
+        <label class="wf-label" for="slug">Slug</label>
+        <input type="text" id="slug" name="slug" value="{{ form_slug }}" {% if not is_new %}readonly{% endif %} required pattern="[a-z0-9]+(-[a-z0-9]+)*" maxlength="64" placeholder="deploy-app" class="wf-input">
+        {% if is_new %}
+        <span class="wf-field-hint">Lowercase letters, numbers, and hyphens. Used in the webhook URL.</span>
+        {% else %}
+        <span class="wf-field-hint">Slug cannot be changed after creation.</span>
+        {% endif %}
+      </div>
+      <div class="wf-field" style="margin-bottom: 16px;">
+        <label class="wf-label" for="description">Description</label>
+        <textarea id="description" name="description" rows="2" placeholder="Optional description" class="wf-textarea">{{ form_description }}</textarea>
+      </div>
+      <label class="wf-check-row">
+        <input type="checkbox" name="enabled" value="true" {% if form_enabled %}checked{% endif %} class="wf-switch">
+        <span>Enabled</span>
+      </label>
+    </div>
   </div>
 
-  <h1 class="text-2xl font-bold mb-6">{% if is_new %}New Hook{% else %}Edit Hook{% endif %}</h1>
-
-  {% if success %}
-  <div class="sw-alert sw-alert-success">{{ success }}</div>
-  {% endif %}
-
-  {% if error %}
-  <div class="sw-alert sw-alert-error">{{ error }}</div>
-  {% endif %}
-
-  <form method="post" action="{% if is_new %}/hooks/new{% else %}/hooks/{{ slug }}/edit{% endif %}" class="space-y-6">
-
-    {# --- Basic info --- #}
-    <div class="sw-card">
-      <h2 class="text-lg font-bold mb-4">Basic Info</h2>
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div>
-          <label for="name" class="sw-label">Name</label>
-          <input type="text" id="name" name="name" value="{{ form_name }}" required placeholder="Deploy App" class="sw-input">
-        </div>
-        <div>
-          <label for="slug" class="sw-label">Slug</label>
-          <input type="text" id="slug" name="slug" value="{{ form_slug }}" {% if not is_new %}readonly{% endif %} required pattern="[a-z0-9]+(-[a-z0-9]+)*" maxlength="64" placeholder="deploy-app" class="sw-input font-mono">
-          {% if is_new %}
-          <p class="mt-1 text-xs text-sw-muted font-mono">Lowercase letters, numbers, and hyphens. Used in the webhook URL.</p>
-          {% else %}
-          <p class="mt-1 text-xs text-sw-muted font-mono">Slug cannot be changed after creation.</p>
-          {% endif %}
-        </div>
-      </div>
-      <div class="mt-4">
-        <label for="description" class="sw-label">Description</label>
-        <input type="text" id="description" name="description" value="{{ form_description }}" placeholder="Optional description" class="sw-input">
-      </div>
-      <div class="mt-4">
-        <label class="inline-flex items-center gap-2">
-          <input type="checkbox" name="enabled" value="true" {% if form_enabled %}checked{% endif %} class="border-sw-lighter text-sw-amber">
-          <span class="text-sm text-sw-dim">Enabled</span>
-        </label>
-      </div>
-    </div>
-
-    {# --- Authentication --- #}
-    <div class="sw-card">
-      <h2 class="text-lg font-bold mb-4">Authentication</h2>
-      <div class="mb-4">
-        <label for="auth_mode" class="sw-label">Auth mode</label>
-        <select id="auth_mode" name="auth_mode" class="sw-input max-w-xs" onchange="toggleAuthFields()">
+  {# --- Authentication --- #}
+  <div class="wf-panel" style="margin-bottom: 24px;">
+    <div class="wf-panel-head"><span class="wf-panel-title">AUTHENTICATION</span></div>
+    <div class="wf-panel-body">
+      <div class="wf-field" style="margin-bottom: 16px;">
+        <label class="wf-label" for="auth_mode">Auth mode</label>
+        <select id="auth_mode" name="auth_mode" class="wf-select" onchange="toggleAuthFields()">
           <option value="none" {% if form_auth_mode == "none" %}selected{% endif %}>None (public)</option>
           <option value="bearer" {% if form_auth_mode == "bearer" %}selected{% endif %}>Bearer token</option>
           <option value="hmac" {% if form_auth_mode == "hmac" %}selected{% endif %}>HMAC signature</option>
         </select>
-        <p class="mt-1 text-xs text-sw-muted font-mono">How callers authenticate when triggering this hook.</p>
+        <span class="wf-field-hint">How callers authenticate when triggering this hook.</span>
       </div>
 
-      {# Bearer fields #}
-      <div id="auth-bearer-fields" class="{% if form_auth_mode != 'bearer' %}hidden{% endif %} space-y-4">
-        <div>
-          <label for="auth_token" class="sw-label">Bearer token</label>
-          <input type="text" id="auth_token" name="auth_token" value="{{ form_auth_token }}" placeholder="${HOOK_TOKEN} or literal value" class="sw-input font-mono">
-          <p class="mt-1 text-xs text-sw-muted font-mono">Use ${ENV_VAR} syntax to reference an environment variable. Callers send: <code class="text-xs">Authorization: Bearer &lt;token&gt;</code></p>
+      <div id="bearer-fields">
+        <div class="wf-field" style="margin-bottom: 16px;">
+          <label class="wf-label" for="auth_token">Bearer token</label>
+          <input type="text" id="auth_token" name="auth_token" value="{{ form_auth_token }}" placeholder="${HOOK_TOKEN} or literal value" class="wf-input">
+          <span class="wf-field-hint">Use ${ENV_VAR} syntax to reference an environment variable.</span>
         </div>
       </div>
 
-      {# HMAC fields #}
-      <div id="auth-hmac-fields" class="{% if form_auth_mode != 'hmac' %}hidden{% endif %} space-y-4">
-        <div>
-          <label for="auth_header" class="sw-label">Signature header</label>
-          <input type="text" id="auth_header" name="auth_header" value="{{ form_auth_header }}" placeholder="X-Hub-Signature-256" class="sw-input font-mono max-w-md">
-          <p class="mt-1 text-xs text-sw-muted font-mono">HTTP header containing the HMAC signature.</p>
+      <div id="hmac-fields">
+        <div class="wf-field" style="margin-bottom: 16px;">
+          <label class="wf-label" for="auth_header">Signature header</label>
+          <input type="text" id="auth_header" name="auth_header" value="{{ form_auth_header }}" placeholder="X-Hub-Signature-256" class="wf-input">
+          <span class="wf-field-hint">HTTP header containing the HMAC signature.</span>
         </div>
-        <div>
-          <label for="auth_algorithm" class="sw-label">Algorithm</label>
-          <select id="auth_algorithm" name="auth_algorithm" class="sw-input max-w-xs">
+        <div class="wf-field" style="margin-bottom: 16px;">
+          <label class="wf-label" for="auth_algorithm">Algorithm</label>
+          <select id="auth_algorithm" name="auth_algorithm" class="wf-select">
             <option value="sha256" {% if form_auth_algorithm == "sha256" %}selected{% endif %}>SHA-256</option>
           </select>
         </div>
-        <div>
-          <label for="auth_secret" class="sw-label">Shared secret</label>
-          <input type="text" id="auth_secret" name="auth_secret" value="{{ form_auth_secret }}" placeholder="${{WEBHOOK_SECRET}} or literal value" class="sw-input font-mono">
-          <p class="mt-1 text-xs text-sw-muted font-mono">Use ${ENV_VAR} syntax to reference an environment variable.</p>
+        <div class="wf-field">
+          <label class="wf-label" for="auth_secret">Shared secret</label>
+          <input type="text" id="auth_secret" name="auth_secret" value="{{ form_auth_secret }}" placeholder="${WEBHOOK_SECRET} or literal value" class="wf-input">
+          <span class="wf-field-hint">Use ${ENV_VAR} syntax to reference an environment variable.</span>
         </div>
       </div>
     </div>
+  </div>
 
-    {# --- Executor --- #}
-    <div class="sw-card">
-      <h2 class="text-lg font-bold mb-4">Executor</h2>
-      <div>
-        <label for="command" class="sw-label">Shell command</label>
-        <input type="text" id="command" name="command" value="{{ form_command }}" required placeholder="make deploy" class="sw-input font-mono">
+  {# --- Executor --- #}
+  <div class="wf-panel" style="margin-bottom: 24px;">
+    <div class="wf-panel-head"><span class="wf-panel-title">EXECUTOR</span></div>
+    <div class="wf-panel-body">
+      <div class="wf-field" style="margin-bottom: 16px;">
+        <label class="wf-label" for="command">Shell command</label>
+        <input type="text" id="command" name="command" value="{{ form_command }}" required placeholder="make deploy" class="wf-input">
       </div>
-      <div class="mt-4">
-        <label for="cwd" class="sw-label">Working directory</label>
-        <input type="text" id="cwd" name="cwd" value="{{ form_cwd }}" placeholder="/opt/app (optional)" class="sw-input font-mono">
+      <div class="wf-field" style="margin-bottom: 16px;">
+        <label class="wf-label" for="cwd">Working directory</label>
+        <input type="text" id="cwd" name="cwd" value="{{ form_cwd }}" placeholder="/opt/app (optional)" class="wf-input">
       </div>
-      <div class="mt-4">
-        <label for="timeout" class="sw-label">Timeout</label>
-        <input type="text" id="timeout" name="timeout" value="{{ form_timeout }}" placeholder="30s (leave blank for default)" class="sw-input max-w-xs">
-        <p class="mt-1 text-xs text-sw-muted font-mono">Examples: 30s, 5m, 2h. Leave blank to use the global default.</p>
+      <div class="wf-field" style="margin-bottom: 16px;">
+        <label class="wf-label" for="timeout">Timeout</label>
+        <input type="number" id="timeout" name="timeout" value="{{ form_timeout }}" placeholder="30" class="wf-input">
+        <span class="wf-field-hint">Timeout in seconds. Leave blank for default.</span>
       </div>
-    </div>
-
-    {# --- Environment variables --- #}
-    <div class="sw-card">
-      <h2 class="text-lg font-bold mb-4">Environment Variables</h2>
-      <div>
-        <label for="env_text" class="sw-label">Variables</label>
-        <textarea id="env_text" name="env_text" rows="4" placeholder="KEY=value&#10;ANOTHER_KEY=another value" class="sw-input font-mono leading-relaxed" spellcheck="false">{{ form_env_text }}</textarea>
-        <p class="mt-1 text-xs text-sw-muted font-mono">One variable per line, in KEY=value format. Blank lines are ignored.</p>
+      <div class="wf-field">
+        <label class="wf-label" for="env_text">Environment variables</label>
+        <textarea id="env_text" name="env_text" rows="4" placeholder="KEY=VALUE" class="wf-textarea" spellcheck="false">{{ form_env_text }}</textarea>
+        <span class="wf-field-hint">One variable per line, in KEY=VALUE format.</span>
       </div>
     </div>
+  </div>
 
-    {# --- Payload schema --- #}
-    <div class="sw-card">
-      <h2 class="text-lg font-bold mb-4">Payload Schema</h2>
-      <div>
-        <label for="payload_text" class="sw-label">Field definitions</label>
-        <textarea id="payload_text" name="payload_text" rows="4" placeholder="action:string:required&#10;tag:string&#10;count:number:required" class="sw-input font-mono leading-relaxed" spellcheck="false">{{ form_payload_text }}</textarea>
-        <p class="mt-1 text-xs text-sw-muted font-mono">One field per line: name:type or name:type:required. Types: string, number, boolean, object, array.</p>
+  {# --- Payload Schema --- #}
+  <div class="wf-panel" style="margin-bottom: 24px;">
+    <div class="wf-panel-head"><span class="wf-panel-title">PAYLOAD SCHEMA</span></div>
+    <div class="wf-panel-body">
+      <div class="wf-field">
+        <label class="wf-label" for="payload_text">Field definitions</label>
+        <textarea id="payload_text" name="payload_text" rows="4" placeholder="action:string:required&#10;tag:string&#10;count:number:required" class="wf-textarea" spellcheck="false">{{ form_payload_text }}</textarea>
+        <span class="wf-field-hint">One field per line: name:type or name:type:required. Types: string, number, boolean, object, array.</span>
       </div>
     </div>
+  </div>
 
-    {# --- Trigger rules --- #}
-    <div class="sw-card">
-      <h2 class="text-lg font-bold mb-4">Trigger Rules</h2>
-
-      <div class="mb-4">
-        <label for="trigger_filters_text" class="sw-label">Payload filters</label>
-        <textarea id="trigger_filters_text" name="trigger_filters_text" rows="3" placeholder="action:equals:deploy&#10;env:contains:prod&#10;count:gt:0&#10;tag:exists" class="sw-input font-mono leading-relaxed" spellcheck="false">{{ form_trigger_filters_text }}</textarea>
-        <p class="mt-1 text-xs text-sw-muted font-mono">One filter per line: field:operator:value. Operators: equals, not_equals, contains, regex, gt, lt, gte, lte, exists.</p>
+  {# --- Trigger Rules --- #}
+  <div class="wf-panel" style="margin-bottom: 24px;">
+    <div class="wf-panel-head"><span class="wf-panel-title">TRIGGER RULES</span></div>
+    <div class="wf-panel-body">
+      <div class="wf-field" style="margin-bottom: 16px;">
+        <label class="wf-label" for="trigger_filters_text">Payload filters</label>
+        <textarea id="trigger_filters_text" name="trigger_filters_text" rows="3" placeholder="action:equals:deploy&#10;env:contains:prod" class="wf-textarea" spellcheck="false">{{ form_trigger_filters_text }}</textarea>
+        <span class="wf-field-hint">One filter per line: field:operator:value. Operators: equals, not_equals, contains, regex, gt, lt, gte, lte, exists.</span>
       </div>
-
-      <div class="mb-4">
-        <label for="trigger_windows_text" class="sw-label">Time windows (UTC)</label>
-        <textarea id="trigger_windows_text" name="trigger_windows_text" rows="2" placeholder="Mon,Tue,Wed,Thu,Fri:09:00-17:00&#10;Sat:10:00-14:00" class="sw-input font-mono leading-relaxed" spellcheck="false">{{ form_trigger_windows_text }}</textarea>
-        <p class="mt-1 text-xs text-sw-muted font-mono">One window per line: Days:HH:MM-HH:MM. Leave blank to allow at any time.</p>
+      <div class="wf-field" style="margin-bottom: 16px;">
+        <label class="wf-label" for="trigger_windows_text">Time windows (UTC)</label>
+        <textarea id="trigger_windows_text" name="trigger_windows_text" rows="2" placeholder="Mon,Tue,Wed,Thu,Fri:09:00-17:00" class="wf-textarea" spellcheck="false">{{ form_trigger_windows_text }}</textarea>
+        <span class="wf-field-hint">One window per line: Days:HH:MM-HH:MM. Leave blank to allow at any time.</span>
       </div>
-
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div>
-          <label for="trigger_cooldown" class="sw-label">Cooldown</label>
-          <input type="text" id="trigger_cooldown" name="trigger_cooldown" value="{{ form_trigger_cooldown }}" placeholder="5m (optional)" class="sw-input">
-          <p class="mt-1 text-xs text-sw-muted font-mono">Minimum time between executions.</p>
+      <div class="wf-field" style="margin-bottom: 16px;">
+        <label class="wf-label" for="trigger_cooldown">Cooldown</label>
+        <input type="number" id="trigger_cooldown" name="trigger_cooldown" value="{{ form_trigger_cooldown }}" placeholder="300" class="wf-input">
+        <span class="wf-field-hint">Minimum seconds between executions.</span>
+      </div>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+        <div class="wf-field">
+          <label class="wf-label" for="trigger_rate_max">Rate limit max</label>
+          <input type="number" id="trigger_rate_max" name="trigger_rate_max" value="{{ form_trigger_rate_max }}" min="1" placeholder="10" class="wf-input">
         </div>
-        <div>
-          <label class="sw-label">Rate limit</label>
-          <div class="flex items-center gap-2">
-            <input type="number" id="trigger_rate_max" name="trigger_rate_max" value="{{ form_trigger_rate_max }}" min="1" placeholder="10" class="sw-input w-24">
-            <span class="text-xs text-sw-muted font-mono">per</span>
-            <input type="text" id="trigger_rate_window" name="trigger_rate_window" value="{{ form_trigger_rate_window }}" placeholder="1h" class="sw-input w-24">
-          </div>
-          <p class="mt-1 text-xs text-sw-muted font-mono">Leave both blank to disable.</p>
+        <div class="wf-field">
+          <label class="wf-label" for="trigger_rate_window">Rate limit window</label>
+          <input type="text" id="trigger_rate_window" name="trigger_rate_window" value="{{ form_trigger_rate_window }}" placeholder="1h" class="wf-input">
         </div>
       </div>
     </div>
+  </div>
 
-    {# --- Retry configuration --- #}
-    <div class="sw-card">
-      <h2 class="text-lg font-bold mb-4">Retry Configuration</h2>
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div>
-          <label for="retry_count" class="sw-label">Retry count</label>
-          <input type="number" id="retry_count" name="retry_count" value="{{ form_retry_count }}" min="0" placeholder="0" class="sw-input max-w-xs">
-          <p class="mt-1 text-xs text-sw-muted font-mono">0 = no retries.</p>
+  {# --- Retry --- #}
+  <div class="wf-panel" style="margin-bottom: 24px;">
+    <div class="wf-panel-head"><span class="wf-panel-title">RETRY</span></div>
+    <div class="wf-panel-body">
+      <div class="wf-field" style="margin-bottom: 16px;">
+        <label class="wf-label" for="retry_count">Retry count</label>
+        <input type="number" id="retry_count" name="retry_count" value="{{ form_retry_count }}" min="0" placeholder="0" class="wf-input">
+        <span class="wf-field-hint">0 = no retries.</span>
+      </div>
+      <div class="wf-field" style="margin-bottom: 16px;">
+        <label class="wf-label" for="retry_backoff">Backoff strategy</label>
+        <select id="retry_backoff" name="retry_backoff" class="wf-select">
+          <option value="none" {% if form_retry_backoff == "none" %}selected{% endif %}>None</option>
+          <option value="linear" {% if form_retry_backoff == "linear" %}selected{% endif %}>Linear</option>
+          <option value="exponential" {% if form_retry_backoff == "exponential" %}selected{% endif %}>Exponential</option>
+        </select>
+      </div>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+        <div class="wf-field">
+          <label class="wf-label" for="retry_initial_delay">Initial delay</label>
+          <input type="text" id="retry_initial_delay" name="retry_initial_delay" value="{{ form_retry_initial_delay }}" placeholder="1s" class="wf-input">
         </div>
-        <div>
-          <label for="retry_backoff" class="sw-label">Backoff strategy</label>
-          <select id="retry_backoff" name="retry_backoff" class="sw-input max-w-xs">
-            <option value="none" {% if form_retry_backoff == "none" %}selected{% endif %}>None</option>
-            <option value="linear" {% if form_retry_backoff == "linear" %}selected{% endif %}>Linear</option>
-            <option value="exponential" {% if form_retry_backoff == "exponential" %}selected{% endif %}>Exponential</option>
-          </select>
-        </div>
-        <div>
-          <label for="retry_initial_delay" class="sw-label">Initial delay</label>
-          <input type="text" id="retry_initial_delay" name="retry_initial_delay" value="{{ form_retry_initial_delay }}" placeholder="1s" class="sw-input max-w-xs">
-        </div>
-        <div>
-          <label for="retry_max_delay" class="sw-label">Max delay</label>
-          <input type="text" id="retry_max_delay" name="retry_max_delay" value="{{ form_retry_max_delay }}" placeholder="60s" class="sw-input max-w-xs">
+        <div class="wf-field">
+          <label class="wf-label" for="retry_max_delay">Max delay</label>
+          <input type="text" id="retry_max_delay" name="retry_max_delay" value="{{ form_retry_max_delay }}" placeholder="60s" class="wf-input">
         </div>
       </div>
     </div>
+  </div>
 
-    {# --- Actions --- #}
-    <div class="flex items-center gap-3">
-      <button type="submit" class="sw-btn sw-btn-primary">
-        {% if is_new %}Create hook{% else %}Save changes{% endif %}
-      </button>
-      <a href="{% if is_new %}/{% else %}/hooks/{{ slug }}{% endif %}" class="sw-btn sw-btn-secondary">Cancel</a>
-    </div>
-  </form>
-</main>
+  {# --- Actions --- #}
+  <div style="display: flex; gap: 12px; justify-content: flex-end; margin-top: 24px;">
+    <a class="wf-btn" href="{% if is_new %}/{% else %}/hooks/{{ slug }}{% endif %}">CANCEL</a>
+    <button type="submit" class="wf-btn primary">{% if is_new %}CREATE HOOK{% else %}SAVE CHANGES{% endif %}</button>
+  </div>
+</form>
 
 <script>
 function toggleAuthFields() {
-  const mode = document.getElementById('auth_mode').value;
-  document.getElementById('auth-bearer-fields').classList.toggle('hidden', mode !== 'bearer');
-  document.getElementById('auth-hmac-fields').classList.toggle('hidden', mode !== 'hmac');
+  var mode = document.getElementById('auth_mode').value;
+  document.getElementById('bearer-fields').style.display = mode === 'bearer' ? '' : 'none';
+  document.getElementById('hmac-fields').style.display = mode === 'hmac' ? '' : 'none';
 }
+document.addEventListener('DOMContentLoaded', toggleAuthFields);
 </script>
 {% endblock %}
