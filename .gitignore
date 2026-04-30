@@ -20,5 +20,6 @@ sendword.json
 .claude/summaries/
 /.claude/worktrees/
 docs/superpowers/
+/.cargo/
 /website/dist/
 /website/.eigen_cache/
