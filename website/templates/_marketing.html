@@ -3,7 +3,7 @@
 {% block head %}{% endblock %}
 
 {% block body %}
-<div class="mk-wrap">
+<div class="mk-wrap" hx-boost="true">
   {% include "_partials/nav.html" %}
   {% block content %}{% endblock %}
   {% include "_partials/footer.html" %}

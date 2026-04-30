@@ -45,6 +45,8 @@
 .mk-feat-num { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.14em; color: var(--fg-faint); margin-bottom: 40px; }
 .mk-feat-t { font-family: var(--font-mono); font-size: 20px; font-weight: 800; letter-spacing: -0.01em; text-transform: uppercase; color: var(--fg-strong); margin: 0 0 10px; }
 .mk-feat-b { font-size: 13px; line-height: 1.65; color: var(--fg-muted); margin: 0; }
+.mk-feat-links { margin-top: 12px; }
+.mk-feat-links a { display: block; font-size: 13px; margin-top: 4px; color: var(--fg-faint); }
 @media (max-width: 900px) { .mk-features { grid-template-columns: 1fr; } }
 
 /* Steps grid */
@@ -65,6 +67,16 @@
 .mk-showcase > div { padding: 32px; }
 .mk-showcase > div + div { border-left: 1px solid var(--hairline); }
 @media (max-width: 900px) { .mk-showcase { grid-template-columns: 1fr; } .mk-showcase > div + div { border-left: 0; border-top: 1px solid var(--hairline); } }
+
+/* 404 */
+.mk-404 { text-align: center; padding: 160px 32px; }
+.mk-404 h1 { font-size: clamp(64px, 10vw, 112px); font-family: var(--font-mono); font-weight: 800; color: var(--fg-muted); }
+.mk-404 p { color: var(--fg-faint); margin-top: 16px; }
+.mk-404 .wf-btn { margin-top: 32px; }
+
+/* Footer blurb */
+.mk-foot .wf-wordmark { margin-bottom: 14px; --wm-icon-size: 20px; }
+.mk-foot-blurb { font-size: 12px; color: var(--fg-muted); max-width: 32ch; line-height: 1.55; font-family: var(--font-mono); }
 
 /* Footer */
 .mk-foot { padding: 48px 32px 32px; border-top: 1px solid var(--hairline); display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; gap: 32px; }

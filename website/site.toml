@@ -31,6 +31,9 @@ auto_detect_hero = true
 prefetch_links = true
 max_prefetch = 5
 
+[build.content_hash]
+enabled = true
+
 [build.bundling]
 enabled = true
 css = true

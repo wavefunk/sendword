@@ -24,28 +24,3 @@ schema:
 {% extends "_docs.html" %}
 
 {% block title %}{{ doc.title }} — {{ site.name }} docs{% endblock %}
-
-{% block doc_content %}
-  <div id="doc-content" class="wf-docs-content">
-    <article class="wf-prose">
-      <div class="wf-crumbs">
-        <a href="/">HOME</a><span class="sep">/</span>
-        <a href="/docs/index.html">DOCS</a><span class="sep">/</span>
-        <span aria-current="page">{{ doc.title | upper }}</span>
-      </div>
-
-      <h1>{{ doc.title }}</h1>
-      {% if doc.description %}
-        <p class="wf-lead">{{ doc.description }}</p>
-      {% endif %}
-
-      <div id="docs-content">
-        {{ doc.content | markdown }}
-      </div>
-    </article>
-    <div class="wf-docs-pager">
-      <span></span>
-      <span></span>
-    </div>
-  </div>
-{% endblock %}

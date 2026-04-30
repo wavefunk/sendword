@@ -1080,6 +1080,13 @@
 .wf-mark { display: block; }
 .wf-mark.invert { filter: invert(1); }
 .wf-wordmark { display: inline-flex; align-items: center; gap: 10px; }
+.wf-wordmark-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: var(--wm-icon-size, 22px); height: var(--wm-icon-size, 22px);
+  background: var(--accent); color: var(--accent-ink);
+  font-family: var(--font-mono); font-weight: 800;
+  font-size: calc(var(--wm-icon-size, 22px) * 0.59);
+}
 .wf-wordmark-name {
   font-size: var(--wm-size, 16px);
   font-weight: var(--fw-bold); text-transform: uppercase;

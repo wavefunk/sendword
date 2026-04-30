@@ -252,6 +252,7 @@ body.wf-app { overflow: hidden; height: 100vh; }
   border-bottom: var(--border-1) solid var(--hairline-dim);
   min-height: 56px;
 }
+.wf-docs-side .wf-wordmark-icon { --wm-icon-size: 24px; }
 .wf-docs-side a {
   display: block; padding: 6px var(--space-5);
   color: var(--fg-muted); text-decoration: none;
