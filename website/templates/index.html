@@ -10,59 +10,92 @@ seo:
 schema:
   type: WebSite
 ---
-{% extends "_base.html" %}
+{% extends "_marketing.html" %}
 
 {% block title %}sendword — webhooks that run commands{% endblock %}
 
 {% block content %}
-<section class="hero">
-  <div class="hero-badge">open source &middot; single binary &middot; zero dependencies</div>
-  <h1 class="hero-title">send<span class="hero-title-accent">word</span></h1>
-  <p class="hero-tagline">Webhooks that run commands.<br>Receive. Validate. Execute.</p>
-  <div class="hero-actions">
-    <a {{ link_to("/docs/index.html") }} class="btn btn-primary">Get Started</a>
-    <a href="https://github.com/wavefunk/sendword" class="btn btn-secondary" target="_blank" rel="noopener">View Source</a>
+<!-- HERO -->
+<section class="mk-hero">
+  <div class="mk-hero-grid" aria-hidden="true"></div>
+  <div class="mk-hero-inner">
+    <div class="mk-hero-eyebrow">SENDWORD · OPEN SOURCE · SINGLE BINARY</div>
+    <h1>Webhooks that run <em>commands</em>.</h1>
+    <p>Receive HTTP webhooks, validate payloads, execute shell commands — with authentication, filtering, retries, and a web dashboard. One binary, zero dependencies.</p>
+    <div class="mk-hero-cta">
+      <a href="/docs/quickstart" class="wf-btn lg primary">Get Started</a>
+      <a href="https://github.com/wavefunk/sendword" class="wf-btn lg" target="_blank" rel="noopener">GitHub</a>
+      <span class="sep"></span>
+      <code class="shell-line"><span class="prompt">$</span>cargo install sendword</code>
+    </div>
   </div>
-  <div class="hero-demo">
-    <div class="demo-request">
-      <span class="demo-label">incoming webhook</span>
-      <pre><code>curl -X POST https://your-server/hook/deploy \
-  -H "Authorization: Bearer $TOKEN" \
-  -d '{"repo": "myapp", "branch": "main"}'</code></pre>
-    </div>
-    <div class="demo-arrow">
-      <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
-        <path d="M12 20H28M28 20L22 14M28 20L22 26" stroke="#f0a830" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
-    </div>
-    <div class="demo-response">
-      <span class="demo-label">sendword executes</span>
-      <pre><code>cd /app &amp;&amp; git pull origin { branch }
-docker compose up -d
-echo "deployed { repo } on { branch }"</code></pre>
-    </div>
+  <div class="mk-hero-stats">
+    <div><div class="l">RUNTIME</div><div class="v">SINGLE BINARY</div></div>
+    <div><div class="l">CONFIG</div><div class="v">TOML + JSON</div></div>
+    <div><div class="l">DATABASE</div><div class="v">SQLITE</div></div>
+    <div><div class="l">FRONTEND</div><div class="v">WEB DASHBOARD</div></div>
   </div>
 </section>
 
-<section class="section">
-  <h2 class="section-title">What it does</h2>
-  <div class="features-grid">
-    {% for feature in features %}
-    <div class="feature-card">
-      <h3>{{ feature.title }}</h3>
-      <p>{{ feature.description }}</p>
+<!-- FEATURES -->
+<section class="mk-sect">
+  <div class="mk-sect-head">
+    <div>
+      <div class="mk-sect-kicker">— 01 / FEATURES</div>
+      <h2 class="mk-sect-title">What it does</h2>
+    </div>
+    <p class="mk-sect-sub">Everything you need to turn incoming webhooks into running commands — authentication, validation, concurrency control, and full execution history.</p>
+  </div>
+  <div class="mk-features">
+    {% for feat in features %}
+    <div class="mk-feat">
+      <div class="mk-feat-num">— 0{{ loop.index }}</div>
+      <h3 class="mk-feat-t">{{ feat.title }}</h3>
+      <p class="mk-feat-b">{{ feat.description }}</p>
     </div>
     {% endfor %}
   </div>
 </section>
 
-<section class="section">
-  <h2 class="section-title">How it works</h2>
-  <div class="steps">
-    <div class="step">
-      <span class="step-number">01</span>
-      <h3>Configure a hook</h3>
-      <pre><code>[[hooks]]
+<!-- HOW IT WORKS -->
+<section class="mk-sect">
+  <div class="mk-sect-head">
+    <div>
+      <div class="mk-sect-kicker">— 02 / HOW IT WORKS</div>
+      <h2 class="mk-sect-title">Three steps to running.</h2>
+    </div>
+    <p class="mk-sect-sub">Define a hook in TOML, add rules and guards, start the server.</p>
+  </div>
+  <div class="mk-steps">
+    <div class="mk-step">
+      <div class="mk-step-num">— 01</div>
+      <h3 class="mk-step-t">Configure a hook</h3>
+      <p class="mk-step-b">Define the hook name, slug, executor command, and authentication in sendword.toml.</p>
+    </div>
+    <div class="mk-step">
+      <div class="mk-step-num">— 02</div>
+      <h3 class="mk-step-t">Add rules &amp; guards</h3>
+      <p class="mk-step-b">Filter by payload fields, enforce cooldowns, set rate limits, and configure concurrency barriers.</p>
+    </div>
+    <div class="mk-step">
+      <div class="mk-step-num">— 03</div>
+      <h3 class="mk-step-t">Run sendword</h3>
+      <p class="mk-step-b">Start the server. Hooks are available as POST endpoints. The dashboard shows execution history.</p>
+    </div>
+  </div>
+</section>
+
+<!-- QUICK START -->
+<section class="mk-sect mk-code">
+  <div class="mk-sect-head">
+    <div>
+      <div class="mk-sect-kicker">— 03 / CONFIG</div>
+      <h2 class="mk-sect-title">One file. Full control.</h2>
+    </div>
+    <p class="mk-sect-sub">Everything lives in sendword.toml. Export as JSON, import on another machine, version-control the whole thing.</p>
+  </div>
+  <pre><code><span class="comment"># sendword.toml</span>
+[[hooks]]
 name = "Deploy"
 slug = "deploy"
 
@@ -72,72 +105,14 @@ command = "bash deploy.sh { branch }"
 
 [hooks.auth]
 mode = "bearer"
-token = "${DEPLOY_TOKEN}"</code></pre>
-    </div>
-    <div class="step">
-      <span class="step-number">02</span>
-      <h3>Add rules &amp; guards</h3>
-      <pre><code>[hooks.trigger_rules]
+token = "${DEPLOY_TOKEN}"
+
+[hooks.trigger_rules]
 cooldown = "5m"
 
 [[hooks.trigger_rules.payload_filters]]
 field = "branch"
 operator = "regex"
-value = "^(main|release/.*)"
-
-[hooks.concurrency]
-mode = "queue"
-queue_depth = 5</code></pre>
-    </div>
-    <div class="step">
-      <span class="step-number">03</span>
-      <h3>Run sendword</h3>
-      <pre><code>$ sendword serve
-listening on 127.0.0.1:8080
-
-# hooks available:
-#   POST /hook/deploy
-#   POST /hook/notify
-#   POST /hook/sync
-
-# dashboard at /</code></pre>
-    </div>
-  </div>
-</section>
-
-<section class="section section-config">
-  <h2 class="section-title">One file. Full control.</h2>
-  <p class="section-subtitle">Everything lives in <code>sendword.toml</code>. Export as JSON, import it on another machine, version-control the whole thing.</p>
-  <div class="config-showcase">
-    <pre><code>[server]
-bind = "0.0.0.0"
-port = 8080
-
-[defaults.timeout]
-timeout = "30s"
-
-[defaults.retries]
-count = 3
-backoff = "exponential"
-initial_delay = "2s"
-max_delay = "60s"
-
-[masking]
-env_vars = ["API_KEY", "DB_PASSWORD"]
-patterns = ["(token)[=:]\\s*\\S+"]
-
-[backup]
-bucket = "my-backups"
-schedule = "0 2 * * *"
-retention.max_count = 30</code></pre>
-  </div>
-</section>
-
-<section class="section cta">
-  <div class="cta-install">
-    <code>cargo install sendword</code>
-    <button class="cta-copy" onclick="navigator.clipboard.writeText('cargo install sendword')" aria-label="Copy install command" title="Copy to clipboard">&#x2398;</button>
-  </div>
-  <p><a href="/docs/quickstart">Read the quickstart guide &rarr;</a></p>
+value = "^(main|release/.*)"</code></pre>
 </section>
 {% endblock %}

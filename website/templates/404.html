@@ -3,14 +3,14 @@ data:
   nav:
     file: "nav.yaml"
 ---
-{% extends "_base.html" %}
+{% extends "_marketing.html" %}
 
 {% block title %}404 — {{ site.name }}{% endblock %}
 
 {% block content %}
-<section class="not-found">
+<section class="mk-sect mk-404">
   <h1>404</h1>
   <p>Message not delivered. This page doesn't exist.</p>
-  <a href="/" class="btn btn-primary">Back to home</a>
+  <a href="/" class="wf-btn lg primary">Back to home</a>
 </section>
 {% endblock %}

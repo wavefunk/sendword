@@ -1,49 +1,16 @@
-<!DOCTYPE html>
-<html lang="en">
+<!doctype html>
+<html lang="en" data-mode="dark">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>{% block title %}{{ site.name }}{% endblock %}</title>
-  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="{{ asset('/css/style.css') }}">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
-  <script src="https://unpkg.com/htmx.org@2.0.4" defer></script>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{% block title %}{{ site.name }}{% endblock %}</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/css/wavefunk/wavefunk.css">
+<link rel="stylesheet" href="/css/sendword.css">
+<script src="https://unpkg.com/htmx.org@2.0.4" defer></script>
+{% block head %}{% endblock %}
 </head>
-<body hx-boost="true">
-  {% include "_partials/nav.html" %}
-  <main id="content">
-    {% block content %}{% endblock %}
-  </main>
-  {% include "_partials/footer.html" %}
-  <script>
-  function toggleSidebar() {
-    document.getElementById('sidebar').classList.toggle('open');
-    document.getElementById('sidebar-overlay').classList.toggle('open');
-  }
-  function closeSidebar() {
-    document.getElementById('sidebar').classList.remove('open');
-    document.getElementById('sidebar-overlay').classList.remove('open');
-  }
-  document.addEventListener('click', function(e) {
-    var a = e.target.closest('a[href]');
-    if (a && a.getAttribute('href') === window.location.pathname) e.preventDefault();
-  });
-  document.addEventListener('DOMContentLoaded', function() {
-    document.querySelectorAll('.doc-content pre').forEach(function(pre) {
-      var btn = document.createElement('button');
-      btn.className = 'copy-btn';
-      btn.textContent = 'copy';
-      btn.addEventListener('click', function() {
-        var code = pre.querySelector('code');
-        navigator.clipboard.writeText(code ? code.textContent : pre.textContent);
-        btn.textContent = 'copied';
-        setTimeout(function() { btn.textContent = 'copy'; }, 1500);
-      });
-      pre.appendChild(btn);
-    });
-  });
-  </script>
+<body>
+{% block body %}{% endblock %}
 </body>
 </html>

@@ -14,31 +14,34 @@ schema:
   breadcrumb_names:
     docs: "Documentation"
 ---
-{% extends "_base.html" %}
+{% extends "_marketing.html" %}
 
 {% block title %}Documentation — {{ site.name }}{% endblock %}
 
 {% block content %}
-<div class="docs-index">
-  <h1>Documentation</h1>
-  <div class="docs-index-intro">
-    <p>Everything you need to turn webhooks into running commands. Start with the quickstart or jump to a specific topic.</p>
+<section class="mk-sect">
+  <div class="mk-sect-head">
+    <div>
+      <div class="mk-sect-kicker">— DOCUMENTATION</div>
+      <h2 class="mk-sect-title">Everything you need.</h2>
+    </div>
+    <p class="mk-sect-sub">Start with the quickstart or jump to a specific topic. Everything you need to turn webhooks into running commands.</p>
   </div>
-
-  <div class="category-cards">
+  <div class="mk-features">
     {% for cat in categories %}
-    <div class="category-card">
-      <h3>{{ cat.name }}</h3>
-      <p class="category-card-desc">{{ cat.desc }}</p>
-      <ul>
+    <div class="mk-feat">
+      <div class="mk-feat-num">{{ cat.name | upper }}</div>
+      <h3 class="mk-feat-t">{{ cat.name }}</h3>
+      <p class="mk-feat-b">{{ cat.desc }}</p>
+      <div class="mk-feat-links">
         {% for d in docs_list %}
           {% if d.category == cat.name %}
-          <li><a href="/docs/{{ d.slug }}">{{ d.title }}</a></li>
+          <a href="/docs/{{ d.slug }}">{{ d.title }}</a>
           {% endif %}
         {% endfor %}
-      </ul>
+      </div>
     </div>
     {% endfor %}
   </div>
-</div>
+</section>
 {% endblock %}

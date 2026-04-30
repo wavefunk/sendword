@@ -1,20 +1,30 @@
-<aside class="sidebar" id="sidebar">
-  {% for cat in categories %}
-  <details class="sidebar-category" open>
-    <summary class="sidebar-category-title">{{ cat.name }}</summary>
+<aside class="wf-docs-side" id="sidebar">
+  <a href="/" class="wf-brand">
+    <div class="wf-wordmark-icon">S</div>
+    <div>
+      <div class="wf-brand-name">sendword</div>
+      <div class="wf-caption">Docs</div>
+    </div>
+  </a>
+
+  <div class="wf-docs-side-nav">
+    {% for cat in categories %}
+    <div class="wf-docs-side-section">{{ cat.name }}</div>
     {% for d in docs_list %}
       {% if d.category == cat.name %}
       <a href="/docs/{{ d.slug }}"
          hx-get="/_fragments/docs/{{ d.slug }}/doc_content.html"
          hx-target="#doc-content"
+         hx-swap="outerHTML"
          hx-push-url="/docs/{{ d.slug }}"
-         class="sidebar-link{% if d.slug == doc.slug %} active{% endif %}"
-         onclick="closeSidebar()">
-        {{ d.title }}
-      </a>
+         {% if d.slug == doc.slug %} class="is-active"{% endif %}>{{ d.title }}</a>
       {% endif %}
     {% endfor %}
-  </details>
-  {% endfor %}
+    {% endfor %}
+  </div>
+
+  <a href="https://wavefunk.io" target="_blank" rel="noopener" class="wf-docs-side-badge">
+    <svg width="12" height="10" viewBox="0 0 64 42" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><rect width="20" height="20" x="22" y="0" rx="4"/><rect width="20" height="20" x="44" y="0" rx="4"/><rect width="20" height="20" x="22" y="22" rx="4"/><rect width="20" height="20" x="0" y="22" rx="4"/></svg>
+    Built by Wavefunk
+  </a>
 </aside>
-<div class="sidebar-overlay" id="sidebar-overlay" onclick="closeSidebar()"></div>
