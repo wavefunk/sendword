@@ -8,6 +8,20 @@
   --accent-ink: #ffffff;
 }
 
+@font-face {
+  font-family: "Martian Mono";
+  font-display: swap;
+  src: url("/css/wavefunk/fonts/MartianMono-VF.woff2") format("woff2");
+  font-weight: 100 800;
+}
+
+@font-face {
+  font-family: "Martian Grotesk";
+  font-display: swap;
+  src: url("/css/wavefunk/fonts/MartianGrotesk-VF.woff2") format("woff2");
+  font-weight: 100 1000;
+}
+
 .wf-wordmark-icon {
   background: none;
 }
