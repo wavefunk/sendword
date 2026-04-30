@@ -33,7 +33,7 @@ prefetch_links = true
 max_prefetch = 5
 
 [build.content_hash]
-enabled = true
+enabled = false
 
 [build.bundling]
 enabled = true
