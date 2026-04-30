@@ -1,0 +1,11 @@
+{% extends "_base.html" %}
+
+{% block head %}{% endblock %}
+
+{% block body %}
+<div class="mk-wrap">
+  {% include "_partials/nav.html" %}
+  {% block content %}{% endblock %}
+  {% include "_partials/footer.html" %}
+</div>
+{% endblock %}

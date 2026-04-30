@@ -1,28 +1,14 @@
-<header class="nav">
-  <div class="nav-inner">
-    <a {{ link_to("/index.html") }} class="nav-logo">
-      <svg class="nav-logo-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <path d="M2 6C2 4.89543 2.89543 4 4 4H20C21.1046 4 22 4.89543 22 6V18C22 19.1046 21.1046 20 20 20H4C2.89543 20 2 19.1046 2 18V6Z" stroke="currentColor" stroke-width="1.5"/>
-        <path d="M2 6L12 13L22 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-        <circle cx="19" cy="5" r="4" fill="var(--red)"/>
-      </svg>
-      sendword
-    </a>
-    <button class="nav-toggle" onclick="toggleSidebar()" aria-label="Toggle navigation">
-      <span></span>
-      <span></span>
-      <span></span>
-    </button>
-    <ul class="nav-links">
-      {% for item in nav %}
-      <li>
-        {% if item.external %}
-        <a href="{{ item.url }}" target="_blank" rel="noopener">{{ item.label }}</a>
-        {% else %}
-        <a {{ link_to(item.url) }}>{{ item.label }}</a>
-        {% endif %}
-      </li>
-      {% endfor %}
-    </ul>
+<div class="wf-mnav">
+  <div class="wf-wordmark">
+    <div style="width: 22px; height: 22px; background: var(--accent); color: var(--accent-ink); display: inline-flex; align-items: center; justify-content: center; font-family: var(--font-mono); font-weight: 800; font-size: 13px;">S</div>
+    <span class="wf-wordmark-name">SENDWORD</span>
   </div>
-</header>
+  {% for item in nav %}
+    {% if item.external %}
+      <a href="{{ item.url }}" target="_blank" rel="noopener">{{ item.label }}</a>
+    {% else %}
+      <a href="{{ item.url }}">{{ item.label }}</a>
+    {% endif %}
+  {% endfor %}
+  <div class="wf-mnav-spacer"></div>
+</div>
