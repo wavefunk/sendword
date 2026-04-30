@@ -1,12 +1,69 @@
 {% extends "_base.html" %}
 
-{% block content %}
-  <div class="docs-layout">
+{% block title %}{{ doc.title }} — sendword docs{% endblock %}
+
+{% block body %}
+  <div class="wf-docs-shell">
     {% block sidebar %}
       {% include "_partials/sidebar.html" %}
     {% endblock %}
-  <article class="doc-content" id="doc-content">
-    {% block doc_content %}{% endblock %}
-  </article>
-</div>
+
+    {% block doc_content %}
+      <div id="doc-content" class="wf-docs-content">
+        <article class="wf-prose">
+          <div class="wf-crumbs">
+            <a href="/">HOME</a><span class="sep">/</span>
+            <a href="/docs/index.html">DOCS</a><span class="sep">/</span>
+            <span aria-current="page">{{ doc.title | upper }}</span>
+          </div>
+
+          <h1>{{ doc.title }}</h1>
+          {% if doc.description %}
+            <p class="wf-lead">{{ doc.description }}</p>
+          {% endif %}
+
+          <div id="docs-content">
+            {{ doc.content | markdown }}
+          </div>
+        </article>
+        <div class="wf-docs-pager">
+          <span></span>
+          <span></span>
+        </div>
+      </div>
+    {% endblock %}
+    {% include "_partials/docs-toc.html" %}
+  </div>
+
+<script>
+function buildToc() {
+  var content = document.getElementById('docs-content');
+  var toc = document.getElementById('docs-toc-links');
+  if (!content || !toc) return;
+  while (toc.firstChild) toc.removeChild(toc.firstChild);
+  var headings = content.querySelectorAll('h2');
+  headings.forEach(function(h) {
+    var id = h.textContent.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+    h.id = id;
+    var a = document.createElement('a');
+    a.href = '#' + id;
+    a.textContent = h.textContent;
+    toc.appendChild(a);
+  });
+}
+buildToc();
+document.body.addEventListener('htmx:afterSettle', function() {
+  buildToc();
+  var main = document.getElementById('doc-content');
+  if (main) main.scrollTop = 0;
+  window.scrollTo(0, 0);
+});
+document.addEventListener('click', function(e) {
+  var a = e.target.closest('a[href]');
+  if (!a) return;
+  var href = a.getAttribute('href').replace(/\/+$/, '');
+  var path = window.location.pathname.replace(/\/+$/, '');
+  if (href === path) e.preventDefault();
+});
+</script>
 {% endblock %}
