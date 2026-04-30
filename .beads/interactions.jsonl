@@ -37,3 +37,5 @@
 {"id":"int-1ababc51","kind":"field_change","created_at":"2026-04-12T21:02:35.829645462Z","actor":"nambiar","issue_id":"sendword-6mb.5","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
 {"id":"int-c3ea0200","kind":"field_change","created_at":"2026-04-12T21:02:36.170120851Z","actor":"nambiar","issue_id":"sendword-6mb.6","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
 {"id":"int-699670ec","kind":"field_change","created_at":"2026-04-12T21:02:36.512454203Z","actor":"nambiar","issue_id":"sendword-6mb.7","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
+{"id":"int-9eb662a0","kind":"field_change","created_at":"2026-04-29T19:10:06.183456235Z","actor":"nambiar","issue_id":"sendword-cjl.1","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
+{"id":"int-ee1af75e","kind":"field_change","created_at":"2026-04-29T19:10:06.534538128Z","actor":"nambiar","issue_id":"sendword-cjl.2","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}

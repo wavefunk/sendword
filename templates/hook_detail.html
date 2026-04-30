@@ -201,6 +201,19 @@
 </div>
 {% endif %}
 
+{# --- Rate Limit --- #}
+{% if hook_rate_limit_max_per_minute is defined and hook_rate_limit_max_per_minute %}
+<div class="wf-panel">
+  <div class="wf-panel-head"><span class="wf-panel-title">RATE LIMIT</span></div>
+  <dl class="wf-dl flush">
+    <div class="wf-dl-row">
+      <dt>Max per minute</dt>
+      <dd>{{ hook_rate_limit_max_per_minute }}</dd>
+    </div>
+  </dl>
+</div>
+{% endif %}
+
 {# --- Executions --- #}
 <div class="wf-panel" style="padding: 0;">
   <div class="wf-panel-head">

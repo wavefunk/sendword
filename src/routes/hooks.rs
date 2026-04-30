@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use crate::barriers::{self, BarrierOutcome};
 use crate::config::{
     BackoffStrategy, ExecutorConfig, FilterOperator, HmacAlgorithm, HookAuthConfig, PayloadFilter,
-    TimeWindow, TriggerRateLimit, TriggerRules,
+    RateLimitConfig, TimeWindow, TriggerRateLimit, TriggerRules,
 };
 use crate::config_writer::{self, HookFormData, RetryFormData, WriteError};
 use crate::error::AppError;
@@ -83,6 +83,24 @@ async fn log_rejection(
         },
     )
     .await;
+}
+
+/// Convert `HookConfig.rate_limit` (max_per_minute) to a `TriggerRateLimit`
+/// suitable for the rate-limit evaluator. Returns `None` when `max_per_minute`
+/// is 0 (treat as unlimited) or when the config is absent.
+///
+/// `trigger_rules.rate_limit` takes precedence over this field when both are
+/// present; this conversion is only used when `trigger_rules.rate_limit` is
+/// unset.
+fn hook_rate_limit_as_trigger(cfg: Option<&RateLimitConfig>) -> Option<TriggerRateLimit> {
+    let mpm = cfg?.max_per_minute;
+    if mpm == 0 {
+        return None;
+    }
+    Some(TriggerRateLimit {
+        max_requests: u64::from(mpm),
+        window: Duration::from_secs(60),
+    })
 }
 
 async fn trigger_hook(
@@ -285,10 +303,35 @@ async fn trigger_hook(
             .into_response());
         }
 
-        // 4. Rate limit (returns 429, not 200)
+        // 4. Trigger-rules rate limit (returns 429, not 200)
         if let Some(rl) = &rules.rate_limit
             && let trigger_rules::EvalOutcome::Reject { status, reason } =
                 rate_limit::evaluate(pool, &slug, rl).await
+        {
+            log_rejection(pool, &slug, &source_ip, status.clone(), &reason).await;
+            return Err((
+                StatusCode::TOO_MANY_REQUESTS,
+                Json(serde_json::json!({
+                    "status": status.to_string(),
+                    "reason": reason,
+                })),
+            )
+                .into_response());
+        }
+    }
+
+    // 5. HookConfig.rate_limit (max_per_minute) — enforced when
+    //    trigger_rules.rate_limit is not set. trigger_rules.rate_limit wins
+    //    when both are present (more explicit: carries its own window).
+    let has_trigger_rl = hook
+        .trigger_rules
+        .as_ref()
+        .and_then(|r| r.rate_limit.as_ref())
+        .is_some();
+    if !has_trigger_rl {
+        if let Some(rl) = hook_rate_limit_as_trigger(hook.rate_limit.as_ref())
+            && let trigger_rules::EvalOutcome::Reject { status, reason } =
+                rate_limit::evaluate(pool, &slug, &rl).await
         {
             log_rejection(pool, &slug, &source_ip, status.clone(), &reason).await;
             return Err((
@@ -626,6 +669,10 @@ async fn hook_detail(
         })
         .unwrap_or_default();
 
+    // HookConfig.rate_limit.max_per_minute — displayed as its own panel when set.
+    let hook_rate_limit_max_per_minute: Option<u32> =
+        hook.rate_limit.as_ref().map(|rl| rl.max_per_minute);
+
     let html = state.templates.render(
         "hook_detail.html",
         context! {
@@ -643,6 +690,7 @@ async fn hook_detail(
             auth_header => auth_header,
             auth_algorithm => auth_algorithm,
             payload_fields => payload_fields,
+            hook_rate_limit_max_per_minute => hook_rate_limit_max_per_minute,
             trigger_filter_rows => trigger_filter_rows,
             trigger_window_rows => trigger_window_rows,
             trigger_cooldown => trigger_cooldown,
@@ -2788,5 +2836,52 @@ required = true
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    // --- HookConfig.rate_limit enforcement ---
+
+    #[tokio::test]
+    async fn hook_rate_limit_enforced_when_no_trigger_rules_rate_limit() {
+        // Hook has only HookConfig.rate_limit (max_per_minute=2), no
+        // trigger_rules.rate_limit. The third request must return 429.
+        let toml = r#"[server]
+port = 8080
+
+[[hooks]]
+name = "Limited"
+slug = "limited"
+enabled = true
+[hooks.executor]
+type = "shell"
+command = "echo ok"
+[hooks.rate_limit]
+max_per_minute = 2
+"#;
+        let (state, _dir) = test_state_with_config(toml).await;
+
+        let trigger = |state: Arc<AppState>| async move {
+            app(state)
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/hook/limited")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+        };
+
+        let r1 = trigger(Arc::clone(&state)).await;
+        let r2 = trigger(Arc::clone(&state)).await;
+        let r3 = trigger(Arc::clone(&state)).await;
+
+        assert_eq!(r1.status(), StatusCode::OK, "first request should pass");
+        assert_eq!(r2.status(), StatusCode::OK, "second request should pass");
+        assert_eq!(
+            r3.status(),
+            StatusCode::TOO_MANY_REQUESTS,
+            "third request must be rate limited"
+        );
     }
 }
