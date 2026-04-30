@@ -1,23 +1,23 @@
-- title: Webhook Authentication
-  description: Bearer tokens, HMAC-SHA256 signature verification, or open access. Secrets can reference environment variables. Constant-time comparison prevents timing attacks.
+- title: Auth, not afterthought
+  description: Bearer tokens, HMAC-SHA256, or open access. Secrets reference env vars. Constant-time comparison prevents timing attacks.
 
-- title: Payload Validation
-  description: Define a JSON schema per hook. Sendword validates every incoming request and rejects malformed payloads before your command ever runs.
+- title: Reject before execute
+  description: JSON schema per hook. Malformed payloads are rejected before your command runs.
 
-- title: Trigger Rules
-  description: Filter by payload fields (equals, regex, contains), restrict to time windows, enforce cooldowns, and apply rate limits — all before execution begins.
+- title: Control what fires
+  description: Filter by payload fields, restrict to time windows, enforce cooldowns, apply rate limits — all before execution.
 
-- title: Three Executors
-  description: Run shell commands with payload interpolation, execute managed scripts, or forward to HTTP endpoints. Each hook picks one, with per-hook timeout and working directory.
+- title: Shell, script, or HTTP
+  description: Run commands with payload interpolation, execute managed scripts, or forward to endpoints. Per-hook timeouts and working directories.
 
-- title: Retries & Backoff
-  description: Automatic retries on failure with none, linear, or exponential backoff strategies. Configurable per hook or globally, with max delay caps.
+- title: Retries that back off
+  description: None, linear, or exponential. Configurable per hook or globally, with max delay caps.
 
-- title: Barriers & Approval
-  description: Mutex or queue-based concurrency control prevents resource exhaustion. Optional approval workflows let you gate production deployments behind a human review.
+- title: Concurrency without plumbing
+  description: Mutex or queue-based execution prevents conflicts. Approval workflows gate deployments behind human review.
 
-- title: Log Masking
-  description: Mask environment variable values and regex patterns in execution logs. Sensitive data never appears in the web UI or log files.
+- title: Secrets stay out of logs
+  description: Mask env var values and regex patterns in output. Sensitive data never reaches the dashboard or log files.
 
-- title: Backup & Restore
-  description: Snapshot your database and config to S3-compatible storage on a cron schedule. Restore with a single command. Retention policies keep storage tidy.
+- title: Snapshot, restore, done
+  description: Back up database and config to S3-compatible storage on a schedule. Restore with one command. Retention handles cleanup.

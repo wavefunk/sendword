@@ -5,14 +5,29 @@ data:
   features:
     file: "features.yaml"
 seo:
-  title: "sendword — webhooks that run commands"
-  description: "A lightweight HTTP webhook-to-command runner sidecar. Receive webhooks, validate payloads, execute commands — with auth, filtering, retries, and a web UI."
+  title: "sendword — stop writing webhook servers"
+  description: "A single-binary webhook-to-command runner. Receive webhooks, validate payloads, run shell commands — with built-in auth, filtering, retries, and a web dashboard."
 schema:
   type: WebSite
 ---
 {% extends "_marketing.html" %}
 
-{% block title %}sendword — webhooks that run commands{% endblock %}
+{% block title %}sendword — stop writing webhook servers{% endblock %}
+{% block seo_head %}
+<meta name="description" content="A single-binary webhook-to-command runner. Receive webhooks, validate payloads, run shell commands — with built-in auth, filtering, retries, and a web dashboard.">
+<meta property="og:title" content="sendword — stop writing webhook servers">
+<meta property="og:description" content="A single-binary webhook-to-command runner. Receive webhooks, validate payloads, run shell commands — with built-in auth, filtering, retries, and a web dashboard.">
+<meta property="og:url" content="{{ page.base_url }}{{ page.current_url }}">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="{{ site.name }}">
+<meta property="og:image" content="{{ page.base_url }}/og-share.png">
+<meta name="twitter:image" content="{{ page.base_url }}/og-share.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="sendword — stop writing webhook servers">
+<meta name="twitter:description" content="A single-binary webhook-to-command runner. Receive webhooks, validate payloads, run shell commands — with built-in auth, filtering, retries, and a web dashboard.">
+<link rel="canonical" href="{{ page.base_url }}{{ page.current_url }}">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebSite","name":"{{ site.name }}","url":"{{ page.base_url }}/","description":"A single-binary webhook-to-command runner. Receive webhooks, validate payloads, run shell commands — with built-in auth, filtering, retries, and a web dashboard."}</script>
+{% endblock %}
 
 {% block content %}
 <!-- HERO -->
@@ -20,20 +35,20 @@ schema:
   <div class="mk-hero-grid" aria-hidden="true"></div>
   <div class="mk-hero-inner">
     <div class="mk-hero-eyebrow">SENDWORD · OPEN SOURCE · SINGLE BINARY</div>
-    <h1>Webhooks that run <em>commands</em>.</h1>
-    <p>Receive HTTP webhooks, validate payloads, execute shell commands — with authentication, filtering, retries, and a web dashboard. One binary, zero dependencies.</p>
+    <h1>Stop writing <em>webhook servers</em>.</h1>
+    <p>Sendword receives webhooks, validates payloads, and runs commands. Authentication, filtering, retries, and a dashboard — built in, not bolted on.</p>
     <div class="mk-hero-cta">
-      <a href="/docs/quickstart" class="wf-btn lg primary">Get Started</a>
+      <a href="/docs/quickstart" class="wf-btn lg primary">Read the Docs</a>
       <a href="https://github.com/wavefunk/sendword" class="wf-btn lg" target="_blank" rel="noopener">GitHub</a>
       <span class="sep"></span>
       <code class="shell-line"><span class="prompt">$</span>cargo install sendword</code>
     </div>
   </div>
   <div class="mk-hero-stats">
-    <div><div class="l">RUNTIME</div><div class="v">SINGLE BINARY</div></div>
-    <div><div class="l">CONFIG</div><div class="v">TOML + JSON</div></div>
-    <div><div class="l">DATABASE</div><div class="v">SQLITE</div></div>
-    <div><div class="l">FRONTEND</div><div class="v">WEB DASHBOARD</div></div>
+    <div><div class="l">SETUP</div><div class="v">ONE TOML FILE</div></div>
+    <div><div class="l">AUTH</div><div class="v">BUILT IN</div></div>
+    <div><div class="l">RETRIES</div><div class="v">AUTOMATIC</div></div>
+    <div><div class="l">HISTORY</div><div class="v">WEB DASHBOARD</div></div>
   </div>
 </section>
 
@@ -42,9 +57,9 @@ schema:
   <div class="mk-sect-head">
     <div>
       <div class="mk-sect-kicker">— 01 / FEATURES</div>
-      <h2 class="mk-sect-title">What it does</h2>
+      <h2 class="mk-sect-title">What you stop building yourself.</h2>
     </div>
-    <p class="mk-sect-sub">Everything you need to turn incoming webhooks into running commands — authentication, validation, concurrency control, and full execution history.</p>
+    <p class="mk-sect-sub">Authentication, validation, concurrency control, and execution history — already done.</p>
   </div>
   <div class="mk-features">
     {% for feat in features %}
@@ -62,25 +77,25 @@ schema:
   <div class="mk-sect-head">
     <div>
       <div class="mk-sect-kicker">— 02 / HOW IT WORKS</div>
-      <h2 class="mk-sect-title">Three steps to running.</h2>
+      <h2 class="mk-sect-title">Configure. Guard. Run.</h2>
     </div>
     <p class="mk-sect-sub">Define a hook in TOML, add rules and guards, start the server.</p>
   </div>
   <div class="mk-steps">
     <div class="mk-step">
       <div class="mk-step-num">— 01</div>
-      <h3 class="mk-step-t">Configure a hook</h3>
-      <p class="mk-step-b">Define the hook name, slug, executor command, and authentication in sendword.toml.</p>
+      <h3 class="mk-step-t">Define a hook</h3>
+      <p class="mk-step-b">Name, slug, command, and auth. One TOML block.</p>
     </div>
     <div class="mk-step">
       <div class="mk-step-num">— 02</div>
-      <h3 class="mk-step-t">Add rules &amp; guards</h3>
-      <p class="mk-step-b">Filter by payload fields, enforce cooldowns, set rate limits, and configure concurrency barriers.</p>
+      <h3 class="mk-step-t">Add guards</h3>
+      <p class="mk-step-b">Payload filters, cooldowns, rate limits, concurrency barriers.</p>
     </div>
     <div class="mk-step">
       <div class="mk-step-num">— 03</div>
-      <h3 class="mk-step-t">Run sendword</h3>
-      <p class="mk-step-b">Start the server. Hooks are available as POST endpoints. The dashboard shows execution history.</p>
+      <h3 class="mk-step-t">Start the server</h3>
+      <p class="mk-step-b">Hooks are live as POST endpoints. The dashboard shows every execution.</p>
     </div>
   </div>
 </section>

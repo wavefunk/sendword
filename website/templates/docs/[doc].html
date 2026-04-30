@@ -24,3 +24,18 @@ schema:
 {% extends "_docs.html" %}
 
 {% block title %}{{ doc.title }} — {{ site.name }} docs{% endblock %}
+{% block seo_head %}
+<meta name="description" content="{{ doc.description }}">
+<meta property="og:title" content="{{ doc.title }} — sendword docs">
+<meta property="og:description" content="{{ doc.description }}">
+<meta property="og:url" content="{{ page.base_url }}{{ page.current_url }}">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="{{ site.name }}">
+<meta property="og:image" content="{{ page.base_url }}/og-share.png">
+<meta name="twitter:image" content="{{ page.base_url }}/og-share.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="{{ doc.title }} — sendword docs">
+<meta name="twitter:description" content="{{ doc.description }}">
+<link rel="canonical" href="{{ page.base_url }}{{ page.current_url }}">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"Article","headline":"{{ doc.title }}","description":"{{ doc.description }}","url":"{{ page.base_url }}{{ page.current_url }}","publisher":{"@type":"Organization","name":"{{ site.name }}"}}</script>
+{% endblock %}

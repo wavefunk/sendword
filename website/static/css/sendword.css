@@ -1,9 +1,18 @@
 :root {
-  --accent: #cba6f7;
+  --accent: #e06c75;
   --accent-ink: #000000;
 }
 
 [data-mode="light"] {
-  --accent: #8839ef;
+  --accent: #d20f39;
   --accent-ink: #ffffff;
+}
+
+.wf-wordmark-icon {
+  background: none;
+}
+
+.wf-wordmark-icon svg {
+  width: 100%;
+  height: 100%;
 }

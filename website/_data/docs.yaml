@@ -5,8 +5,6 @@
   category: Getting Started
   description: "Install sendword and trigger your first hook in five minutes."
   content: |
-    # Quickstart
-
     Get sendword running and trigger your first hook in five minutes.
 
     ## Install
@@ -62,8 +60,6 @@
   category: Getting Started
   description: "Installation options and requirements for sendword."
   content: |
-    # Installation
-
     Sendword is a single Rust binary with no runtime dependencies beyond SQLite.
 
     ## From cargo
@@ -103,8 +99,6 @@
   category: Getting Started
   description: "Complete reference for sendword.toml configuration options."
   content: |
-    # Configuration
-
     Sendword reads its configuration from `sendword.toml` in the working directory. Every option can be overridden with environment variables using the `SENDWORD_` prefix.
 
     ## Server
@@ -199,8 +193,6 @@
   category: Getting Started
   description: "Command-line interface reference for sendword."
   content: |
-    # CLI Reference
-
     Sendword provides a set of subcommands for serving, managing users, and handling backups.
 
     ## serve
@@ -274,8 +266,6 @@
   category: Hooks
   description: "How to define and configure webhook hooks."
   content: |
-    # Creating Hooks
-
     Hooks are the core unit in sendword. Each hook maps an incoming HTTP request to an action.
 
     ## Basic hook
@@ -343,8 +333,6 @@
   category: Hooks
   description: "Securing hooks with bearer tokens and HMAC signatures."
   content: |
-    # Authentication
-
     Each hook can require authentication. Three modes are available.
 
     ## None (default)
@@ -412,8 +400,6 @@
   category: Hooks
   description: "Defining JSON payload schemas for incoming webhooks."
   content: |
-    # Payload Validation
-
     Define a schema for each hook to validate incoming JSON payloads before execution.
 
     ## Defining fields
@@ -471,8 +457,6 @@
   category: Hooks
   description: "Using webhook payload data in commands and HTTP requests."
   content: |
-    # Payload Interpolation
-
     Use values from the incoming webhook payload in shell commands, scripts, and HTTP executor bodies.
 
     ## Syntax
@@ -539,8 +523,6 @@
   category: Hooks
   description: "Filtering webhooks by payload content, time windows, cooldowns, and rate limits."
   content: |
-    # Trigger Rules
-
     Trigger rules are evaluated after authentication but before execution. A webhook that fails any rule is logged as `filtered` and never runs.
 
     ## Payload Filters
@@ -624,8 +606,6 @@
   category: Execution
   description: "Running shell commands from webhook triggers."
   content: |
-    # Shell Executor
-
     The shell executor runs commands via `sh -c` with full payload interpolation support.
 
     ## Basic usage
@@ -697,8 +677,6 @@
   category: Execution
   description: "Running managed script files from webhook triggers."
   content: |
-    # Script Executor
-
     The script executor runs pre-uploaded scripts from the managed scripts directory.
 
     ## Configuration
@@ -742,8 +720,6 @@
   category: Execution
   description: "Forwarding webhooks to external HTTP endpoints."
   content: |
-    # HTTP Executor
-
     The HTTP executor makes HTTP requests to external services, acting as a webhook relay or transformer.
 
     ## Configuration
@@ -788,8 +764,6 @@
   category: Execution
   description: "Automatic retry strategies for failed executions."
   content: |
-    # Retries & Backoff
-
     Sendword can automatically retry failed executions using configurable backoff strategies.
 
     ## Global defaults
@@ -863,8 +837,6 @@
   category: Execution
   description: "Concurrency control with mutex and queue barriers."
   content: |
-    # Barriers & Queues
-
     Barriers control how many executions of a hook can run simultaneously.
 
     ## Mutex
@@ -903,8 +875,6 @@
   category: Execution
   description: "Gating executions behind manual approval."
   content: |
-    # Approval Workflows
-
     Require human approval before a hook's command executes. Useful for production deployments and destructive operations.
 
     ## Configuration
@@ -954,8 +924,6 @@
   category: Operations
   description: "Hiding sensitive data in execution logs."
   content: |
-    # Log Masking
-
     Prevent sensitive data from appearing in the web UI and log files.
 
     ## Mask environment variables
@@ -997,8 +965,6 @@
   category: Operations
   description: "Post-execution webhook notifications for alerting."
   content: |
-    # Notifications
-
     Send a webhook notification after an execution completes. Useful for alerting on failures, posting to Slack, or triggering downstream workflows.
 
     ## Configuration
@@ -1055,8 +1021,6 @@
   category: Operations
   description: "Backing up and restoring sendword data to S3-compatible storage."
   content: |
-    # Backup & Restore
-
     Back up your SQLite database and TOML configuration to any S3-compatible storage provider (AWS S3, MinIO, R2, etc.).
 
     ## Configuration
@@ -1117,8 +1081,6 @@
   category: Operations
   description: "Managing users, sessions, and dashboard access."
   content: |
-    # User Management
-
     Sendword supports multiple users with password-based authentication for the web dashboard.
 
     ## Create a user
@@ -1168,8 +1130,6 @@
   category: API Reference
   description: "HTTP endpoint for triggering hooks."
   content: |
-    # Webhook API
-
     The primary endpoint for receiving webhooks.
 
     ## Trigger a hook
@@ -1255,8 +1215,6 @@
   category: API Reference
   description: "Endpoints for exporting and importing configuration."
   content: |
-    # Configuration API
-
     Manage your sendword configuration programmatically.
 
     ## Export
@@ -1312,8 +1270,6 @@
   category: API Reference
   description: "Endpoints for viewing and managing executions."
   content: |
-    # Execution API
-
     View execution history, stream logs, replay executions, and manage approvals.
 
     ## View execution
@@ -1372,8 +1328,6 @@
   category: API Reference
   description: "Health check endpoint for monitoring and load balancers."
   content: |
-    # Health Check
-
     A simple endpoint for monitoring and load balancer health probes.
 
     ## Endpoint
@@ -1426,8 +1380,6 @@
   category: API Reference
   description: "Endpoints for managing S3 backups."
   content: |
-    # Backup API
-
     Manage backups programmatically through the HTTP API.
 
     ## List backups

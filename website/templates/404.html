@@ -6,6 +6,18 @@ data:
 {% extends "_marketing.html" %}
 
 {% block title %}404 — {{ site.name }}{% endblock %}
+{% block seo_head %}
+<meta name="description" content="Page not found.">
+<meta property="og:title" content="404 — sendword">
+<meta property="og:description" content="Page not found.">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="{{ site.name }}">
+<meta property="og:image" content="{{ page.base_url }}/og-share.png">
+<meta name="twitter:image" content="{{ page.base_url }}/og-share.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="canonical" href="{{ page.base_url }}{{ page.current_url }}">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"Page not found","url":"{{ page.base_url }}{{ page.current_url }}"}</script>
+{% endblock %}
 
 {% block content %}
 <section class="mk-sect mk-404">

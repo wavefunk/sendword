@@ -1,11 +1,12 @@
 [site]
 name = "sendword"
-base_url = "https://sendword.dev"
+base_url = "https://sendword.online"
 
 [site.seo]
-title = "sendword — webhooks that run commands"
-description = "A lightweight HTTP webhook-to-command runner sidecar. Receive webhooks, validate payloads, execute commands — with auth, filtering, retries, and a web UI."
+title = "sendword — stop writing webhook servers"
+description = "A single-binary webhook-to-command runner. Receive webhooks, validate payloads, run shell commands — with built-in auth, filtering, retries, and a web dashboard."
 og_type = "website"
+image = "/og-share.png"
 
 [site.schema]
 default_types = ["BreadcrumbList"]
