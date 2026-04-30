@@ -6,42 +6,22 @@
   <title>{% block title %}sendword{% endblock %}</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='2' y='6' width='28' height='20' rx='3' fill='%230c0a09' stroke='%23f59e0b' stroke-width='2'/%3E%3Cpath d='M2 8l14 10 14-10' fill='none' stroke='%23f59e0b' stroke-width='2' stroke-linecap='round'/%3E%3Ccircle cx='26' cy='8' r='5' fill='%23ef4444'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/css/wavefunk.css">
+  <style>
+    :root { --accent: #e06c75; --accent-ink: #000000; }
+    [data-mode="light"] { --accent: #d20f39; --accent-ink: #ffffff; }
+  </style>
+
   <script src="https://unpkg.com/htmx.org@2.0.4" defer></script>
   <script src="https://unpkg.com/htmx-ext-sse@2.2.2/sse.js" defer></script>
   <script src="/static/js/sendword.js" defer></script>
-  <style>
-    body { overflow: hidden; height: 100vh; }
-    .app {
-      display: grid;
-      grid-template-columns: 240px 1fr;
-      grid-template-rows: 56px 1fr 28px;
-      grid-template-areas:
-        "side   top"
-        "side   main"
-        "status status";
-      height: 100vh;
-    }
-    .app > .wf-sidebar   { grid-area: side; }
-    .app > .wf-topbar    { grid-area: top; border-bottom: 1px solid var(--hairline); }
-    .app > main          { grid-area: main; overflow: auto; background: var(--bg); }
-    .app > .wf-statusbar { grid-area: status; }
-    .page     { padding: 28px 32px 96px; max-width: 1200px; }
-    .page-head { display: flex; align-items: baseline; gap: 16px; margin-bottom: 4px; }
-    .page-title {
-      font-family: var(--font-mono); font-size: 28px; font-weight: 800;
-      letter-spacing: -0.02em; text-transform: uppercase;
-      color: var(--fg-strong); margin: 0;
-    }
-    .page-sub { color: var(--fg-muted); font-size: 13px; margin: 0 0 28px; }
-  </style>
 </head>
-<body class="density-dense" hx-boost="true">
+<body class="wf-app density-dense" hx-boost="true">
 
-<div class="app">
+<div class="wf-shell">
 
   <aside class="wf-sidebar">
     <div class="wf-brand">
-      <div style="width: 22px; height: 22px; background: var(--accent); color: var(--accent-ink); display: inline-flex; align-items: center; justify-content: center; font-family: var(--font-mono); font-weight: 800; font-size: 13px;">S</div>
+      <svg viewBox="0 0 32 32" aria-hidden="true" style="width: 22px; height: 22px;"><rect x="2" y="6" width="28" height="20" rx="3" fill="#0c0a09" stroke="#ffffff" stroke-width="2"/><path d="M2 8l14 10 14-10" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round"/><circle cx="26" cy="8" r="5" fill="#e06c75"/></svg>
       <span class="wf-brand-name">SENDWORD</span>
     </div>
     <nav class="wf-nav-list">
@@ -67,35 +47,35 @@
           <a class="wf-menu-item" href="/settings">Account settings</a>
           <div class="wf-menu-sep"></div>
           <form method="post" action="/logout" style="margin: 0;">
-            <button type="submit" class="wf-menu-item danger" style="width: 100%; text-align: left; background: none; border: none; cursor: pointer; font: inherit; color: inherit; padding: inherit;">Log out</button>
+            <button type="submit" class="wf-menu-item danger" style="width: 100; text-align: left; background: none; border: none; cursor: pointer; font: inherit; color: inherit; padding: inherit;">Log out</button>
           </form>
         </div>
       </div>
     </div>
   </aside>
 
-  <header class="wf-topbar">
-    {% block crumbs %}
-    <div class="wf-crumbs">
-      <span aria-current="page">SENDWORD</span>
-    </div>
-    {% endblock %}
-    <div style="flex: 1;"></div>
-    {% block actions %}{% endblock %}
-  </header>
+  <div class="wf-main">
+    <header class="wf-topbar">
+      {% block crumbs %}
+      <div class="wf-crumbs">
+        <span aria-current="page">SENDWORD</span>
+      </div>
+      {% endblock %}
+      <div class="wf-grow"></div>
+      {% block actions %}{% endblock %}
+    </header>
 
-  <main>
-    <div class="page">
-      {% if success %}<div class="wf-alert ok" style="margin-bottom: 20px;"><div class="wf-alert-bar"></div><div>{{ success }}</div></div>{% endif %}
-      {% if error %}<div class="wf-alert err" style="margin-bottom: 20px;"><div class="wf-alert-bar"></div><div>{{ error }}</div></div>{% endif %}
+    <main class="wf-scroll">
+      {% if success %}<div class="wf-alert ok"><div class="wf-alert-bar"></div><div>{{ success }}</div></div>{% endif %}
+      {% if error %}<div class="wf-alert err"><div class="wf-alert-bar"></div><div>{{ error }}</div></div>{% endif %}
       {% block content %}{% endblock %}
-    </div>
-  </main>
+    </main>
 
-  <div class="wf-statusbar" style="border-top: 1px solid var(--hairline);">
-    <span>SENDWORD</span>
-    <span style="flex: 1;"></span>
-    <span>V1.0</span>
+    <div class="wf-statusbar wf-hair">
+      <span>SENDWORD</span>
+      <span class="wf-grow"></span>
+      <span>V1.0</span>
+    </div>
   </div>
 
 </div>

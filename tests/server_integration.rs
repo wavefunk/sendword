@@ -643,10 +643,9 @@ async fn hook_detail_shows_execution_history() {
     assert_eq!(resp.status(), 200);
     let body = resp.text().await.unwrap();
 
-    assert!(body.contains("2 TOTAL"), "should show total count");
     assert!(
-        body.contains("EXECUTIONS"),
-        "should have executions section"
+        body.contains("Executions"),
+        "should have executions tab"
     );
 
     // Test the HTMX partial endpoint
@@ -2628,48 +2627,16 @@ async fn hook_detail_contains_trigger_attempts_section() {
     let body = resp.text().await.unwrap();
 
     assert!(
-        body.contains("TRIGGER ATTEMPTS"),
-        "hook detail should contain Trigger Attempts heading"
+        body.contains("Trigger Attempts"),
+        "hook detail should contain Trigger Attempts tab"
     );
     assert!(
-        body.contains("attempt-list"),
-        "hook detail should contain attempt-list container"
-    );
-    assert!(
-        body.contains("attempt-filters"),
-        "hook detail should contain filter buttons"
+        body.contains("activity-tab-attempts"),
+        "hook detail should contain attempts tab container"
     );
     assert!(
         body.contains("/hooks/attempt-hook/attempts"),
         "hook detail should contain HTMX URL for attempts"
-    );
-    assert!(
-        body.contains("status=fired"),
-        "hook detail should have fired filter button"
-    );
-    assert!(
-        body.contains("status=auth_failed"),
-        "hook detail should have auth_failed filter button"
-    );
-    assert!(
-        body.contains("status=validation_failed"),
-        "hook detail should have validation_failed filter button"
-    );
-    assert!(
-        body.contains("status=filtered"),
-        "hook detail should have filtered filter button"
-    );
-    assert!(
-        body.contains("status=rate_limited"),
-        "hook detail should have rate_limited filter button"
-    );
-    assert!(
-        body.contains("status=schedule_skipped"),
-        "hook detail should have schedule_skipped filter button"
-    );
-    assert!(
-        body.contains("status=cooldown_skipped"),
-        "hook detail should have cooldown_skipped filter button"
     );
 }
 
@@ -2723,8 +2690,8 @@ async fn attempt_list_filtered_by_new_m4_statuses() {
     let body = resp.text().await.unwrap();
     assert!(body.contains("FILTERED"), "filtered status should appear");
     assert!(
-        !body.contains("FIRED"),
-        "fired status should not appear when filtering by filtered"
+        !body.contains("wf-tag ok"),
+        "fired status tag should not appear when filtering by filtered"
     );
 
     // Rate limited filter

@@ -9,10 +9,10 @@
 {% endblock %}
 
 {% block content %}
-<div class="page-head">
-  <h1 class="page-title">Approvals</h1>
+<div class="wf-f wf-ai-b wf-gap-4 wf-mb-2">
+  <h1 class="wf-pagetitle wf-p-0">Approvals</h1>
 </div>
-<p class="page-sub">{{ executions | length }} pending</p>
+<p class="wf-fg-muted wf-t-sm wf-mb-4">{{ executions | length }} pending</p>
 
 {% if executions | length == 0 %}
 <div class="wf-empty">

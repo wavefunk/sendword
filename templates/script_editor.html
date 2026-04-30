@@ -10,8 +10,8 @@
 {% endblock %}
 
 {% block content %}
-<div class="page-head">
-  <h1 class="page-title">{% if is_new %}New Script{% else %}{{ filename }}{% endif %}</h1>
+<div class="wf-f wf-ai-b wf-gap-4 wf-mb-2">
+  <h1 class="wf-pagetitle wf-p-0">{% if is_new %}New Script{% else %}{{ filename }}{% endif %}</h1>
 </div>
 
 <form method="post" action="{% if is_new %}/scripts/new{% else %}/scripts/{{ filename }}{% endif %}">

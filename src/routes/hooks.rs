@@ -781,6 +781,7 @@ const ATTEMPTS_PER_PAGE: i64 = 20;
 #[derive(Deserialize)]
 struct AttemptFilterParams {
     status: Option<String>,
+    page: Option<i64>,
 }
 
 async fn trigger_attempt_list(
@@ -798,6 +799,8 @@ async fn trigger_attempt_list(
         .find(|h| h.slug == slug)
         .ok_or(AppError::not_found("hook"))?;
 
+    let page = params.page.unwrap_or(1).max(1);
+    let offset = (page - 1) * ATTEMPTS_PER_PAGE;
     let pool = state.db.pool();
 
     let parsed_status = params
@@ -806,11 +809,17 @@ async fn trigger_attempt_list(
         .filter(|s| !s.is_empty())
         .and_then(trigger_attempt::TriggerAttemptStatus::parse);
 
+    let total =
+        trigger_attempt::count_by_hook_filtered(pool, &slug, parsed_status.as_ref()).await?;
+
     let attempts = if let Some(ref status) = parsed_status {
-        trigger_attempt::list_by_hook_filtered(pool, &slug, status, ATTEMPTS_PER_PAGE, 0).await?
+        trigger_attempt::list_by_hook_filtered(pool, &slug, status, ATTEMPTS_PER_PAGE, offset)
+            .await?
     } else {
-        trigger_attempt::list_by_hook(pool, &slug, ATTEMPTS_PER_PAGE, 0).await?
+        trigger_attempt::list_by_hook(pool, &slug, ATTEMPTS_PER_PAGE, offset).await?
     };
+
+    let total_pages = (total + ATTEMPTS_PER_PAGE - 1) / ATTEMPTS_PER_PAGE;
 
     let rows: Vec<serde_json::Value> = attempts
         .iter()
@@ -833,6 +842,9 @@ async fn trigger_attempt_list(
         context! {
             slug => slug,
             attempts => rows,
+            total => total,
+            page => page,
+            total_pages => total_pages,
             active_status => active_status,
         },
     )?;

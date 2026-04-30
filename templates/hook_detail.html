@@ -4,7 +4,7 @@
 
 {% block crumbs %}
 <div class="wf-crumbs">
-  <a href="/">HOOKS</a>
+  <a href="/">HOOKS</a><span class="sep">/</span>
   <span aria-current="page">{{ slug | upper }}</span>
 </div>
 {% endblock %}
@@ -12,14 +12,14 @@
 {% block actions %}
 <a class="wf-btn sm" href="/hooks/{{ slug }}/edit">EDIT</a>
 <form method="post" action="/hooks/{{ slug }}/delete"
-      onsubmit="return confirm('Delete hook {{ name }}?')" style="display: inline;">
+      onsubmit="return confirm('Delete hook {{ name }}?')" class="wf-ib">
   <button type="submit" class="wf-btn sm danger">DELETE</button>
 </form>
 {% endblock %}
 
 {% block content %}
-<div class="page-head">
-  <h1 class="page-title">{{ name }}</h1>
+<div class="wf-f wf-ai-b wf-gap-4 wf-mb-2">
+  <h1 class="wf-pagetitle wf-p-0">{{ name }}</h1>
   {% if enabled %}
     <span class="wf-tag ok"><span class="dot"></span>ENABLED</span>
   {% else %}
@@ -27,11 +27,13 @@
   {% endif %}
 </div>
 {% if description %}
-<p class="page-sub">{{ description }}</p>
+<p class="wf-fg-muted wf-t-sm wf-mb-4">{{ description }}</p>
 {% endif %}
 
-{# --- Overview --- #}
-<div class="wf-panel">
+<div class="wf-split wf-grow">
+
+{# ── Left: config ── #}
+<div class="wf-panel wf-p-0 wf-grow">
   <div class="wf-panel-head"><span class="wf-panel-title">OVERVIEW</span></div>
   <dl class="wf-dl flush">
     <div class="wf-dl-row"><dt>Slug</dt><dd><code>{{ slug }}</code></dd></div>
@@ -50,19 +52,16 @@
       </dd>
     </div>
   </dl>
-</div>
 
-{# --- Executor --- #}
-<div class="wf-panel">
-  <div class="wf-panel-head"><span class="wf-panel-title">EXECUTOR</span></div>
+  <div class="wf-panel-head wf-dim"><span class="wf-panel-title">EXECUTOR</span></div>
   <dl class="wf-dl flush">
     <div class="wf-dl-row"><dt>Type</dt><dd>{{ executor_type }}</dd></div>
     <div class="wf-dl-row">
       <dt>Command</dt>
-      <dd>
+      <dd class="wf-f wf-ai-c wf-gap-2">
         <code>{{ executor_command }}</code>
         {% if script_edit_url %}
-          <a class="wf-btn sm" href="{{ script_edit_url }}" style="margin-left: 8px;">EDIT SCRIPT</a>
+          <a class="wf-btn sm" href="{{ script_edit_url }}">EDIT SCRIPT</a>
         {% endif %}
       </dd>
     </div>
@@ -73,20 +72,17 @@
     {% if env_vars %}
     <div class="wf-dl-row">
       <dt>Environment</dt>
-      <dd>
+      <dd class="wf-f wf-wrap wf-gap-1">
         {% for var in env_vars %}
-        <span class="wf-tag" style="margin-right: 4px;">{{ var }}</span>
+        <span class="wf-tag">{{ var }}</span>
         {% endfor %}
       </dd>
     </div>
     {% endif %}
   </dl>
-</div>
 
-{# --- Authentication --- #}
-{% if auth_mode != "none" %}
-<div class="wf-panel">
-  <div class="wf-panel-head"><span class="wf-panel-title">AUTHENTICATION</span></div>
+  {% if auth_mode != "none" %}
+  <div class="wf-panel-head wf-dim"><span class="wf-panel-title">AUTHENTICATION</span></div>
   <dl class="wf-dl flush">
     <div class="wf-dl-row">
       <dt>Mode</dt>
@@ -103,13 +99,10 @@
     <div class="wf-dl-row"><dt>Algorithm</dt><dd>{{ auth_algorithm }}</dd></div>
     {% endif %}
   </dl>
-</div>
-{% endif %}
+  {% endif %}
 
-{# --- Payload Schema --- #}
-{% if payload_fields is defined and payload_fields %}
-<div class="wf-panel" style="padding: 0;">
-  <div class="wf-panel-head"><span class="wf-panel-title">PAYLOAD SCHEMA</span></div>
+  {% if payload_fields is defined and payload_fields %}
+  <div class="wf-panel-head wf-dim"><span class="wf-panel-title">PAYLOAD SCHEMA</span></div>
   <table class="wf-table">
     <thead>
       <tr>
@@ -134,18 +127,14 @@
       {% endfor %}
     </tbody>
   </table>
-</div>
-{% endif %}
+  {% endif %}
 
-{# --- Trigger Rules --- #}
-{% set has_trigger_rules = (trigger_filter_rows and trigger_filter_rows | length > 0)
-  or (trigger_window_rows and trigger_window_rows | length > 0)
-  or trigger_cooldown
-  or trigger_rate_max %}
-{% if has_trigger_rules %}
-<div class="wf-panel" style="padding: 0;">
-  <div class="wf-panel-head"><span class="wf-panel-title">TRIGGER RULES</span></div>
-
+  {% set has_trigger_rules = (trigger_filter_rows and trigger_filter_rows | length > 0)
+    or (trigger_window_rows and trigger_window_rows | length > 0)
+    or trigger_cooldown
+    or trigger_rate_max %}
+  {% if has_trigger_rules %}
+  <div class="wf-panel-head wf-dim"><span class="wf-panel-title">TRIGGER RULES</span></div>
   {% if trigger_cooldown or trigger_rate_max %}
   <dl class="wf-dl flush">
     {% if trigger_cooldown %}
@@ -156,16 +145,9 @@
     {% endif %}
   </dl>
   {% endif %}
-
   {% if trigger_filter_rows and trigger_filter_rows | length > 0 %}
   <table class="wf-table">
-    <thead>
-      <tr>
-        <th>FIELD</th>
-        <th>OPERATOR</th>
-        <th>VALUE</th>
-      </tr>
-    </thead>
+    <thead><tr><th>FIELD</th><th>OPERATOR</th><th>VALUE</th></tr></thead>
     <tbody>
       {% for row in trigger_filter_rows %}
       <tr>
@@ -177,16 +159,9 @@
     </tbody>
   </table>
   {% endif %}
-
   {% if trigger_window_rows and trigger_window_rows | length > 0 %}
   <table class="wf-table">
-    <thead>
-      <tr>
-        <th>DAYS</th>
-        <th>START</th>
-        <th>END</th>
-      </tr>
-    </thead>
+    <thead><tr><th>DAYS</th><th>START</th><th>END</th></tr></thead>
     <tbody>
       {% for row in trigger_window_rows %}
       <tr>
@@ -198,83 +173,60 @@
     </tbody>
   </table>
   {% endif %}
-</div>
-{% endif %}
+  {% endif %}
 
-{# --- Rate Limit --- #}
-{% if hook_rate_limit_max_per_minute is defined and hook_rate_limit_max_per_minute %}
-<div class="wf-panel">
-  <div class="wf-panel-head"><span class="wf-panel-title">RATE LIMIT</span></div>
+  {% if hook_rate_limit_max_per_minute is defined and hook_rate_limit_max_per_minute %}
+  <div class="wf-panel-head wf-dim"><span class="wf-panel-title">RATE LIMIT</span></div>
   <dl class="wf-dl flush">
     <div class="wf-dl-row">
       <dt>Max per minute</dt>
       <dd>{{ hook_rate_limit_max_per_minute }}</dd>
     </div>
   </dl>
+  {% endif %}
 </div>
-{% endif %}
 
-{# --- Executions --- #}
-<div class="wf-panel" style="padding: 0;">
-  <div class="wf-panel-head">
-    <span class="wf-panel-title">EXECUTIONS</span>
-    <span style="flex: 1;"></span>
-    <span class="muted" style="font-size: 12px;">{{ total }} TOTAL</span>
+{# ── Right: activity ── #}
+<div class="wf-panel wf-p-0 wf-grow">
+  <div class="wf-tabs" id="activity-tabs">
+    <button class="is-active" onclick="switchActivityTab('executions', this)">Executions</button>
+    <button onclick="switchActivityTab('attempts', this)">Trigger Attempts</button>
   </div>
-  <div id="execution-list" style="padding: 16px;"
+
+  <div id="activity-tab-executions" class="wf-f wf-col wf-grow wf-min-w-0"
        hx-get="/hooks/{{ slug }}/executions?page=1"
        hx-trigger="load"
        hx-swap="innerHTML">
   </div>
-</div>
 
-{# --- Trigger Attempts --- #}
-<div class="wf-panel" style="padding: 0;">
-  <div class="wf-panel-head">
-    <span class="wf-panel-title">TRIGGER ATTEMPTS</span>
-  </div>
-  <div style="padding: 16px 16px 0;">
-    <div class="wf-seg sm" id="attempt-filters">
-      <button class="wf-seg-opt is-active"
-        hx-get="/hooks/{{ slug }}/attempts" hx-target="#attempt-list" hx-swap="innerHTML"
-        onclick="setActiveFilter(this)">ALL</button>
-      <button class="wf-seg-opt"
-        hx-get="/hooks/{{ slug }}/attempts?status=fired" hx-target="#attempt-list" hx-swap="innerHTML"
-        onclick="setActiveFilter(this)">FIRED</button>
-      <button class="wf-seg-opt"
-        hx-get="/hooks/{{ slug }}/attempts?status=auth_failed" hx-target="#attempt-list" hx-swap="innerHTML"
-        onclick="setActiveFilter(this)">AUTH FAILED</button>
-      <button class="wf-seg-opt"
-        hx-get="/hooks/{{ slug }}/attempts?status=validation_failed" hx-target="#attempt-list" hx-swap="innerHTML"
-        onclick="setActiveFilter(this)">VALIDATION FAILED</button>
-      <button class="wf-seg-opt"
-        hx-get="/hooks/{{ slug }}/attempts?status=filtered" hx-target="#attempt-list" hx-swap="innerHTML"
-        onclick="setActiveFilter(this)">FILTERED</button>
-      <button class="wf-seg-opt"
-        hx-get="/hooks/{{ slug }}/attempts?status=rate_limited" hx-target="#attempt-list" hx-swap="innerHTML"
-        onclick="setActiveFilter(this)">RATE LIMITED</button>
-      <button class="wf-seg-opt"
-        hx-get="/hooks/{{ slug }}/attempts?status=schedule_skipped" hx-target="#attempt-list" hx-swap="innerHTML"
-        onclick="setActiveFilter(this)">SCHEDULE SKIPPED</button>
-      <button class="wf-seg-opt"
-        hx-get="/hooks/{{ slug }}/attempts?status=cooldown_skipped" hx-target="#attempt-list" hx-swap="innerHTML"
-        onclick="setActiveFilter(this)">COOLDOWN SKIPPED</button>
-    </div>
-  </div>
-  <div id="attempt-list" style="padding: 16px;"
+  <div id="activity-tab-attempts" class="wf-col wf-grow wf-min-w-0 wf-hidden"
        hx-get="/hooks/{{ slug }}/attempts"
-       hx-trigger="load"
+       hx-trigger="revealed"
        hx-swap="innerHTML">
   </div>
 </div>
 
+</div>
+
 <script>
-function setActiveFilter(el) {
-  var buttons = document.querySelectorAll('#attempt-filters .wf-seg-opt');
-  for (var i = 0; i < buttons.length; i++) {
-    buttons[i].classList.remove('is-active');
-  }
+function switchActivityTab(tab, el) {
+  var tabs = document.querySelectorAll('#activity-tabs button');
+  for (var i = 0; i < tabs.length; i++) tabs[i].classList.remove('is-active');
   el.classList.add('is-active');
+
+  var exec = document.getElementById('activity-tab-executions');
+  var att = document.getElementById('activity-tab-attempts');
+  if (tab === 'executions') {
+    exec.classList.remove('wf-hidden');
+    exec.classList.add('wf-f');
+    att.classList.add('wf-hidden');
+    att.classList.remove('wf-f');
+  } else {
+    exec.classList.add('wf-hidden');
+    exec.classList.remove('wf-f');
+    att.classList.remove('wf-hidden');
+    att.classList.add('wf-f');
+  }
 }
 </script>
 {% endblock %}

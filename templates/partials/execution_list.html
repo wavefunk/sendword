@@ -1,6 +1,6 @@
-<div class="wf-filterbar" style="margin-bottom: 12px;">
+<div class="wf-filterbar">
   <select class="wf-select sm" name="status"
-    hx-get="/hooks/{{ slug }}/executions" hx-target="#execution-list" hx-swap="innerHTML"
+    hx-get="/hooks/{{ slug }}/executions" hx-target="#activity-tab-executions" hx-swap="innerHTML"
     hx-include="[name='from_date'],[name='to_date']">
     <option value="" {% if not active_status %}selected{% endif %}>ALL STATUS</option>
     <option value="success" {{ 'selected' if active_status == 'success' }}>SUCCESS</option>
@@ -13,10 +13,10 @@
     <option value="expired" {{ 'selected' if active_status == 'expired' }}>EXPIRED</option>
   </select>
   <input class="wf-input sm" type="date" name="from_date" value="{{ active_from }}"
-    hx-get="/hooks/{{ slug }}/executions" hx-target="#execution-list" hx-swap="innerHTML"
+    hx-get="/hooks/{{ slug }}/executions" hx-target="#activity-tab-executions" hx-swap="innerHTML"
     hx-include="[name='status'],[name='to_date']" hx-trigger="change">
   <input class="wf-input sm" type="date" name="to_date" value="{{ active_to }}"
-    hx-get="/hooks/{{ slug }}/executions" hx-target="#execution-list" hx-swap="innerHTML"
+    hx-get="/hooks/{{ slug }}/executions" hx-target="#activity-tab-executions" hx-swap="innerHTML"
     hx-include="[name='status'],[name='from_date']" hx-trigger="change">
 </div>
 
@@ -25,47 +25,59 @@
   <div class="wf-empty-msg">No executions{% if active_status %} matching "{{ active_status }}"{% endif %}.</div>
 </div>
 {% else %}
-<table class="wf-table is-interactive">
-  <thead>
-    <tr>
-      <th>ID</th>
-      <th>TRIGGERED</th>
-      <th>STATUS</th>
-      <th class="num">EXIT</th>
-      <th class="num">DURATION</th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for exec in executions %}
-    <tr onclick="location.href='/executions/{{ exec.id }}'">
-      <td class="strong"><code>{{ exec.id[:8] }}</code></td>
-      <td><span data-ts="{{ exec.triggered_at }}">{{ exec.triggered_at }}</span></td>
-      <td>
-        <span class="wf-tag
-          {%- if exec.status == 'success' %} ok
-          {%- elif exec.status == 'failed' or exec.status == 'timed_out' %} err
-          {%- elif exec.status == 'running' %} warn
-          {%- elif exec.status == 'pending' or exec.status == 'pending_approval' %} info
-          {%- elif exec.status == 'rejected' or exec.status == 'expired' %} err
-          {%- endif %}">
-          <span class="dot"></span>{{ exec.status | upper }}
-        </span>
-      </td>
-      <td class="num">{{ exec.exit_code if exec.exit_code is defined and exec.exit_code is not none else '—' }}</td>
-      <td class="num">{{ exec.duration if exec.duration is defined and exec.duration is not none else '—' }}</td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
-{% if has_more %}
-<div class="wf-tablefoot">
-  <span>PAGE {{ page }} OF {{ total_pages }}</span>
-  <span style="flex: 1;"></span>
-  <button class="wf-btn sm"
-    hx-get="/hooks/{{ slug }}/executions?page={{ page + 1 }}&status={{ active_status }}&from_date={{ active_from }}&to_date={{ active_to }}"
-    hx-target="#execution-list" hx-swap="innerHTML">
-    LOAD MORE
-  </button>
+<div class="wf-tablescroll wf-grow">
+  <table class="wf-table sticky is-interactive">
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>TRIGGERED</th>
+        <th>STATUS</th>
+        <th class="num">EXIT</th>
+        <th class="num">DURATION</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for exec in executions %}
+      <tr>
+        <td class="strong"><a href="/executions/{{ exec.id }}"><code>{{ exec.id[:8] }}</code></a></td>
+        <td><span data-ts="{{ exec.triggered_at }}">{{ exec.triggered_at }}</span></td>
+        <td>
+          <span class="wf-tag
+            {%- if exec.status == 'success' %} ok
+            {%- elif exec.status == 'failed' or exec.status == 'timed_out' %} err
+            {%- elif exec.status == 'running' %} warn
+            {%- elif exec.status == 'pending' or exec.status == 'pending_approval' %} info
+            {%- elif exec.status == 'rejected' or exec.status == 'expired' %} err
+            {%- endif %}">
+            <span class="dot"></span>{{ exec.status | upper }}
+          </span>
+        </td>
+        <td class="num">{{ exec.exit_code if exec.exit_code is defined and exec.exit_code is not none else '—' }}</td>
+        <td class="num">{{ exec.duration if exec.duration is defined and exec.duration is not none else '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
 </div>
-{% endif %}
+<div class="wf-tablefoot">
+  <span>{{ (page - 1) * 20 + 1 }}–{{ (page - 1) * 20 + executions | length }} OF {{ total }}</span>
+  <span class="wf-grow"></span>
+  {% if total_pages > 1 %}
+  <div class="wf-pagination">
+    {% if page > 1 %}
+      <a hx-get="/hooks/{{ slug }}/executions?page={{ page - 1 }}&status={{ active_status }}&from_date={{ active_from }}&to_date={{ active_to }}"
+         hx-target="#activity-tab-executions" hx-swap="innerHTML">←</a>
+    {% else %}
+      <button disabled>←</button>
+    {% endif %}
+    <a class="is-active">{{ page }}</a>
+    {% if page < total_pages %}
+      <a hx-get="/hooks/{{ slug }}/executions?page={{ page + 1 }}&status={{ active_status }}&from_date={{ active_from }}&to_date={{ active_to }}"
+         hx-target="#activity-tab-executions" hx-swap="innerHTML">→</a>
+    {% else %}
+      <button disabled>→</button>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
 {% endif %}

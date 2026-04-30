@@ -409,6 +409,10 @@
   position: relative; z-index: 1;
 }
 .wf-seg.sm .wf-seg-opt { font-size: 10px; letter-spacing: 0.1em; padding: 5px 10px; }
+.wf-seg.grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); }
+.wf-seg.grid-4 .wf-seg-opt { margin-left: 0; margin-top: -1px; margin-left: -1px; }
+.wf-seg.grid-4 .wf-seg-opt:nth-child(-n+4) { margin-top: 0; }
+.wf-seg.grid-4 .wf-seg-opt:nth-child(4n+1) { margin-left: 0; }
 
 /* ── Tabs & subtabs ────────────────────────────────────────────────────── */
 .wf-tabs { display: flex; border-bottom: var(--border-1) solid var(--hairline); }
@@ -925,13 +929,13 @@
 .wf-dl > .wf-dl-row:last-child { border-bottom: var(--border-1) solid var(--hairline); }
 .wf-dl.flush > .wf-dl-row:last-child { border-bottom: 0; }
 .wf-dl dt {
-  margin: 0;
+  margin: 0; padding-left: 16px;
   font-size: 10px; font-weight: var(--fw-bold);
   letter-spacing: var(--tr-caps); text-transform: uppercase;
   color: var(--fg-muted); white-space: nowrap;
 }
 .wf-dl dd {
-  margin: 0;
+  margin: 0; padding-right: 16px;
   color: var(--fg-strong);
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;

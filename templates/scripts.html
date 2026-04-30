@@ -13,10 +13,10 @@
 {% endblock %}
 
 {% block content %}
-<div class="page-head">
-  <h1 class="page-title">Scripts</h1>
+<div class="wf-f wf-ai-b wf-gap-4 wf-mb-2">
+  <h1 class="wf-pagetitle wf-p-0">Scripts</h1>
 </div>
-<p class="page-sub">{{ scripts | length }} file{{ 's' if scripts | length != 1 }}</p>
+<p class="wf-fg-muted wf-t-sm wf-mb-4">{{ scripts | length }} file{{ 's' if scripts | length != 1 }}</p>
 
 {% if scripts | length == 0 %}
 <div class="wf-empty">
@@ -36,8 +36,8 @@
     </thead>
     <tbody>
       {% for script in scripts %}
-      <tr onclick="location.href='/scripts/{{ script.name }}'">
-        <td class="strong"><code>{{ script.name }}</code></td>
+      <tr>
+        <td class="strong"><a href="/scripts/{{ script.name }}"><code>{{ script.name }}</code></a></td>
         <td class="num">{{ script.size }}</td>
         <td><span data-ts="{{ script.modified }}">{{ script.modified }}</span></td>
       </tr>

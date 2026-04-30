@@ -19,8 +19,8 @@
 {% endblock %}
 
 {% block content %}
-<div class="page-head">
-  <h1 class="page-title">Execution {{ id[:8] }}</h1>
+<div class="wf-f wf-ai-b wf-gap-4 wf-mb-2">
+  <h1 class="wf-pagetitle wf-p-0">Execution {{ id[:8] }}</h1>
   <span id="exec-status" class="wf-tag {% if status == 'success' %}ok{% elif status == 'failed' %}err{% elif status == 'running' %}warn{% endif %}">
     <span class="dot"></span>{{ status | upper }}
   </span>
@@ -28,21 +28,19 @@
 
 <div class="wf-panel" style="margin-bottom: 20px;">
   <div class="wf-panel-head"><span class="wf-panel-title">DETAILS</span></div>
-  <div class="wf-panel-body">
-    <dl class="wf-dl flush">
-      <div class="wf-dl-row"><dt>ID</dt><dd><code>{{ id }}</code></dd></div>
-      <div class="wf-dl-row"><dt>HOOK</dt><dd><a href="/hooks/{{ hook_slug }}">{{ hook_slug }}</a></dd></div>
-      {% if exit_code is defined and exit_code is not none %}<div class="wf-dl-row"><dt>EXIT CODE</dt><dd>{{ exit_code }}</dd></div>{% endif %}
-      <div class="wf-dl-row"><dt>SOURCE</dt><dd>{{ trigger_source }}</dd></div>
-      <div class="wf-dl-row"><dt>TRIGGERED</dt><dd><span data-ts="{{ triggered_at }}">{{ triggered_at }}</span></dd></div>
-      {% if started_at %}<div class="wf-dl-row"><dt>STARTED</dt><dd><span data-ts="{{ started_at }}">{{ started_at }}</span></dd></div>{% endif %}
-      {% if completed_at %}<div class="wf-dl-row"><dt>COMPLETED</dt><dd><span data-ts="{{ completed_at }}">{{ completed_at }}</span></dd></div>{% endif %}
-      {% if duration %}<div class="wf-dl-row"><dt>DURATION</dt><dd>{{ duration }}</dd></div>{% endif %}
-      {% if retry_count and retry_count > 0 %}
+  <dl class="wf-dl flush">
+    <div class="wf-dl-row"><dt>ID</dt><dd><code>{{ id }}</code></dd></div>
+    <div class="wf-dl-row"><dt>HOOK</dt><dd><a href="/hooks/{{ hook_slug }}">{{ hook_slug }}</a></dd></div>
+    {% if exit_code is defined and exit_code is not none %}<div class="wf-dl-row"><dt>EXIT CODE</dt><dd>{{ exit_code }}</dd></div>{% endif %}
+    <div class="wf-dl-row"><dt>SOURCE</dt><dd>{{ trigger_source }}</dd></div>
+    <div class="wf-dl-row"><dt>TRIGGERED</dt><dd><span data-ts="{{ triggered_at }}">{{ triggered_at }}</span></dd></div>
+    {% if started_at %}<div class="wf-dl-row"><dt>STARTED</dt><dd><span data-ts="{{ started_at }}">{{ started_at }}</span></dd></div>{% endif %}
+    {% if completed_at %}<div class="wf-dl-row"><dt>COMPLETED</dt><dd><span data-ts="{{ completed_at }}">{{ completed_at }}</span></dd></div>{% endif %}
+    {% if duration %}<div class="wf-dl-row"><dt>DURATION</dt><dd>{{ duration }}</dd></div>{% endif %}
+    {% if retry_count and retry_count > 0 %}
       <div class="wf-dl-row"><dt>RETRY</dt><dd>#{{ retry_count }}{% if retry_of %} of <a href="/executions/{{ retry_of }}">{{ retry_of[:8] }}</a>{% endif %}</dd></div>
-      {% endif %}
-    </dl>
-  </div>
+    {% endif %}
+  </dl>
 </div>
 
 {% if status == 'running' %}

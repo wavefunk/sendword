@@ -158,6 +158,36 @@ pub async fn list_by_hook_filtered(
     Ok(rows)
 }
 
+pub async fn count_by_hook(pool: &SqlitePool, hook_slug: &str) -> DbResult<i64> {
+    let row: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM trigger_attempts WHERE hook_slug = ?")
+            .bind(hook_slug)
+            .fetch_one(pool)
+            .await?;
+    Ok(row.0)
+}
+
+pub async fn count_by_hook_filtered(
+    pool: &SqlitePool,
+    hook_slug: &str,
+    status: Option<&TriggerAttemptStatus>,
+) -> DbResult<i64> {
+    match status {
+        None => count_by_hook(pool, hook_slug).await,
+        Some(s) => {
+            let status_str = s.to_string();
+            let row: (i64,) = sqlx::query_as(
+                "SELECT COUNT(*) FROM trigger_attempts WHERE hook_slug = ? AND status = ?",
+            )
+            .bind(hook_slug)
+            .bind(&status_str)
+            .fetch_one(pool)
+            .await?;
+            Ok(row.0)
+        }
+    }
+}
+
 /// List recent trigger attempts across all hooks, ordered by attempted_at DESC.
 pub async fn list_recent(pool: &SqlitePool, limit: i64) -> DbResult<Vec<TriggerAttempt>> {
     let rows = sqlx::query_as::<_, TriggerAttempt>(

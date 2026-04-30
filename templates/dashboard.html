@@ -13,10 +13,10 @@
 {% endblock %}
 
 {% block content %}
-<div class="page-head">
-  <h1 class="page-title">Hooks</h1>
+<div class="wf-f wf-ai-b wf-gap-4 wf-mb-2">
+  <h1 class="wf-pagetitle wf-p-0">Hooks</h1>
 </div>
-<p class="page-sub">{{ hooks | length }} hook{{ 's' if hooks | length != 1 }} configured</p>
+<p class="wf-fg-muted wf-t-sm wf-mb-4">{{ hooks | length }} hook{{ 's' if hooks | length != 1 }} configured</p>
 
 {% if hooks | length == 0 %}
 <div class="wf-empty">
@@ -45,8 +45,8 @@
     </thead>
     <tbody id="hook-list">
       {% for hook in hooks %}
-      <tr data-hook-name="{{ hook.name | lower }}" data-hook-slug="{{ hook.slug }}" onclick="location.href='/hooks/{{ hook.slug }}'">
-        <td class="strong">{{ hook.name }}</td>
+      <tr data-hook-name="{{ hook.name | lower }}" data-hook-slug="{{ hook.slug }}">
+        <td class="strong"><a href="/hooks/{{ hook.slug }}">{{ hook.name }}</a></td>
         <td><code>{{ hook.slug }}</code></td>
         <td>
           {% if hook.enabled %}

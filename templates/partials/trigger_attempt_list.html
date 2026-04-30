@@ -1,43 +1,95 @@
+<div class="wf-filterbar">
+  <div class="wf-seg sm grid-4 wf-w-full" id="attempt-filters">
+    <button class="wf-seg-opt{{ ' is-active' if not active_status }}"
+      hx-get="/hooks/{{ slug }}/attempts" hx-target="#activity-tab-attempts" hx-swap="innerHTML"
+      >ALL</button>
+    <button class="wf-seg-opt{{ ' is-active' if active_status == 'fired' }}"
+      hx-get="/hooks/{{ slug }}/attempts?status=fired" hx-target="#activity-tab-attempts" hx-swap="innerHTML"
+      >FIRED</button>
+    <button class="wf-seg-opt{{ ' is-active' if active_status == 'auth_failed' }}"
+      hx-get="/hooks/{{ slug }}/attempts?status=auth_failed" hx-target="#activity-tab-attempts" hx-swap="innerHTML"
+      >AUTH FAILED</button>
+    <button class="wf-seg-opt{{ ' is-active' if active_status == 'validation_failed' }}"
+      hx-get="/hooks/{{ slug }}/attempts?status=validation_failed" hx-target="#activity-tab-attempts" hx-swap="innerHTML"
+      >VALIDATION FAILED</button>
+    <button class="wf-seg-opt{{ ' is-active' if active_status == 'filtered' }}"
+      hx-get="/hooks/{{ slug }}/attempts?status=filtered" hx-target="#activity-tab-attempts" hx-swap="innerHTML"
+      >FILTERED</button>
+    <button class="wf-seg-opt{{ ' is-active' if active_status == 'rate_limited' }}"
+      hx-get="/hooks/{{ slug }}/attempts?status=rate_limited" hx-target="#activity-tab-attempts" hx-swap="innerHTML"
+      >RATE LIMITED</button>
+    <button class="wf-seg-opt{{ ' is-active' if active_status == 'schedule_skipped' }}"
+      hx-get="/hooks/{{ slug }}/attempts?status=schedule_skipped" hx-target="#activity-tab-attempts" hx-swap="innerHTML"
+      >SCHEDULE SKIPPED</button>
+    <button class="wf-seg-opt{{ ' is-active' if active_status == 'cooldown_skipped' }}"
+      hx-get="/hooks/{{ slug }}/attempts?status=cooldown_skipped" hx-target="#activity-tab-attempts" hx-swap="innerHTML"
+      >COOLDOWN SKIPPED</button>
+  </div>
+</div>
+
 {% if attempts | length == 0 %}
 <div class="wf-empty">
   <div class="wf-empty-msg">No trigger attempts{% if active_status %} matching "{{ active_status }}"{% endif %}.</div>
 </div>
 {% else %}
-<table class="wf-table">
-  <thead>
-    <tr>
-      <th>TIME</th>
-      <th>STATUS</th>
-      <th>SOURCE IP</th>
-      <th>REASON</th>
-      <th>EXECUTION</th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for attempt in attempts %}
-    <tr>
-      <td><span data-ts="{{ attempt.attempted_at }}">{{ attempt.attempted_at }}</span></td>
-      <td>
-        <span class="wf-tag
-          {%- if attempt.status == 'fired' %} ok
-          {%- elif attempt.status == 'auth_failed' or attempt.status == 'validation_failed' %} err
-          {%- elif attempt.status == 'rate_limited' %} warn
-          {%- elif attempt.status == 'filtered' or attempt.status == 'schedule_skipped' or attempt.status == 'cooldown_skipped' %} info
-          {%- endif %}">
-          <span class="dot"></span>{{ attempt.status | upper }}
-        </span>
-      </td>
-      <td><code>{{ attempt.source_ip }}</code></td>
-      <td>{{ attempt.reason if attempt.reason else '—' }}</td>
-      <td>
-        {% if attempt.execution_id %}
-          <a href="/executions/{{ attempt.execution_id }}"><code>{{ attempt.execution_id[:8] }}</code></a>
-        {% else %}
-          —
-        {% endif %}
-      </td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
+<div class="wf-tablescroll wf-grow">
+  <table class="wf-table sticky">
+    <thead>
+      <tr>
+        <th>TIME</th>
+        <th>STATUS</th>
+        <th>SOURCE IP</th>
+        <th>REASON</th>
+        <th>EXECUTION</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for attempt in attempts %}
+      <tr>
+        <td><span data-ts="{{ attempt.attempted_at }}">{{ attempt.attempted_at }}</span></td>
+        <td>
+          <span class="wf-tag
+            {%- if attempt.status == 'fired' %} ok
+            {%- elif attempt.status == 'auth_failed' or attempt.status == 'validation_failed' %} err
+            {%- elif attempt.status == 'rate_limited' %} warn
+            {%- elif attempt.status == 'filtered' or attempt.status == 'schedule_skipped' or attempt.status == 'cooldown_skipped' %} info
+            {%- endif %}">
+            <span class="dot"></span>{{ attempt.status | upper }}
+          </span>
+        </td>
+        <td><code>{{ attempt.source_ip }}</code></td>
+        <td>{{ attempt.reason if attempt.reason else '—' }}</td>
+        <td>
+          {% if attempt.execution_id %}
+            <a href="/executions/{{ attempt.execution_id }}"><code>{{ attempt.execution_id[:8] }}</code></a>
+          {% else %}
+            —
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+<div class="wf-tablefoot">
+  <span>{{ (page - 1) * 20 + 1 }}–{{ (page - 1) * 20 + attempts | length }} OF {{ total }}</span>
+  <span class="wf-grow"></span>
+  {% if total_pages > 1 %}
+  <div class="wf-pagination">
+    {% if page > 1 %}
+      <a hx-get="/hooks/{{ slug }}/attempts?page={{ page - 1 }}&status={{ active_status }}"
+         hx-target="#activity-tab-attempts" hx-swap="innerHTML">←</a>
+    {% else %}
+      <button disabled>←</button>
+    {% endif %}
+    <a class="is-active">{{ page }}</a>
+    {% if page < total_pages %}
+      <a hx-get="/hooks/{{ slug }}/attempts?page={{ page + 1 }}&status={{ active_status }}"
+         hx-target="#activity-tab-attempts" hx-swap="innerHTML">→</a>
+    {% else %}
+      <button disabled>→</button>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
 {% endif %}

@@ -4,11 +4,11 @@
 
 {% block crumbs %}
 <div class="wf-crumbs">
-  <a href="/">HOOKS</a>
+  <a href="/">HOOKS</a><span class="sep">/</span>
   {% if is_new %}
   <span aria-current="page">NEW</span>
   {% else %}
-  <a href="/hooks/{{ slug }}">{{ slug | upper }}</a>
+  <a href="/hooks/{{ slug }}">{{ slug | upper }}</a><span class="sep">/</span>
   <span aria-current="page">EDIT</span>
   {% endif %}
 </div>
