@@ -21,3 +21,4 @@ sendword.json
 /.claude/worktrees/
 docs/superpowers/
 /website/dist/
+/website/.eigen_cache/
