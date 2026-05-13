@@ -1,15 +1,15 @@
 use std::net::SocketAddr;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
+use axum::body::Body;
 use axum::Router;
-use axum::extract::{State, connect_info::IntoMakeServiceWithConnectInfo};
-use axum::http::StatusCode;
-use axum::response::{Html, IntoResponse};
+use axum::extract::{Path, State, connect_info::IntoMakeServiceWithConnectInfo};
+use axum::http::{HeaderValue, StatusCode, header};
+use axum::response::{Html, IntoResponse, Response};
+use axum::routing::get;
 use minijinja::context;
 use tokio::net::TcpListener;
-use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 
 use allowthem_core::{AllowThem, AuthClient};
@@ -67,16 +67,34 @@ impl AppState {
     }
 }
 
-pub fn static_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("static")
+#[derive(rust_embed::RustEmbed)]
+#[folder = "static"]
+struct StaticAssets;
+
+pub fn embedded_static_response(path: &str) -> Response {
+    let path = path.trim_start_matches('/');
+    let Some(file) = StaticAssets::get(path) else {
+        return (StatusCode::NOT_FOUND, "static asset not found").into_response();
+    };
+
+    let content_type = mime_guess::from_path(path).first_or_octet_stream();
+    let mut response = Body::from(file.data.into_owned()).into_response();
+    let header_value =
+        HeaderValue::from_str(content_type.as_ref()).unwrap_or(HeaderValue::from_static(
+            "application/octet-stream",
+        ));
+    response.headers_mut().insert(header::CONTENT_TYPE, header_value);
+    response
+}
+
+async fn static_asset(Path(path): Path<String>) -> Response {
+    embedded_static_response(&path)
 }
 
 pub fn router(state: Arc<AppState>, auth_router: Router) -> Router {
-    let static_dir = ServeDir::new(static_dir());
-
     Router::new()
         .merge(crate::routes::router())
-        .nest_service("/static", static_dir)
+        .route("/static/{*path}", get(static_asset))
         .fallback(fallback_404)
         .with_state(state)
         .merge(auth_router)
@@ -145,16 +163,27 @@ async fn shutdown_signal() {
 
 #[cfg(test)]
 mod tests {
-    use super::static_dir;
+    use super::embedded_static_response;
+    use axum::http::{StatusCode, header};
 
     #[test]
-    fn static_dir_points_to_packaged_static_assets() {
-        let dir = static_dir();
+    fn embedded_static_response_serves_css_asset() {
+        let response = embedded_static_response("css/wavefunk.css");
 
-        assert!(dir.ends_with("static"));
-        assert!(
-            dir.join("css").exists(),
-            "static css directory must be included in the crate package"
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok()),
+            Some("text/css")
         );
+    }
+
+    #[test]
+    fn embedded_static_response_404s_missing_asset() {
+        let response = embedded_static_response("missing.css");
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 }
