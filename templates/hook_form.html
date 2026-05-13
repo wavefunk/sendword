@@ -93,8 +93,19 @@
     <div class="wf-panel-head"><span class="wf-panel-title">EXECUTOR</span></div>
     <div class="wf-panel-body">
       <div class="wf-field" style="margin-bottom: 16px;">
-        <label class="wf-label" for="command">Shell command</label>
+        <label class="wf-label" for="executor_type">Executor type</label>
+        <select id="executor_type" name="executor_type" class="wf-select" onchange="updateExecutorField()">
+          <option value="shell" {% if form_executor_type == "shell" %}selected{% endif %}>Shell command</option>
+          <option value="script" {% if form_executor_type == "script" %}selected{% endif %}>Executable script</option>
+          <option value="javascript" {% if form_executor_type == "javascript" %}selected{% endif %}>JavaScript script</option>
+          <option value="python" {% if form_executor_type == "python" %}selected{% endif %}>Python script</option>
+        </select>
+        <span class="wf-field-hint">Choose how sendword should run this hook.</span>
+      </div>
+      <div class="wf-field" style="margin-bottom: 16px;">
+        <label class="wf-label" id="command_label" for="command">Shell command</label>
         <input type="text" id="command" name="command" value="{{ form_command }}" required placeholder="make deploy" class="wf-input">
+        <span class="wf-field-hint" id="command_hint">Shell commands may use payload interpolation like {{ "{{ action }}" }}.</span>
       </div>
       <div class="wf-field" style="margin-bottom: 16px;">
         <label class="wf-label" for="cwd">Working directory</label>
@@ -200,6 +211,41 @@ function toggleAuthFields() {
   document.getElementById('bearer-fields').style.display = mode === 'bearer' ? '' : 'none';
   document.getElementById('hmac-fields').style.display = mode === 'hmac' ? '' : 'none';
 }
-document.addEventListener('DOMContentLoaded', toggleAuthFields);
+function updateExecutorField() {
+  var type = document.getElementById('executor_type').value;
+  var command = document.getElementById('command');
+  var label = document.getElementById('command_label');
+  var hint = document.getElementById('command_hint');
+  var copy = {
+    shell: {
+      label: 'Shell command',
+      placeholder: 'make deploy',
+      hint: 'Shell commands may use payload interpolation like {{ "{{ action }}" }}.'
+    },
+    script: {
+      label: 'Script path',
+      placeholder: 'data/scripts/deploy.sh',
+      hint: 'Executable scripts are run directly and need a shebang plus executable permissions.'
+    },
+    javascript: {
+      label: 'JavaScript path',
+      placeholder: 'data/scripts/deploy.js',
+      hint: 'JavaScript scripts run with node and can read payload fields from process.env.'
+    },
+    python: {
+      label: 'Python path',
+      placeholder: 'data/scripts/deploy.py',
+      hint: 'Python scripts run with python3, then python, and can read payload fields from os.environ.'
+    }
+  };
+  var selected = copy[type] || copy.shell;
+  label.textContent = selected.label;
+  command.placeholder = selected.placeholder;
+  hint.textContent = selected.hint;
+}
+document.addEventListener('DOMContentLoaded', function() {
+  toggleAuthFields();
+  updateExecutorField();
+});
 </script>
 {% endblock %}

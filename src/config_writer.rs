@@ -11,8 +11,8 @@ use std::time::Duration;
 use toml_edit::{Array, DocumentMut, Formatted, InlineTable, Item, Table, Value};
 
 use crate::config::{
-    AppConfig, BackoffStrategy, ConfigError, FilterOperator, HmacAlgorithm, HookAuthConfig,
-    TriggerRules,
+    AppConfig, BackoffStrategy, ConfigError, ExecutorConfig, FilterOperator, HmacAlgorithm,
+    HookAuthConfig, TriggerRules,
 };
 use crate::payload::{FieldType, PayloadSchema};
 
@@ -49,7 +49,7 @@ pub struct HookFormData {
     pub slug: String,
     pub description: String,
     pub enabled: bool,
-    pub command: String,
+    pub executor: ExecutorConfig,
     pub cwd: Option<String>,
     pub env: HashMap<String, String>,
     pub timeout: Option<Duration>,
@@ -225,11 +225,7 @@ fn apply_hook_fields(table: &mut Table, data: &HookFormData) {
     table.insert("description", toml_string(&data.description));
     table.insert("enabled", toml_bool(data.enabled));
 
-    // executor sub-table
-    let mut executor = Table::new();
-    executor.insert("type", toml_string("shell"));
-    executor.insert("command", toml_string(&data.command));
-    table.insert("executor", Item::Table(executor));
+    table.insert("executor", Item::Table(executor_table(&data.executor)));
 
     // cwd — set or remove
     match &data.cwd {
@@ -402,6 +398,57 @@ fn toml_string(s: &str) -> Item {
     Item::Value(Value::String(Formatted::new(s.to_owned())))
 }
 
+fn executor_table(executor: &ExecutorConfig) -> Table {
+    let mut table = Table::new();
+    match executor {
+        ExecutorConfig::Shell { command } => {
+            table.insert("type", toml_string("shell"));
+            table.insert("command", toml_string(command));
+        }
+        ExecutorConfig::Script { path } => {
+            table.insert("type", toml_string("script"));
+            table.insert("path", toml_string(path));
+        }
+        ExecutorConfig::JavaScript { path } => {
+            table.insert("type", toml_string("javascript"));
+            table.insert("path", toml_string(path));
+        }
+        ExecutorConfig::Python { path } => {
+            table.insert("type", toml_string("python"));
+            table.insert("path", toml_string(path));
+        }
+        ExecutorConfig::Http {
+            method,
+            url,
+            headers,
+            body,
+            follow_redirects,
+        } => {
+            table.insert("type", toml_string("http"));
+            table.insert("method", toml_string(&format!("{method:?}").to_uppercase()));
+            table.insert("url", toml_string(url));
+            if !headers.is_empty() {
+                table.insert("headers", Item::Table(string_map_table(headers)));
+            }
+            if let Some(body) = body {
+                table.insert("body", toml_string(body));
+            }
+            table.insert("follow_redirects", toml_bool(*follow_redirects));
+        }
+    }
+    table
+}
+
+fn string_map_table(values: &HashMap<String, String>) -> Table {
+    let mut table = Table::new();
+    let mut keys: Vec<&String> = values.keys().collect();
+    keys.sort();
+    for key in keys {
+        table.insert(key, toml_string(&values[key]));
+    }
+    table
+}
+
 fn toml_bool(b: bool) -> Item {
     Item::Value(Value::Boolean(Formatted::new(b)))
 }
@@ -509,7 +556,9 @@ mod tests {
             slug: "test-hook".into(),
             description: String::new(),
             enabled: true,
-            command: "echo hello".into(),
+            executor: ExecutorConfig::Shell {
+                command: "echo hello".into(),
+            },
             cwd: None,
             env: HashMap::new(),
             timeout: None,
@@ -595,7 +644,9 @@ command = "echo old"
             slug: "my-hook".into(),
             description: "new desc".into(),
             enabled: false,
-            command: "echo new".into(),
+            executor: ExecutorConfig::Shell {
+                command: "echo new".into(),
+            },
             cwd: Some("/tmp".into()),
             env: HashMap::from([("KEY".into(), "val".into())]),
             timeout: Some(Duration::from_secs(60)),
@@ -714,6 +765,40 @@ command = "echo only"
     }
 
     #[test]
+    fn add_hook_writes_javascript_executor_table() {
+        let (_dir, writer) = tmp_config("[server]\nport = 8080\n");
+
+        let mut data = minimal_hook();
+        data.executor = ExecutorConfig::JavaScript {
+            path: "data/scripts/deploy.js".into(),
+        };
+
+        writer.add_hook(&data).expect("add hook");
+
+        let content = read_config(&writer);
+        assert!(content.contains(r#"type = "javascript""#));
+        assert!(content.contains(r#"path = "data/scripts/deploy.js""#));
+        assert!(!content.contains("command = "));
+    }
+
+    #[test]
+    fn add_hook_writes_python_executor_table() {
+        let (_dir, writer) = tmp_config("[server]\nport = 8080\n");
+
+        let mut data = minimal_hook();
+        data.executor = ExecutorConfig::Python {
+            path: "data/scripts/deploy.py".into(),
+        };
+
+        writer.add_hook(&data).expect("add hook");
+
+        let content = read_config(&writer);
+        assert!(content.contains(r#"type = "python""#));
+        assert!(content.contains(r#"path = "data/scripts/deploy.py""#));
+        assert!(!content.contains("command = "));
+    }
+
+    #[test]
     fn format_duration_produces_human_readable() {
         assert_eq!(format_duration(Duration::from_millis(500)), "500ms");
         assert_eq!(format_duration(Duration::from_secs(30)), "30s");
@@ -730,7 +815,9 @@ command = "echo only"
 
         let mut data = minimal_hook();
         data.name = String::new(); // invalid: empty name
-        data.command = "echo ok".into();
+        data.executor = ExecutorConfig::Shell {
+            command: "echo ok".into(),
+        };
 
         let err = writer.add_hook(&data).expect_err("should fail");
         assert!(matches!(err, WriteError::Validation(_)));
