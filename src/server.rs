@@ -1,4 +1,5 @@
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
@@ -66,8 +67,12 @@ impl AppState {
     }
 }
 
+pub fn static_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("static")
+}
+
 pub fn router(state: Arc<AppState>, auth_router: Router) -> Router {
-    let static_dir = ServeDir::new("static");
+    let static_dir = ServeDir::new(static_dir());
 
     Router::new()
         .merge(crate::routes::router())
@@ -135,5 +140,21 @@ async fn shutdown_signal() {
     tokio::select! {
         _ = ctrl_c => tracing::info!("received SIGINT"),
         _ = terminate => tracing::info!("received SIGTERM"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::static_dir;
+
+    #[test]
+    fn static_dir_points_to_packaged_static_assets() {
+        let dir = static_dir();
+
+        assert!(dir.ends_with("static"));
+        assert!(
+            dir.join("css").exists(),
+            "static css directory must be included in the crate package"
+        );
     }
 }

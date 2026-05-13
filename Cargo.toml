@@ -4,6 +4,25 @@ version = "0.0.2"
 authors = ["wavefunk"]
 description = "Simple HTTP webhook to command runner sidecar. Frontend for managing hooks, JSON state for config portability, SQLite for execution history and logs."
 edition = "2024"
+license = "MIT"
+homepage = "https://sendword.online"
+repository = "https://github.com/wavefunk/sendword"
+readme = "README.md"
+keywords = ["webhook", "automation", "sidecar", "http", "cli"]
+categories = ["command-line-utilities", "web-programming::http-server"]
+include = [
+    "src/**",
+    "templates/**",
+    "static/**",
+    "migrations/**",
+    "Cargo.toml",
+    "Cargo.lock",
+    "build.rs",
+    "README.md",
+    "LICENSE",
+    "sendword.toml",
+    "sqlx.toml",
+]
 
 [[bin]]
 name = "sendword"
