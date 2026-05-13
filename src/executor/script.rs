@@ -221,12 +221,16 @@ fn interpreter_script_arg(path: &Path) -> PathBuf {
         return path.to_path_buf();
     }
 
-    match path.canonicalize() {
-        Ok(path) => path,
-        Err(_) => std::env::current_dir()
-            .map(|cwd| cwd.join(path))
-            .unwrap_or_else(|_| path.to_path_buf()),
+    if path.exists() {
+        return match path.canonicalize() {
+            Ok(path) => path,
+            Err(_) => std::env::current_dir()
+                .map(|cwd| cwd.join(path))
+                .unwrap_or_else(|_| path.to_path_buf()),
+        };
     }
+
+    path.to_path_buf()
 }
 
 fn spawn_error_message(
@@ -626,6 +630,39 @@ mod tests {
         assert_eq!(result.status, ExecutionStatus::Success);
         let stdout = read_log(logs_dir, &exec_id, "stdout.log").await;
         assert_eq!(stdout.trim(), "relative-script-ok");
+    }
+
+    #[tokio::test]
+    async fn python_runtime_allows_relative_script_path_resolved_inside_cwd() {
+        let tmp = tempfile::TempDir::new().expect("temp dir");
+        let logs_dir = tmp.path().to_str().expect("utf-8 path");
+        let pool = test_pool().await;
+        let bin = tempfile::TempDir::new().expect("bin dir");
+        let script_cwd = tempfile::TempDir::new().expect("script cwd");
+
+        write_executable_in(bin.path(), "python3", "#!/bin/sh\nexec /bin/sh \"$@\"\n");
+        std::fs::write(
+            script_cwd.path().join("deploy.py"),
+            "echo cwd-relative-script-ok\n",
+        )
+        .expect("write script");
+
+        let (mut ctx, exec_id) = setup_execution(&pool, logs_dir).await;
+        ctx.env
+            .insert("PATH".into(), bin.path().display().to_string());
+        ctx.cwd = Some(script_cwd.path().display().to_string());
+
+        let result = run_script(
+            &pool,
+            &ctx,
+            std::path::Path::new("deploy.py"),
+            ScriptRuntime::Python,
+        )
+        .await;
+
+        assert_eq!(result.status, ExecutionStatus::Success);
+        let stdout = read_log(logs_dir, &exec_id, "stdout.log").await;
+        assert_eq!(stdout.trim(), "cwd-relative-script-ok");
     }
 
     #[tokio::test]
