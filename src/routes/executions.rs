@@ -13,11 +13,9 @@ use futures_core::Stream;
 use serde::Serialize;
 
 use crate::barriers::{self, execution_lock, execution_queue};
-use crate::config::ExecutorConfig;
 use crate::error::{AppError, DbError};
-use crate::executor::ResolvedExecutor;
+use crate::executor::resolve_executor;
 use crate::extractors::AuthUser;
-use crate::interpolation::interpolate_command;
 use crate::masking::mask_secrets;
 use crate::models::execution;
 use crate::retry;
@@ -169,44 +167,7 @@ async fn replay_execution(
 
     // 3. Prepare execution parameters from hook config
     let timeout = hook.timeout.unwrap_or(config.defaults.timeout);
-    let resolved_executor = match &hook.executor {
-        ExecutorConfig::Shell { command } => {
-            let interpolated = if let Ok(payload_value) =
-                serde_json::from_str::<serde_json::Value>(&original.request_payload)
-            {
-                interpolate_command(command, &payload_value).into_owned()
-            } else {
-                command.clone()
-            };
-            ResolvedExecutor::Shell {
-                command: interpolated,
-            }
-        }
-        ExecutorConfig::Script { path } => ResolvedExecutor::Script {
-            path: std::path::PathBuf::from(path),
-        },
-        ExecutorConfig::Http {
-            method,
-            url,
-            headers,
-            body,
-            follow_redirects,
-        } => {
-            let payload_value: serde_json::Value = serde_json::from_str(&original.request_payload)
-                .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
-            let interpolated_url = interpolate_command(url, &payload_value).into_owned();
-            let interpolated_body = body
-                .as_deref()
-                .map(|b| interpolate_command(b, &payload_value).into_owned());
-            ResolvedExecutor::Http {
-                method: *method,
-                url: interpolated_url,
-                headers: headers.clone(),
-                body: interpolated_body,
-                follow_redirects: *follow_redirects,
-            }
-        }
-    };
+    let resolved_executor = resolve_executor(&hook.executor, &original.request_payload);
 
     let env = hook.env.clone();
     let cwd = hook.cwd.clone();
@@ -298,44 +259,7 @@ async fn approve_execution(
 
     if let Some(hook) = hook {
         let timeout = hook.timeout.unwrap_or(config.defaults.timeout);
-        let resolved_executor = match &hook.executor {
-            ExecutorConfig::Shell { command } => {
-                let interpolated = if let Ok(payload_value) =
-                    serde_json::from_str::<serde_json::Value>(&exec.request_payload)
-                {
-                    interpolate_command(command, &payload_value).into_owned()
-                } else {
-                    command.clone()
-                };
-                ResolvedExecutor::Shell {
-                    command: interpolated,
-                }
-            }
-            ExecutorConfig::Script { path } => ResolvedExecutor::Script {
-                path: std::path::PathBuf::from(path),
-            },
-            ExecutorConfig::Http {
-                method,
-                url,
-                headers,
-                body,
-                follow_redirects,
-            } => {
-                let payload_value: serde_json::Value = serde_json::from_str(&exec.request_payload)
-                    .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
-                let interpolated_url = interpolate_command(url, &payload_value).into_owned();
-                let interpolated_body = body
-                    .as_deref()
-                    .map(|b| interpolate_command(b, &payload_value).into_owned());
-                ResolvedExecutor::Http {
-                    method: *method,
-                    url: interpolated_url,
-                    headers: headers.clone(),
-                    body: interpolated_body,
-                    follow_redirects: *follow_redirects,
-                }
-            }
-        };
+        let resolved_executor = resolve_executor(&hook.executor, &exec.request_payload);
 
         let env = hook.env.clone();
         let cwd = hook.cwd.clone();

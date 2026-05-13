@@ -1,3 +1,4 @@
+use std::io::ErrorKind;
 use std::path::Path;
 use std::process::Stdio;
 
@@ -7,7 +8,7 @@ use tokio::io::AsyncWriteExt;
 use crate::models::ExecutionStatus;
 use crate::models::execution;
 
-use super::{ExecutionContext, ExecutionResult, prepare_log_files, system_env_vars};
+use super::{ExecutionContext, ExecutionResult, ScriptRuntime, prepare_log_files, system_env_vars};
 
 /// Run a script file directly (not via `sh -c`).
 ///
@@ -15,7 +16,12 @@ use super::{ExecutionContext, ExecutionResult, prepare_log_files, system_env_var
 /// exposed as `SENDWORD_FIELD_<UPPERCASED_PATH>=value` env vars. All other
 /// env var behavior (system vars, hook env, SENDWORD_* vars, timeout,
 /// stdout/stderr capture) matches the shell executor.
-pub async fn run_script(pool: &SqlitePool, ctx: &ExecutionContext, path: &Path) -> ExecutionResult {
+pub async fn run_script(
+    pool: &SqlitePool,
+    ctx: &ExecutionContext,
+    path: &Path,
+    runtime: ScriptRuntime,
+) -> ExecutionResult {
     let log_dir_str = format!("{}/{}", ctx.logs_dir, ctx.execution_id);
 
     // 1. Prepare log files
@@ -50,39 +56,11 @@ pub async fn run_script(pool: &SqlitePool, ctx: &ExecutionContext, path: &Path) 
         };
     }
 
-    // 3. Build the command -- execute the script directly, not via sh -c
-    let mut cmd = tokio::process::Command::new(path);
-    cmd.env_clear();
-
-    // System env vars first, then hook env vars (hook overrides system)
-    let sys_env = system_env_vars();
-    cmd.envs(&sys_env);
-    cmd.envs(&ctx.env);
-    cmd.env("SENDWORD_EXECUTION_ID", &ctx.execution_id);
-    cmd.env("SENDWORD_HOOK_SLUG", &ctx.hook_slug);
-    cmd.env("SENDWORD_PAYLOAD", &ctx.payload_json);
-
-    // Set payload fields as SENDWORD_FIELD_<UPPERCASED_PATH>=value
-    if let Ok(payload_value) = serde_json::from_str::<serde_json::Value>(&ctx.payload_json) {
-        for (key, value) in flatten_json_fields(&payload_value) {
-            let env_key = format!("SENDWORD_FIELD_{}", key.to_uppercase().replace('.', "_"));
-            cmd.env(env_key, value);
-        }
-    }
-
-    if let Some(cwd) = &ctx.cwd {
-        cmd.current_dir(cwd);
-    }
-
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::piped());
-
-    // 4. Spawn the child
-    let mut child = match cmd.spawn() {
+    // 3. Build and spawn the command.
+    let mut child = match spawn_script(ctx, path, runtime) {
         Ok(child) => child,
-        Err(e) => {
-            let msg = format!("failed to spawn script: {e}\n");
-            let _ = stderr_file.write_all(msg.as_bytes()).await;
+        Err(SpawnScriptError::Spawn { message }) => {
+            let _ = stderr_file.write_all(message.as_bytes()).await;
             let _ =
                 execution::mark_completed(pool, &ctx.execution_id, ExecutionStatus::Failed, None)
                     .await;
@@ -171,6 +149,118 @@ pub async fn run_script(pool: &SqlitePool, ctx: &ExecutionContext, path: &Path) 
         exit_code,
         log_dir: log_dir_display,
     }
+}
+
+fn runtime_candidates(runtime: ScriptRuntime) -> &'static [&'static str] {
+    match runtime {
+        ScriptRuntime::Direct => &[],
+        ScriptRuntime::JavaScript => &["node"],
+        ScriptRuntime::Python => &["python3", "python"],
+    }
+}
+
+fn runtime_label(runtime: ScriptRuntime) -> &'static str {
+    match runtime {
+        ScriptRuntime::Direct => "script",
+        ScriptRuntime::JavaScript => "javascript",
+        ScriptRuntime::Python => "python",
+    }
+}
+
+enum SpawnScriptError {
+    Spawn { message: String },
+}
+
+fn spawn_script(
+    ctx: &ExecutionContext,
+    path: &Path,
+    runtime: ScriptRuntime,
+) -> Result<tokio::process::Child, SpawnScriptError> {
+    if runtime == ScriptRuntime::Direct {
+        let mut cmd = tokio::process::Command::new(path);
+        prepare_command(&mut cmd, ctx);
+        return cmd.spawn().map_err(|e| SpawnScriptError::Spawn {
+            message: format!("failed to spawn script: {e}\n"),
+        });
+    }
+
+    let candidates = runtime_candidates(runtime);
+    let cwd_exists = match &ctx.cwd {
+        Some(cwd) => Path::new(cwd).exists(),
+        None => true,
+    };
+
+    for candidate in candidates {
+        let mut cmd = tokio::process::Command::new(candidate);
+        cmd.arg(path);
+        prepare_command(&mut cmd, ctx);
+
+        match cmd.spawn() {
+            Ok(child) => return Ok(child),
+            Err(e) if e.kind() == ErrorKind::NotFound && cwd_exists => {}
+            Err(e) => {
+                return Err(SpawnScriptError::Spawn {
+                    message: spawn_error_message(runtime, &e, ctx.cwd.as_deref()),
+                });
+            }
+        }
+    }
+
+    Err(SpawnScriptError::Spawn {
+        message: format!(
+            "failed to spawn {} runtime; tried: {}\n",
+            runtime_label(runtime),
+            candidates.join(", ")
+        ),
+    })
+}
+
+fn spawn_error_message(
+    runtime: ScriptRuntime,
+    error: &std::io::Error,
+    cwd: Option<&str>,
+) -> String {
+    if let Some(cwd) = cwd
+        && !Path::new(cwd).exists()
+    {
+        return format!(
+            "failed to spawn {} runtime in cwd '{}': {error}\n",
+            runtime_label(runtime),
+            cwd
+        );
+    }
+
+    format!(
+        "failed to spawn {} runtime: {error}\n",
+        runtime_label(runtime)
+    )
+}
+
+fn prepare_command(cmd: &mut tokio::process::Command, ctx: &ExecutionContext) {
+    cmd.env_clear();
+
+    // System env vars first, then hook env vars (hook overrides system).
+    let sys_env = system_env_vars();
+    cmd.envs(&sys_env);
+    cmd.envs(&ctx.env);
+    cmd.env("SENDWORD_EXECUTION_ID", &ctx.execution_id);
+    cmd.env("SENDWORD_HOOK_SLUG", &ctx.hook_slug);
+    cmd.env("SENDWORD_PAYLOAD", &ctx.payload_json);
+
+    // Set payload fields as SENDWORD_FIELD_<UPPERCASED_PATH>=value.
+    if let Ok(payload_value) = serde_json::from_str::<serde_json::Value>(&ctx.payload_json) {
+        for (key, value) in flatten_json_fields(&payload_value) {
+            let env_key = format!("SENDWORD_FIELD_{}", key.to_uppercase().replace('.', "_"));
+            cmd.env(env_key, value);
+        }
+    }
+
+    if let Some(cwd) = &ctx.cwd {
+        cmd.current_dir(cwd);
+    }
+
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
 }
 
 /// Flatten a JSON value into key=value pairs for environment variables.
@@ -268,6 +358,7 @@ mod tests {
             hook_slug: "test-hook".into(),
             executor: crate::executor::ResolvedExecutor::Script {
                 path: std::path::PathBuf::from("/tmp/dummy"), // placeholder
+                runtime: ScriptRuntime::Direct,
             },
             env: HashMap::new(),
             cwd: None,
@@ -295,6 +386,15 @@ mod tests {
         (temp_path, path)
     }
 
+    fn write_executable_in(dir: &std::path::Path, name: &str, content: &str) -> std::path::PathBuf {
+        let path = dir.join(name);
+        std::fs::write(&path, content).expect("write executable");
+        let mut perms = std::fs::metadata(&path).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&path, perms).expect("set permissions");
+        path
+    }
+
     async fn read_log(logs_dir: &str, exec_id: &str, file: &str) -> String {
         let path = std::path::Path::new(logs_dir).join(exec_id).join(file);
         tokio::fs::read_to_string(path).await.unwrap_or_default()
@@ -311,9 +411,10 @@ mod tests {
         let (mut ctx, exec_id) = setup_execution(&pool, logs_dir).await;
         ctx.executor = crate::executor::ResolvedExecutor::Script {
             path: script_path.clone(),
+            runtime: ScriptRuntime::Direct,
         };
 
-        let result = run_script(&pool, &ctx, &script_path).await;
+        let result = run_script(&pool, &ctx, &script_path, ScriptRuntime::Direct).await;
 
         assert_eq!(result.status, ExecutionStatus::Success);
         assert_eq!(result.exit_code, Some(0));
@@ -335,10 +436,11 @@ mod tests {
         let (mut ctx, exec_id) = setup_execution(&pool, logs_dir).await;
         ctx.executor = crate::executor::ResolvedExecutor::Script {
             path: script_path.clone(),
+            runtime: ScriptRuntime::Direct,
         };
         ctx.payload_json = r#"{"action":"deploy"}"#.into();
 
-        let result = run_script(&pool, &ctx, &script_path).await;
+        let result = run_script(&pool, &ctx, &script_path, ScriptRuntime::Direct).await;
 
         assert_eq!(result.status, ExecutionStatus::Success);
         let stdout = read_log(logs_dir, &exec_id, "stdout.log").await;
@@ -357,9 +459,10 @@ mod tests {
         let (mut ctx, _exec_id) = setup_execution(&pool, logs_dir).await;
         ctx.executor = crate::executor::ResolvedExecutor::Script {
             path: nonexistent.to_path_buf(),
+            runtime: ScriptRuntime::Direct,
         };
 
-        let result = run_script(&pool, &ctx, nonexistent).await;
+        let result = run_script(&pool, &ctx, nonexistent, ScriptRuntime::Direct).await;
 
         assert_eq!(result.status, ExecutionStatus::Failed);
         assert!(result.exit_code.is_none());
@@ -376,11 +479,12 @@ mod tests {
         let (mut ctx, _exec_id) = setup_execution(&pool, logs_dir).await;
         ctx.executor = crate::executor::ResolvedExecutor::Script {
             path: script_path.clone(),
+            runtime: ScriptRuntime::Direct,
         };
         ctx.timeout = Duration::from_secs(1);
 
         let start = std::time::Instant::now();
-        let result = run_script(&pool, &ctx, &script_path).await;
+        let result = run_script(&pool, &ctx, &script_path, ScriptRuntime::Direct).await;
         let elapsed = start.elapsed();
 
         assert_eq!(result.status, ExecutionStatus::TimedOut);
@@ -401,15 +505,159 @@ mod tests {
         let (mut ctx, exec_id) = setup_execution(&pool, logs_dir).await;
         ctx.executor = crate::executor::ResolvedExecutor::Script {
             path: script_path.clone(),
+            runtime: ScriptRuntime::Direct,
         };
 
-        let result = run_script(&pool, &ctx, &script_path).await;
+        let result = run_script(&pool, &ctx, &script_path, ScriptRuntime::Direct).await;
 
         assert_eq!(result.status, ExecutionStatus::Failed);
         assert_eq!(result.exit_code, Some(42));
 
         let exec = execution::get_by_id(&pool, &exec_id).await.expect("get");
         assert_eq!(exec.exit_code, Some(42));
+
+        drop(script_file);
+    }
+
+    #[tokio::test]
+    async fn javascript_runtime_passes_hook_and_sendword_env_vars() {
+        let tmp = tempfile::TempDir::new().expect("temp dir");
+        let logs_dir = tmp.path().to_str().expect("utf-8 path");
+        let pool = test_pool().await;
+        let bin = tempfile::TempDir::new().expect("bin dir");
+
+        write_executable_in(bin.path(), "node", "#!/bin/sh\nexec \"$@\"\n");
+        let (script_file, script_path) = write_script(
+            "#!/bin/sh\nprintf '%s|%s|%s|%s\\n' \"$CUSTOM_ENV\" \"$SENDWORD_EXECUTION_ID\" \"$SENDWORD_PAYLOAD\" \"$SENDWORD_FIELD_ACTION\"\n",
+        );
+
+        let (mut ctx, exec_id) = setup_execution(&pool, logs_dir).await;
+        ctx.env
+            .insert("PATH".into(), bin.path().display().to_string());
+        ctx.env.insert("CUSTOM_ENV".into(), "from-hook".into());
+        ctx.payload_json = r#"{"action":"deploy"}"#.into();
+
+        let result = run_script(&pool, &ctx, &script_path, ScriptRuntime::JavaScript).await;
+
+        assert_eq!(result.status, ExecutionStatus::Success);
+        let stdout = read_log(logs_dir, &exec_id, "stdout.log").await;
+        assert_eq!(
+            stdout.trim(),
+            format!("from-hook|{exec_id}|{{\"action\":\"deploy\"}}|deploy")
+        );
+
+        drop(script_file);
+    }
+
+    #[tokio::test]
+    async fn python_runtime_passes_hook_and_sendword_env_vars() {
+        let tmp = tempfile::TempDir::new().expect("temp dir");
+        let logs_dir = tmp.path().to_str().expect("utf-8 path");
+        let pool = test_pool().await;
+        let bin = tempfile::TempDir::new().expect("bin dir");
+
+        write_executable_in(bin.path(), "python3", "#!/bin/sh\nexec \"$@\"\n");
+        let (script_file, script_path) = write_script(
+            "#!/bin/sh\nprintf '%s|%s|%s|%s\\n' \"$CUSTOM_ENV\" \"$SENDWORD_EXECUTION_ID\" \"$SENDWORD_PAYLOAD\" \"$SENDWORD_FIELD_ACTION\"\n",
+        );
+
+        let (mut ctx, exec_id) = setup_execution(&pool, logs_dir).await;
+        ctx.env
+            .insert("PATH".into(), bin.path().display().to_string());
+        ctx.env.insert("CUSTOM_ENV".into(), "from-hook".into());
+        ctx.payload_json = r#"{"action":"deploy"}"#.into();
+
+        let result = run_script(&pool, &ctx, &script_path, ScriptRuntime::Python).await;
+
+        assert_eq!(result.status, ExecutionStatus::Success);
+        let stdout = read_log(logs_dir, &exec_id, "stdout.log").await;
+        assert_eq!(
+            stdout.trim(),
+            format!("from-hook|{exec_id}|{{\"action\":\"deploy\"}}|deploy")
+        );
+
+        drop(script_file);
+    }
+
+    #[tokio::test]
+    async fn python_runtime_falls_back_to_python_when_python3_missing() {
+        let tmp = tempfile::TempDir::new().expect("temp dir");
+        let logs_dir = tmp.path().to_str().expect("utf-8 path");
+        let pool = test_pool().await;
+        let bin = tempfile::TempDir::new().expect("bin dir");
+
+        write_executable_in(bin.path(), "python", "#!/bin/sh\nexec \"$@\"\n");
+        let (script_file, script_path) = write_script("#!/bin/sh\necho fallback-python\n");
+
+        let (mut ctx, exec_id) = setup_execution(&pool, logs_dir).await;
+        ctx.env
+            .insert("PATH".into(), bin.path().display().to_string());
+
+        let result = run_script(&pool, &ctx, &script_path, ScriptRuntime::Python).await;
+
+        assert_eq!(result.status, ExecutionStatus::Success);
+        let stdout = read_log(logs_dir, &exec_id, "stdout.log").await;
+        assert_eq!(stdout.trim(), "fallback-python");
+
+        drop(script_file);
+    }
+
+    #[tokio::test]
+    async fn python_runtime_invalid_cwd_does_not_try_fallback() {
+        let tmp = tempfile::TempDir::new().expect("temp dir");
+        let logs_dir = tmp.path().to_str().expect("utf-8 path");
+        let pool = test_pool().await;
+        let bin = tempfile::TempDir::new().expect("bin dir");
+        let fallback_marker = tmp.path().join("fallback-invoked");
+
+        write_executable_in(bin.path(), "python3", "#!/bin/sh\nexec \"$@\"\n");
+        write_executable_in(
+            bin.path(),
+            "python",
+            &format!(
+                "#!/bin/sh\ntouch '{}'\nexec \"$@\"\n",
+                fallback_marker.display()
+            ),
+        );
+        let (script_file, script_path) = write_script("#!/bin/sh\necho should-not-run\n");
+
+        let (mut ctx, exec_id) = setup_execution(&pool, logs_dir).await;
+        ctx.env
+            .insert("PATH".into(), bin.path().display().to_string());
+        let missing_cwd = tmp.path().join("missing-cwd");
+        ctx.cwd = Some(missing_cwd.display().to_string());
+
+        let result = run_script(&pool, &ctx, &script_path, ScriptRuntime::Python).await;
+
+        assert_eq!(result.status, ExecutionStatus::Failed);
+        assert!(result.exit_code.is_none());
+        assert!(!fallback_marker.exists(), "python fallback should not run");
+        let stderr = read_log(logs_dir, &exec_id, "stderr.log").await;
+        assert!(stderr.contains("failed to spawn python runtime"));
+        assert!(stderr.contains("cwd"));
+        assert!(!stderr.contains("tried: python3, python"));
+
+        drop(script_file);
+    }
+
+    #[tokio::test]
+    async fn python_runtime_missing_all_candidates_fails() {
+        let tmp = tempfile::TempDir::new().expect("temp dir");
+        let logs_dir = tmp.path().to_str().expect("utf-8 path");
+        let pool = test_pool().await;
+        let bin = tempfile::TempDir::new().expect("empty bin dir");
+        let (script_file, script_path) = write_script("#!/bin/sh\necho should-not-run\n");
+
+        let (mut ctx, exec_id) = setup_execution(&pool, logs_dir).await;
+        ctx.env
+            .insert("PATH".into(), bin.path().display().to_string());
+
+        let result = run_script(&pool, &ctx, &script_path, ScriptRuntime::Python).await;
+
+        assert_eq!(result.status, ExecutionStatus::Failed);
+        assert!(result.exit_code.is_none());
+        let stderr = read_log(logs_dir, &exec_id, "stderr.log").await;
+        assert!(stderr.contains("failed to spawn python runtime; tried: python3, python"));
 
         drop(script_file);
     }

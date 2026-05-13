@@ -18,9 +18,8 @@ use crate::config::{
 };
 use crate::config_writer::{self, HookFormData, RetryFormData, WriteError};
 use crate::error::AppError;
-use crate::executor::ResolvedExecutor;
+use crate::executor::resolve_executor;
 use crate::extractors::AuthUser;
-use crate::interpolation::interpolate_command;
 use crate::models::trigger_attempt::{NewTriggerAttempt, TriggerAttemptStatus};
 use crate::models::{ExecutionStatus, execution, trigger_attempt};
 use crate::payload::{FieldType, PayloadField, PayloadSchema};
@@ -211,45 +210,7 @@ async fn trigger_hook(
 
     let timeout = hook.timeout.unwrap_or(config.defaults.timeout);
 
-    let resolved_executor = match &hook.executor {
-        ExecutorConfig::Shell { command } => {
-            // Interpolate payload fields into command template
-            let interpolated = if let Ok(payload_value) =
-                serde_json::from_str::<serde_json::Value>(&payload_str)
-            {
-                interpolate_command(command, &payload_value).into_owned()
-            } else {
-                command.clone()
-            };
-            ResolvedExecutor::Shell {
-                command: interpolated,
-            }
-        }
-        ExecutorConfig::Script { path } => ResolvedExecutor::Script {
-            path: std::path::PathBuf::from(path),
-        },
-        ExecutorConfig::Http {
-            method,
-            url,
-            headers,
-            body,
-            follow_redirects,
-        } => {
-            let payload_value: serde_json::Value = serde_json::from_str(&payload_str)
-                .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
-            let interpolated_url = interpolate_command(url, &payload_value).into_owned();
-            let interpolated_body = body
-                .as_deref()
-                .map(|b| interpolate_command(b, &payload_value).into_owned());
-            ResolvedExecutor::Http {
-                method: *method,
-                url: interpolated_url,
-                headers: headers.clone(),
-                body: interpolated_body,
-                follow_redirects: *follow_redirects,
-            }
-        }
-    };
+    let resolved_executor = resolve_executor(&hook.executor, &payload_str);
 
     let env = hook.env.clone();
     let cwd = hook.cwd.clone();
@@ -557,6 +518,8 @@ async fn hook_detail(
     let (executor_command, executor_type) = match &hook.executor {
         ExecutorConfig::Shell { command } => (command.as_str(), "shell"),
         ExecutorConfig::Script { path } => (path.as_str(), "script"),
+        ExecutorConfig::JavaScript { path } => (path.as_str(), "javascript"),
+        ExecutorConfig::Python { path } => (path.as_str(), "python"),
         ExecutorConfig::Http { url, .. } => (url.as_str(), "http"),
     };
 
@@ -1399,6 +1362,8 @@ async fn edit_hook_form(
     let (command, _) = match &hook.executor {
         ExecutorConfig::Shell { command } => (command.as_str(), "shell"),
         ExecutorConfig::Script { path } => (path.as_str(), "script"),
+        ExecutorConfig::JavaScript { path } => (path.as_str(), "javascript"),
+        ExecutorConfig::Python { path } => (path.as_str(), "python"),
         ExecutorConfig::Http { url, .. } => (url.as_str(), "http"),
     };
 
