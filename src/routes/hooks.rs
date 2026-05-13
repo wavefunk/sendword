@@ -1252,6 +1252,7 @@ fn parse_hook_form(form: &HookForm) -> Result<HookFormData, String> {
         "script" => ExecutorConfig::Script { path: command },
         "javascript" => ExecutorConfig::JavaScript { path: command },
         "python" => ExecutorConfig::Python { path: command },
+        "http" => return Err(http_executor_form_error().to_owned()),
         other => return Err(format!("unknown executor type '{other}'")),
     };
 
@@ -1565,6 +1566,11 @@ async fn update_hook(
     Path(slug): Path<String>,
     Form(form): Form<HookForm>,
 ) -> Response {
+    if existing_hook_is_http(&state, &slug) {
+        let encoded = urlencoding::encode(http_executor_form_error());
+        return Redirect::to(&format!("/hooks/{slug}/edit?error={encoded}")).into_response();
+    }
+
     let data = match parse_hook_form(&form) {
         Ok(d) => d,
         Err(msg) => {
@@ -1585,6 +1591,19 @@ async fn update_hook(
     }
 
     Redirect::to(&format!("/hooks/{slug}?success=Changes+saved")).into_response()
+}
+
+fn existing_hook_is_http(state: &AppState, slug: &str) -> bool {
+    state
+        .config
+        .load()
+        .hooks
+        .iter()
+        .any(|hook| hook.slug == slug && matches!(hook.executor, ExecutorConfig::Http { .. }))
+}
+
+fn http_executor_form_error() -> &'static str {
+    "HTTP executors are not supported by this form"
 }
 
 // ---------------------------------------------------------------------------
@@ -2009,6 +2028,42 @@ max_delay = "30s"
     }
 
     #[tokio::test]
+    async fn edit_hook_form_renders_existing_http_executor_as_http() {
+        let toml = r#"[server]
+port = 8080
+
+[[hooks]]
+name = "Notify"
+slug = "notify"
+[hooks.executor]
+type = "http"
+method = "POST"
+url = "https://example.com/webhook"
+"#;
+        let (state, _dir) = test_state_with_config(toml).await;
+        let cookie = create_test_session(&state).await;
+
+        let resp = app(state)
+            .oneshot(
+                Request::builder()
+                    .uri("/hooks/notify/edit")
+                    .header("Cookie", &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let html = String::from_utf8(body.to_vec()).unwrap();
+        assert!(html.contains(r#"<option value="http" selected"#));
+        assert!(html.contains("https://example.com/webhook"));
+    }
+
+    #[tokio::test]
     async fn edit_hook_form_not_found() {
         let (state, _dir) = test_state_with_config("[server]\nport = 8080\n").await;
         let cookie = create_test_session(&state).await;
@@ -2149,6 +2204,87 @@ path = "data/scripts/old.py"
             panic!("expected Python executor");
         };
         assert_eq!(path, "data/scripts/new.py");
+    }
+
+    #[tokio::test]
+    async fn update_http_hook_rejects_shell_submission_and_preserves_executor() {
+        let toml = r#"[server]
+port = 8080
+
+[[hooks]]
+name = "Notify"
+slug = "notify"
+[hooks.executor]
+type = "http"
+method = "POST"
+url = "https://example.com/webhook"
+"#;
+        let (state, _dir) = test_state_with_config(toml).await;
+        let cookie = create_test_session(&state).await;
+
+        let resp = app(state.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/hooks/notify/edit")
+                    .header("Cookie", &cookie)
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    .body(Body::from(
+                        "name=Notify&slug=notify&executor_type=shell&command=echo+notify&enabled=true",
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+        let location = resp.headers().get("location").unwrap().to_str().unwrap();
+        assert!(location.starts_with("/hooks/notify/edit?error="));
+        assert!(location.contains("HTTP"));
+
+        let config = state.config.load();
+        let ExecutorConfig::Http { url, .. } = &config.hooks[0].executor else {
+            panic!("expected HTTP executor to be preserved");
+        };
+        assert_eq!(url, "https://example.com/webhook");
+    }
+
+    #[tokio::test]
+    async fn update_http_hook_rejects_http_submission_with_form_error() {
+        let toml = r#"[server]
+port = 8080
+
+[[hooks]]
+name = "Notify"
+slug = "notify"
+[hooks.executor]
+type = "http"
+method = "POST"
+url = "https://example.com/webhook"
+"#;
+        let (state, _dir) = test_state_with_config(toml).await;
+        let cookie = create_test_session(&state).await;
+
+        let resp = app(state)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/hooks/notify/edit")
+                    .header("Cookie", &cookie)
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    .body(Body::from(
+                        "name=Notify&slug=notify&executor_type=http&command=https%3A%2F%2Fexample.com%2Fwebhook&enabled=true",
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+        let location = resp.headers().get("location").unwrap().to_str().unwrap();
+        assert!(location.starts_with("/hooks/notify/edit?error="));
+        assert!(location.contains("HTTP"));
+        assert!(location.contains("not+supported") || location.contains("not%20supported"));
     }
 
     #[tokio::test]

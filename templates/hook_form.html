@@ -99,6 +99,7 @@
           <option value="script" {% if form_executor_type == "script" %}selected{% endif %}>Executable script</option>
           <option value="javascript" {% if form_executor_type == "javascript" %}selected{% endif %}>JavaScript script</option>
           <option value="python" {% if form_executor_type == "python" %}selected{% endif %}>Python script</option>
+          <option value="http" {% if form_executor_type == "http" %}selected{% endif %}>HTTP request</option>
         </select>
         <span class="wf-field-hint">Choose how sendword should run this hook.</span>
       </div>
@@ -236,6 +237,11 @@ function updateExecutorField() {
       label: 'Python path',
       placeholder: 'data/scripts/deploy.py',
       hint: 'Python scripts run with python3, then python, and can read payload fields from os.environ.'
+    },
+    http: {
+      label: 'HTTP URL',
+      placeholder: 'https://example.com/webhook',
+      hint: 'HTTP executors are view-only in this form and cannot be saved here.'
     }
   };
   var selected = copy[type] || copy.shell;
