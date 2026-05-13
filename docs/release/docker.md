@@ -15,7 +15,15 @@ docker run --rm -p 8080:8080 -v "$PWD/data:/data" ghcr.io/wavefunk/sendword:late
 
 The image sets `SENDWORD_SERVER__BIND=0.0.0.0` so the published port accepts
 traffic from the host. The container runs as the `sendword` user with UID/GID
-1000 so commands and webhook scripts do not run as root.
+1000 so commands and webhook scripts do not run as root. The mounted data
+directory must be writable by UID 1000.
+
+Persistent files are stored directly under `/data`:
+
+- `/data/sendword.db`
+- `/data/csrf_key`
+- `/data/logs`
+- `/data/scripts`
 
 The image includes:
 

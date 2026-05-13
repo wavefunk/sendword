@@ -34,15 +34,22 @@ RUN apt-get update && \
         --create-home --shell /usr/sbin/nologin sendword
 
 COPY --from=builder /tmp/sendword /usr/local/bin/sendword
+COPY docker-entrypoint.sh /usr/local/bin/sendword-docker-entrypoint
 
 RUN mkdir -p /data && \
-    chown -R sendword:sendword /data /home/sendword
+    chown -R sendword:sendword /data /home/sendword && \
+    chmod 0755 /usr/local/bin/sendword-docker-entrypoint
 WORKDIR /data
 
 ENV SENDWORD_SERVER__BIND=0.0.0.0
+ENV SENDWORD_DATABASE__PATH=/data/sendword.db
+ENV SENDWORD_LOGS__DIR=/data/logs
+ENV SENDWORD_SCRIPTS__DIR=/data/scripts
+ENV HOME=/home/sendword
 
 EXPOSE 8080
 
 USER sendword
 
+ENTRYPOINT ["sendword-docker-entrypoint"]
 CMD ["sendword", "serve"]
