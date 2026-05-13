@@ -35,6 +35,8 @@ COPY --from=builder /tmp/sendword /usr/local/bin/sendword
 RUN mkdir -p /data
 WORKDIR /data
 
+ENV SENDWORD_SERVER__BIND=0.0.0.0
+
 EXPOSE 8080
 
 CMD ["sendword", "serve"]

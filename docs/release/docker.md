@@ -12,6 +12,9 @@ Run with a mounted data directory:
 docker run --rm -p 8080:8080 -v "$PWD/data:/data" ghcr.io/wavefunk/sendword:latest
 ```
 
+The image sets `SENDWORD_SERVER__BIND=0.0.0.0` so the published port accepts
+traffic from the host.
+
 The image includes:
 
 - `sendword`
