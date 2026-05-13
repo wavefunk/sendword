@@ -4,16 +4,17 @@
 
 **Goal:** Prepare `sendword` for crates.io publication and add a tag-triggered workflow that publishes an installable binary crate.
 
-**Architecture:** Package metadata and the crate file include list live in `Cargo.toml`. The GitHub Actions workflow uses crates.io Trusted Publishing and publishes only from version tags. Runtime static assets are served from the packaged crate source path so a binary built by `cargo install sendword` can find its dashboard assets from any working directory.
+**Architecture:** Package metadata and the crate file include list live in `Cargo.toml`. The GitHub Actions workflow uses crates.io Trusted Publishing and publishes only from version tags. Runtime static assets are embedded into release builds with `rust-embed`, so binaries installed by `cargo install sendword` and later standalone release binaries can serve dashboard assets from any working directory.
 
-**Tech Stack:** Cargo package metadata, GitHub Actions, `actions-rust-lang/setup-rust-toolchain@v1`, `Swatinem/rust-cache@v2`, `rust-lang/crates-io-auth-action@v1`, Axum/Tower HTTP static file serving.
+**Tech Stack:** Cargo package metadata, GitHub Actions, `actions-rust-lang/setup-rust-toolchain@v1`, `Swatinem/rust-cache@v2`, `rust-lang/crates-io-auth-action@v1`, Axum static routes, `rust-embed`, `mime_guess`.
 
 ---
 
 ## File Structure
 
-- Modify `Cargo.toml`: add crates.io metadata and an explicit package include list.
-- Modify `src/server.rs`: add `static_dir()` and use it for `ServeDir`.
+- Modify `Cargo.toml`: add crates.io metadata, an explicit package include list, and static embedding dependencies.
+- Modify `Cargo.lock`: record `rust-embed` and `mime_guess` dependency resolution.
+- Modify `src/server.rs`: replace filesystem static serving with an embedded static asset route.
 - Create `.github/workflows/publish-crate.yml`: tag-triggered trusted publishing workflow.
 - Create `docs/release/crates-io.md`: maintainer setup and release instructions.
 - Reference `docs/superpowers/specs/2026-05-13-crates-io-publishing-design.md`: approved design; no edits needed.
@@ -22,6 +23,7 @@
 
 **Files:**
 - Modify: `Cargo.toml`
+- Modify: `Cargo.lock`
 - Test: `Cargo.toml` through `cargo metadata` and `cargo publish --dry-run`
 
 - [ ] **Step 1: Add crates.io metadata to the package section**
@@ -67,7 +69,16 @@ include = [
 ]
 ```
 
-- [ ] **Step 2: Verify metadata parses**
+- [ ] **Step 2: Add static embedding dependencies**
+
+In `Cargo.toml`, add these dependencies near the other runtime dependencies:
+
+```toml
+rust-embed = "8.11.0"
+mime_guess = "2.0.5"
+```
+
+- [ ] **Step 3: Verify metadata parses and update the lockfile**
 
 Run:
 
@@ -83,53 +94,91 @@ Expected: exits 0 and the `sendword` package JSON includes:
 "homepage":"https://sendword.online"
 ```
 
-## Task 2: Make Static Assets Work For Cargo-Installed Binaries
+## Task 2: Embed Static Assets For Installed Binaries
 
 **Files:**
 - Modify: `src/server.rs`
 - Test: `src/server.rs` unit test
 
-- [ ] **Step 1: Add `PathBuf` import**
+- [ ] **Step 1: Update imports**
 
-In `src/server.rs`, change:
+In `src/server.rs`, remove these imports:
 
 ```rust
-use std::net::SocketAddr;
-use std::sync::Arc;
+use std::path::PathBuf;
+use tower_http::services::ServeDir;
+```
+
+Then change the Axum imports from:
+
+```rust
+use axum::Router;
+use axum::extract::{State, connect_info::IntoMakeServiceWithConnectInfo};
+use axum::http::StatusCode;
+use axum::response::{Html, IntoResponse};
 ```
 
 to:
 
 ```rust
-use std::net::SocketAddr;
-use std::path::PathBuf;
-use std::sync::Arc;
+use axum::body::Body;
+use axum::extract::{Path, State, connect_info::IntoMakeServiceWithConnectInfo};
+use axum::http::{HeaderValue, StatusCode, header};
+use axum::response::{Html, IntoResponse, Response};
+use axum::routing::get;
+use axum::Router;
 ```
 
-- [ ] **Step 2: Add the static directory helper**
+- [ ] **Step 2: Add embedded static assets and response helper**
 
-In `src/server.rs`, immediately before `pub fn router`, add:
+In `src/server.rs`, replace the existing `static_dir()` helper with:
 
 ```rust
-pub fn static_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("static")
+#[derive(rust_embed::RustEmbed)]
+#[folder = "static"]
+struct StaticAssets;
+
+pub fn embedded_static_response(path: &str) -> Response {
+    let path = path.trim_start_matches('/');
+    let Some(file) = StaticAssets::get(path) else {
+        return (StatusCode::NOT_FOUND, "static asset not found").into_response();
+    };
+
+    let content_type = mime_guess::from_path(path).first_or_octet_stream();
+    let mut response = Body::from(file.data.into_owned()).into_response();
+    let header_value =
+        HeaderValue::from_str(content_type.as_ref()).unwrap_or(HeaderValue::from_static(
+            "application/octet-stream",
+        ));
+    response.headers_mut().insert(header::CONTENT_TYPE, header_value);
+    response
+}
+
+async fn static_asset(Path(path): Path<String>) -> Response {
+    embedded_static_response(&path)
 }
 ```
 
-- [ ] **Step 3: Use the helper in the router**
+- [ ] **Step 3: Route `/static` through the embedded handler**
 
 In `src/server.rs`, change:
-
-```rust
-pub fn router(state: Arc<AppState>, auth_router: Router) -> Router {
-    let static_dir = ServeDir::new("static");
-```
-
-to:
 
 ```rust
 pub fn router(state: Arc<AppState>, auth_router: Router) -> Router {
     let static_dir = ServeDir::new(static_dir());
+
+    Router::new()
+        .merge(crate::routes::router())
+        .nest_service("/static", static_dir)
+```
+
+to:
+
+```rust
+pub fn router(state: Arc<AppState>, auth_router: Router) -> Router {
+    Router::new()
+        .merge(crate::routes::router())
+        .route("/static/{*path}", get(static_asset))
 ```
 
 - [ ] **Step 4: Add a focused unit test**
@@ -139,17 +188,28 @@ At the bottom of `src/server.rs`, add:
 ```rust
 #[cfg(test)]
 mod tests {
-    use super::static_dir;
+    use super::embedded_static_response;
+    use axum::http::{StatusCode, header};
 
     #[test]
-    fn static_dir_points_to_packaged_static_assets() {
-        let dir = static_dir();
+    fn embedded_static_response_serves_css_asset() {
+        let response = embedded_static_response("css/wavefunk.css");
 
-        assert!(dir.ends_with("static"));
-        assert!(
-            dir.join("css").exists(),
-            "static css directory must be included in the crate package"
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok()),
+            Some("text/css")
         );
+    }
+
+    #[test]
+    fn embedded_static_response_404s_missing_asset() {
+        let response = embedded_static_response("missing.css");
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 }
 ```
@@ -159,10 +219,10 @@ mod tests {
 Run:
 
 ```bash
-nix develop -c cargo test server::tests::static_dir_points_to_packaged_static_assets
+nix develop -c cargo test server::tests::embedded_static_response
 ```
 
-Expected: one test runs and passes.
+Expected: two tests run and pass.
 
 ## Task 3: Add The Publish Workflow
 
@@ -310,6 +370,7 @@ cargo install sendword
 
 **Files:**
 - Modify: `Cargo.toml`
+- Modify: `Cargo.lock`
 - Modify: `src/server.rs`
 - Create: `.github/workflows/publish-crate.yml`
 - Create: `docs/release/crates-io.md`
@@ -329,7 +390,7 @@ Expected: exits 0. The output packages `sendword v0.0.2` and verifies the packag
 Run:
 
 ```bash
-git diff --check -- Cargo.toml src/server.rs .github/workflows/publish-crate.yml docs/release/crates-io.md
+git diff --check -- Cargo.toml Cargo.lock src/server.rs .github/workflows/publish-crate.yml docs/release/crates-io.md
 ```
 
 Expected: exits 0 with no whitespace errors.
@@ -339,13 +400,14 @@ Expected: exits 0 with no whitespace errors.
 Run:
 
 ```bash
-git status --short Cargo.toml src/server.rs .github/workflows/publish-crate.yml docs/release/crates-io.md
+git status --short Cargo.toml Cargo.lock src/server.rs .github/workflows/publish-crate.yml docs/release/crates-io.md
 ```
 
 Expected output includes only:
 
 ```text
  M Cargo.toml
+ M Cargo.lock
  M src/server.rs
 ?? .github/workflows/publish-crate.yml
 ?? docs/release/crates-io.md
@@ -356,11 +418,11 @@ Expected output includes only:
 Run:
 
 ```bash
-git add Cargo.toml src/server.rs .github/workflows/publish-crate.yml docs/release/crates-io.md
+git add Cargo.toml Cargo.lock src/server.rs .github/workflows/publish-crate.yml docs/release/crates-io.md
 git commit -m "release: add crates.io publishing"
 ```
 
-Expected: commit succeeds and includes only the four implementation files.
+Expected: commit succeeds and includes only the five implementation files.
 
 - [ ] **Step 5: Close the br task after review approval**
 
@@ -385,6 +447,6 @@ Expected: commit succeeds and includes only `.beads/issues.jsonl`.
 
 ## Self-Review Notes
 
-- Spec coverage: the plan adds metadata, package include rules, trusted publishing, tag/version verification, cargo-install static asset lookup, and maintainer docs.
+- Spec coverage: the plan adds metadata, package include rules, trusted publishing, tag/version verification, embedded static assets for installed binaries, and maintainer docs.
 - Scope: no GitHub release binary artifacts, curl installer, Docker images, or JavaScript/Python executor behavior are included.
-- Validation: local dry-run packaging verifies the crate can be packaged and built; `actionlint` verifies the workflow syntax; focused unit test covers the static asset path.
+- Validation: local dry-run packaging verifies the crate can be packaged and built; `actionlint` verifies the workflow syntax; focused unit tests cover found and missing embedded static assets.

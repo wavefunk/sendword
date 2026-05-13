@@ -38,8 +38,9 @@ publication still allocates the name permanently.
 
 Templates are embedded at compile time through `minijinja-embed`, but static UI
 assets are currently served from the process working directory. A binary
-installed with `cargo install sendword` can be launched from any directory, so
-static asset lookup must not depend on `./static`.
+installed with `cargo install sendword` can be launched from any directory, and
+the following release task will also build standalone binaries. Static asset
+lookup must not depend on `./static` or a build-machine source path.
 
 ## Publishing Approach
 
@@ -97,25 +98,37 @@ The explicit `include` list keeps website content, Playwright snapshots, Beads
 state, and local planning files out of the published crate while retaining all
 files needed to build and run the binary from a crate package.
 
-## Static Asset Lookup
+Add runtime dependencies:
 
-Add a small helper in `src/server.rs`:
-
-```rust
-pub fn static_dir() -> std::path::PathBuf {
-    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("static")
-}
+```toml
+rust-embed = "8.11.0"
+mime_guess = "2.0.5"
 ```
 
-Use `ServeDir::new(static_dir())` in the router. This points static serving at
-the packaged crate source directory, which exists for binaries built by
-`cargo install`. It also works in local development because
-`CARGO_MANIFEST_DIR` is the repository root.
+`rust-embed` embeds the `static/` folder into release builds and can still load
+from the filesystem in debug builds. `mime_guess` sets a content type based on
+the embedded asset path.
 
-This is intentionally not a complete solution for later standalone GitHub
-release binaries because those binaries are built on CI machines whose source
-paths do not exist on user machines. The release-artifact task will address that
-distribution format separately.
+## Static Asset Lookup
+
+Replace `ServeDir::new("static")` with an Axum handler backed by
+`rust_embed::RustEmbed`:
+
+```rust
+#[derive(rust_embed::RustEmbed)]
+#[folder = "static"]
+struct StaticAssets;
+```
+
+Route `/static/{*path}` to a handler that:
+
+- trims any leading slash from the requested asset path,
+- looks up the file with `StaticAssets::get(path)`,
+- returns `404` when the asset is missing,
+- returns the embedded bytes with a content type from `mime_guess` when found.
+
+This works for `cargo install sendword` and standalone GitHub release binaries
+because release builds contain the static bytes in the binary.
 
 ## Documentation
 
@@ -134,6 +147,7 @@ Use local static verification for repository changes:
 
 - `nix develop -c cargo publish --dry-run --locked --allow-dirty`
 - `nix shell nixpkgs#actionlint -c actionlint .github/workflows/publish-crate.yml`
+- focused unit tests for found and missing embedded static assets
 - `git diff --check`
 
 The `--allow-dirty` flag is only for local verification in this dirty worktree.
