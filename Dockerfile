@@ -28,15 +28,21 @@ RUN apt-get update && \
         npm \
         python3 \
         python3-pip && \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/* && \
+    groupadd --gid 1000 sendword && \
+    useradd --uid 1000 --gid sendword --home-dir /home/sendword \
+        --create-home --shell /usr/sbin/nologin sendword
 
 COPY --from=builder /tmp/sendword /usr/local/bin/sendword
 
-RUN mkdir -p /data
+RUN mkdir -p /data && \
+    chown -R sendword:sendword /data /home/sendword
 WORKDIR /data
 
 ENV SENDWORD_SERVER__BIND=0.0.0.0
 
 EXPOSE 8080
+
+USER sendword
 
 CMD ["sendword", "serve"]
