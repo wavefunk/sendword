@@ -18,10 +18,7 @@ use crate::templates::context;
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/admin/users", get(list_users).post(create_user))
-        .route(
-            "/admin/users/{id}/delete",
-            axum::routing::post(delete_user),
-        )
+        .route("/admin/users/{id}/delete", axum::routing::post(delete_user))
 }
 
 // --- Query params for flash messages ---
@@ -145,7 +142,6 @@ async fn delete_user(
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -246,6 +242,8 @@ mod tests {
         // user rows include email as the username field
         assert!(html.contains("admin@example.com"));
         assert!(html.contains("YOU"));
+        assert!(html.contains(r#"name="email""#));
+        assert!(!html.contains(r#"name="username""#));
     }
 
     #[tokio::test]
@@ -358,5 +356,4 @@ mod tests {
         let users = state.ath.db().list_users().await.unwrap();
         assert_eq!(users.len(), 1);
     }
-
 }

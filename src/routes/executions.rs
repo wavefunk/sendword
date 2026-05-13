@@ -49,12 +49,12 @@ fn html_escape(s: &str) -> String {
     out
 }
 
-/// Read a log file, returning its contents or a fallback message.
-async fn read_log_file(logs_dir: &str, execution_id: &str, filename: &str) -> String {
+/// Read a log file, returning non-empty contents when present.
+async fn read_log_file(logs_dir: &str, execution_id: &str, filename: &str) -> Option<String> {
     let path = FsPath::new(logs_dir).join(execution_id).join(filename);
     match tokio::fs::read_to_string(&path).await {
-        Ok(contents) if !contents.is_empty() => contents,
-        _ => "No output captured.".into(),
+        Ok(contents) if !contents.is_empty() => Some(contents),
+        _ => None,
     }
 }
 
@@ -96,8 +96,12 @@ async fn execution_detail(
     })?;
 
     let logs_dir = &config.logs.dir;
-    let stdout = read_log_file(logs_dir, &exec.id, "stdout.log").await;
-    let stderr = read_log_file(logs_dir, &exec.id, "stderr.log").await;
+    let stdout = read_log_file(logs_dir, &exec.id, "stdout.log")
+        .await
+        .unwrap_or_else(|| "No output captured.".into());
+    let stderr = read_log_file(logs_dir, &exec.id, "stderr.log")
+        .await
+        .unwrap_or_default();
 
     // Apply secret masking to log output before rendering.
     // If the hook has been removed from config, hook_env is empty and only
@@ -663,6 +667,33 @@ mod tests {
             resp.status().is_redirection() || resp.status() == StatusCode::UNAUTHORIZED,
             "expected redirect or unauthorized, got {}",
             resp.status()
+        );
+    }
+
+    #[tokio::test]
+    async fn read_log_file_returns_none_for_empty_or_missing_logs() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let exec_id = "exec-1";
+        let log_dir = dir.path().join(exec_id);
+        tokio::fs::create_dir_all(&log_dir).await.expect("log dir");
+        tokio::fs::write(log_dir.join("stdout.log"), "hello\n")
+            .await
+            .expect("stdout");
+        tokio::fs::write(log_dir.join("stderr.log"), "")
+            .await
+            .expect("stderr");
+
+        assert_eq!(
+            read_log_file(dir.path().to_str().unwrap(), exec_id, "stdout.log").await,
+            Some("hello\n".to_owned())
+        );
+        assert_eq!(
+            read_log_file(dir.path().to_str().unwrap(), exec_id, "stderr.log").await,
+            None
+        );
+        assert_eq!(
+            read_log_file(dir.path().to_str().unwrap(), exec_id, "missing.log").await,
+            None
         );
     }
 }

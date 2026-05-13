@@ -200,6 +200,6 @@ function toggleAuthFields() {
   document.getElementById('bearer-fields').style.display = mode === 'bearer' ? '' : 'none';
   document.getElementById('hmac-fields').style.display = mode === 'hmac' ? '' : 'none';
 }
-document.addEventListener('DOMContentLoaded', toggleAuthFields);
+toggleAuthFields();
 </script>
 {% endblock %}
