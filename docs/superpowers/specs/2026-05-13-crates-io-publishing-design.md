@@ -84,13 +84,13 @@ include = [
     "templates/**",
     "static/**",
     "migrations/**",
-    "Cargo.toml",
-    "Cargo.lock",
-    "build.rs",
-    "README.md",
-    "LICENSE",
-    "sendword.toml",
-    "sqlx.toml",
+    "/Cargo.toml",
+    "/Cargo.lock",
+    "/build.rs",
+    "/README.md",
+    "/LICENSE",
+    "/sendword.toml",
+    "/sqlx.toml",
 ]
 ```
 

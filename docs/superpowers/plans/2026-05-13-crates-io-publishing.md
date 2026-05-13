@@ -17,7 +17,7 @@
 - Modify `src/server.rs`: replace filesystem static serving with an embedded static asset route.
 - Create `.github/workflows/publish-crate.yml`: tag-triggered trusted publishing workflow.
 - Create `docs/release/crates-io.md`: maintainer setup and release instructions.
-- Reference `docs/superpowers/specs/2026-05-13-crates-io-publishing-design.md`: approved design; no edits needed.
+- Reference `docs/superpowers/specs/2026-05-13-crates-io-publishing-design.md`: approved design, including the package include list.
 
 ## Task 1: Prepare Package Metadata
 
@@ -59,13 +59,13 @@ include = [
     "templates/**",
     "static/**",
     "migrations/**",
-    "Cargo.toml",
-    "Cargo.lock",
-    "build.rs",
-    "README.md",
-    "LICENSE",
-    "sendword.toml",
-    "sqlx.toml",
+    "/Cargo.toml",
+    "/Cargo.lock",
+    "/build.rs",
+    "/README.md",
+    "/LICENSE",
+    "/sendword.toml",
+    "/sqlx.toml",
 ]
 ```
 
@@ -375,7 +375,17 @@ cargo install sendword
 - Create: `.github/workflows/publish-crate.yml`
 - Create: `docs/release/crates-io.md`
 
-- [ ] **Step 1: Run cargo publish dry run**
+- [ ] **Step 1: Check package contents**
+
+Run:
+
+```bash
+nix develop -c cargo package --list --allow-dirty
+```
+
+Expected: exits 0 and lists only files intentionally included in the crate package. The output must not include `.direnv/`, `website/`, `.beads/`, or `docs/superpowers/` entries.
+
+- [ ] **Step 2: Run cargo publish dry run**
 
 Run:
 
@@ -385,7 +395,7 @@ nix develop -c cargo publish --dry-run --locked --allow-dirty
 
 Expected: exits 0. The output packages `sendword v0.0.2` and verifies the package. `--allow-dirty` is allowed only for local verification because this worktree has unrelated user changes.
 
-- [ ] **Step 2: Check whitespace**
+- [ ] **Step 3: Check whitespace**
 
 Run:
 
@@ -395,7 +405,7 @@ git diff --check -- Cargo.toml Cargo.lock src/server.rs .github/workflows/publis
 
 Expected: exits 0 with no whitespace errors.
 
-- [ ] **Step 3: Confirm only intended implementation files changed**
+- [ ] **Step 4: Confirm only intended implementation files changed**
 
 Run:
 
@@ -413,7 +423,7 @@ Expected output includes only:
 ?? docs/release/crates-io.md
 ```
 
-- [ ] **Step 4: Commit implementation**
+- [ ] **Step 5: Commit implementation**
 
 Run:
 
@@ -424,7 +434,7 @@ git commit -m "release: add crates.io publishing"
 
 Expected: commit succeeds and includes only the five implementation files.
 
-- [ ] **Step 5: Close the br task after review approval**
+- [ ] **Step 6: Close the br task after review approval**
 
 Run:
 
