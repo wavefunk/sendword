@@ -1,5 +1,5 @@
 use std::io::ErrorKind;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 use sqlx::SqlitePool;
@@ -185,6 +185,7 @@ fn spawn_script(
     }
 
     let candidates = runtime_candidates(runtime);
+    let script_arg = interpreter_script_arg(path);
     let cwd_exists = match &ctx.cwd {
         Some(cwd) => Path::new(cwd).exists(),
         None => true,
@@ -192,7 +193,7 @@ fn spawn_script(
 
     for candidate in candidates {
         let mut cmd = tokio::process::Command::new(candidate);
-        cmd.arg(path);
+        cmd.arg(&script_arg);
         prepare_command(&mut cmd, ctx);
 
         match cmd.spawn() {
@@ -213,6 +214,19 @@ fn spawn_script(
             candidates.join(", ")
         ),
     })
+}
+
+fn interpreter_script_arg(path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        return path.to_path_buf();
+    }
+
+    match path.canonicalize() {
+        Ok(path) => path,
+        Err(_) => std::env::current_dir()
+            .map(|cwd| cwd.join(path))
+            .unwrap_or_else(|_| path.to_path_buf()),
+    }
 }
 
 fn spawn_error_message(
@@ -577,6 +591,41 @@ mod tests {
         );
 
         drop(script_file);
+    }
+
+    #[tokio::test]
+    async fn python_runtime_resolves_relative_script_path_before_setting_cwd() {
+        let tmp = tempfile::TempDir::new().expect("temp dir");
+        let logs_dir = tmp.path().to_str().expect("utf-8 path");
+        let pool = test_pool().await;
+        let bin = tempfile::TempDir::new().expect("bin dir");
+        let other_cwd = tempfile::TempDir::new().expect("cwd dir");
+        let repo_cwd = std::env::current_dir().expect("current dir");
+        let script_dir = tempfile::TempDir::new_in(&repo_cwd).expect("script dir");
+
+        write_executable_in(bin.path(), "python3", "#!/bin/sh\nexec \"$@\"\n");
+        let script_path = script_dir.path().join("deploy.py");
+        std::fs::write(&script_path, "#!/bin/sh\necho relative-script-ok\n").expect("write script");
+        let mut perms = std::fs::metadata(&script_path)
+            .expect("metadata")
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&script_path, perms).expect("set permissions");
+        let relative_script_path = script_path
+            .strip_prefix(&repo_cwd)
+            .expect("relative script path")
+            .to_path_buf();
+
+        let (mut ctx, exec_id) = setup_execution(&pool, logs_dir).await;
+        ctx.env
+            .insert("PATH".into(), bin.path().display().to_string());
+        ctx.cwd = Some(other_cwd.path().display().to_string());
+
+        let result = run_script(&pool, &ctx, &relative_script_path, ScriptRuntime::Python).await;
+
+        assert_eq!(result.status, ExecutionStatus::Success);
+        let stdout = read_log(logs_dir, &exec_id, "stdout.log").await;
+        assert_eq!(stdout.trim(), "relative-script-ok");
     }
 
     #[tokio::test]
