@@ -22,7 +22,7 @@ use crate::executor::resolve_executor;
 use crate::extractors::AuthUser;
 use crate::models::trigger_attempt::{NewTriggerAttempt, TriggerAttemptStatus};
 use crate::models::{ExecutionStatus, execution, trigger_attempt};
-use crate::payload::{FieldType, PayloadField, PayloadSchema};
+use crate::payload::{FieldType, FieldValidationError, PayloadField, PayloadSchema};
 use crate::retry;
 use crate::server::AppState;
 use crate::templates::context;
@@ -102,6 +102,14 @@ fn hook_rate_limit_as_trigger(cfg: Option<&RateLimitConfig>) -> Option<TriggerRa
     })
 }
 
+fn format_payload_validation_errors(errors: &[FieldValidationError]) -> String {
+    errors
+        .iter()
+        .map(|e| e.message.as_str())
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
 async fn trigger_hook(
     State(state): State<Arc<AppState>>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
@@ -175,7 +183,10 @@ async fn trigger_hook(
         };
 
         if let Err(errors) = schema.validate(&payload_value) {
-            let reason = format!("payload validation failed: {errors:?}");
+            let reason = format!(
+                "payload validation failed: {}",
+                format_payload_validation_errors(&errors)
+            );
             let _ = trigger_attempt::insert(
                 pool,
                 &NewTriggerAttempt {
@@ -1761,6 +1772,19 @@ mod tests {
                 async move { next.run(req).await }
             },
         ))
+    }
+
+    #[test]
+    fn payload_validation_reason_is_user_facing() {
+        let errors = vec![FieldValidationError {
+            field: "action".into(),
+            message: "required field 'action' is missing".into(),
+        }];
+
+        assert_eq!(
+            format_payload_validation_errors(&errors),
+            "required field 'action' is missing"
+        );
     }
 
     // --- New hook form ---

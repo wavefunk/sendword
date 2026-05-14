@@ -242,6 +242,8 @@ mod tests {
         // user rows include email as the username field
         assert!(html.contains("admin@example.com"));
         assert!(html.contains("YOU"));
+        assert!(html.contains(r#"name="email""#));
+        assert!(!html.contains(r#"name="username""#));
     }
 
     #[tokio::test]

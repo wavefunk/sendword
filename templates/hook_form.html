@@ -249,9 +249,7 @@ function updateExecutorField() {
   command.placeholder = selected.placeholder;
   hint.textContent = selected.hint;
 }
-document.addEventListener('DOMContentLoaded', function() {
-  toggleAuthFields();
-  updateExecutorField();
-});
+toggleAuthFields();
+updateExecutorField();
 </script>
 {% endblock %}

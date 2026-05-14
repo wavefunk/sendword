@@ -13,6 +13,7 @@ last-touched
 
 # Local history backups
 .br_history/
+backup/
 
 # DB-family recovery artifacts (truncated WAL/SHM, quarantined sidecars)
 # — same lifecycle as .br_history/, written by recovery paths and
