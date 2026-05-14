@@ -9,7 +9,13 @@
 
     ## Install
 
-    Install via cargo:
+    Install the latest Linux x86_64 binary:
+
+    ```
+    curl --proto '=https' --tlsv1.2 -LsSf https://releases.sendword.online/latest/sendword-installer.sh | sh
+    ```
+
+    Or install via cargo:
 
     ```
     cargo install sendword
@@ -61,6 +67,23 @@
   description: "Installation options and requirements for sendword."
   content: |
     Sendword is a single Rust binary with no runtime dependencies beyond SQLite.
+
+    ## Install script
+
+    Linux x86_64:
+
+    ```
+    curl --proto '=https' --tlsv1.2 -LsSf https://releases.sendword.online/latest/sendword-installer.sh | sh
+    ```
+
+    Windows PowerShell:
+
+    ```powershell
+    powershell -ExecutionPolicy Bypass -c "irm https://releases.sendword.online/latest/sendword-installer.ps1 | iex"
+    ```
+
+    Set `SENDWORD_VERSION=v0.0.3` before running the installer to install a
+    specific release.
 
     ## From cargo
 

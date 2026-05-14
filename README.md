@@ -2,7 +2,7 @@
 
 HTTP webhook receiver that runs commands. Define hooks in TOML, trigger them with HTTP requests, see results in a web dashboard.
 
-[Documentation](https://sendword.online) | [v0.0.2](https://github.com/wavefunk/sendword/releases)
+[Documentation](https://sendword.online) | [Install](https://releases.sendword.online/latest/sendword-installer.sh)
 
 ## What it does
 
@@ -40,6 +40,20 @@ With [Nix](https://nixos.org/) and [direnv](https://direnv.net/), dependencies a
 
 ```sh
 direnv allow
+```
+
+### Install
+
+Linux x86_64:
+
+```sh
+curl --proto '=https' --tlsv1.2 -LsSf https://releases.sendword.online/latest/sendword-installer.sh | sh
+```
+
+Windows PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm https://releases.sendword.online/latest/sendword-installer.ps1 | iex"
 ```
 
 ### Build and run

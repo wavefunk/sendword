@@ -35,8 +35,14 @@ Add these repository secrets in Woodpecker:
 - `cloudflare_api_token`: Cloudflare API token with `Account > Cloudflare Pages > Edit`.
 - `cloudflare_account_id`: Cloudflare account ID for the account that owns `sendword.online`.
 
-Limit both secrets to push and manual events. If Woodpecker allows image/plugin
-filtering for these secrets, restrict them to `node:22-slim`.
+The release pipeline also uploads artifacts to R2 with the same token. Include
+`Account > Workers R2 Storage > Edit` on this token, or replace it with another
+Cloudflare token that can edit both Pages and R2.
+
+For the website workflow, enable both secrets for push and manual events. The
+release workflow also uses them on tag events for R2 uploads, so keep tag events
+enabled if the same token is shared. If Woodpecker allows image/plugin filtering
+for these secrets, restrict them to `node:22-slim`.
 
 ## Cloudflare API Token
 

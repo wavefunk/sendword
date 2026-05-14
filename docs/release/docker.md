@@ -6,6 +6,12 @@ The official image is published to GitHub Container Registry:
 docker pull ghcr.io/wavefunk/sendword:latest
 ```
 
+Woodpecker publishes the image when a matching `v*` release tag is pushed. The
+tag `v0.0.3` publishes:
+
+- `ghcr.io/wavefunk/sendword:0.0.3`
+- `ghcr.io/wavefunk/sendword:latest`
+
 Run with a mounted data directory:
 
 ```sh
@@ -41,3 +47,12 @@ docker run --rm sendword:local sendword --help
 docker run --rm sendword:local node --version
 docker run --rm sendword:local python3 --version
 ```
+
+## Woodpecker Secrets
+
+- `ghcr_username`: GitHub username that owns the GHCR token.
+- `ghcr_token`: GitHub token with package write permission for
+  `ghcr.io/wavefunk/sendword`.
+
+The Woodpecker repository may need to be trusted for privileged Docker Buildx
+steps, depending on the instance policy.

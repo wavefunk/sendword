@@ -1,0 +1,60 @@
+when:
+  - event: tag
+    ref: refs/tags/v*
+
+clone:
+  git:
+    image: woodpeckerci/plugin-git
+    settings:
+      partial: false
+      depth: 0
+      lfs: false
+      recursive: false
+
+steps:
+  - name: validate-release
+    image: rust:1-bookworm
+    commands:
+      - sh scripts/ci/validate-release-tag.sh
+
+  - name: build-artifacts
+    image: rust:1-bookworm
+    depends_on: [validate-release]
+    environment:
+      R2_BUCKET: sendword-releases
+      R2_PUBLIC_BASE_URL: https://releases.sendword.online
+      RUST_TOOLCHAIN: nightly-2026-01-05
+    commands:
+      - apt-get update
+      - apt-get install -y --no-install-recommends ca-certificates mingw-w64 pkg-config libssl-dev zip
+      - sh scripts/ci/build-release-artifacts.sh
+
+  - name: upload-r2
+    image: node:22-slim
+    depends_on: [build-artifacts]
+    environment:
+      CLOUDFLARE_API_TOKEN:
+        from_secret: cloudflare_api_token
+      CLOUDFLARE_ACCOUNT_ID:
+        from_secret: cloudflare_account_id
+      R2_BUCKET: sendword-releases
+      WRANGLER_VERSION: "4.91.0"
+    commands:
+      - test -s target/release-upload/sendword-installer.sh
+      - npm install --prefix .wrangler --no-audit --no-fund "wrangler@$WRANGLER_VERSION"
+      - sh scripts/ci/upload-r2-release.sh
+
+  - name: publish-docker
+    image: woodpeckerci/plugin-docker-buildx
+    privileged: true
+    depends_on: [upload-r2]
+    settings:
+      registry: ghcr.io
+      repo: ghcr.io/wavefunk/sendword
+      tags:
+        - ${CI_COMMIT_TAG##v}
+        - latest
+      username:
+        from_secret: ghcr_username
+      password:
+        from_secret: ghcr_token
