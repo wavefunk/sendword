@@ -2,8 +2,8 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
-use axum::body::Body;
 use axum::Router;
+use axum::body::Body;
 use axum::extract::{Path, State, connect_info::IntoMakeServiceWithConnectInfo};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
@@ -79,11 +79,11 @@ pub fn embedded_static_response(path: &str) -> Response {
 
     let content_type = mime_guess::from_path(path).first_or_octet_stream();
     let mut response = Body::from(file.data.into_owned()).into_response();
-    let header_value =
-        HeaderValue::from_str(content_type.as_ref()).unwrap_or(HeaderValue::from_static(
-            "application/octet-stream",
-        ));
-    response.headers_mut().insert(header::CONTENT_TYPE, header_value);
+    let header_value = HeaderValue::from_str(content_type.as_ref())
+        .unwrap_or(HeaderValue::from_static("application/octet-stream"));
+    response
+        .headers_mut()
+        .insert(header::CONTENT_TYPE, header_value);
     response
 }
 

@@ -150,8 +150,7 @@ async fn serve() -> eyre::Result<()> {
         }
     };
 
-    let branding = BrandingConfig::new("sendword")
-        .with_accent("#cba6f7", AccentInk::Black);
+    let branding = BrandingConfig::new("sendword").with_accent("#cba6f7", AccentInk::Black);
 
     let mut auth_routes_builder = AllRoutesBuilder::new()
         .login()
