@@ -11,6 +11,8 @@ sendword sits next to your application as a sidecar. It listens for incoming web
 ```
 GitHub/CI/Monitoring ──HTTP POST──▶ sendword ──▶ shell command
                                                   script
+                                                  JavaScript
+                                                  Python
                                                   HTTP request
 ```
 
@@ -19,7 +21,7 @@ GitHub/CI/Monitoring ──HTTP POST──▶ sendword ──▶ shell command
 - **Webhook authentication** --- Bearer tokens, HMAC-SHA256 signature verification, or open access. Constant-time comparison prevents timing attacks.
 - **Payload validation** --- JSON schema per hook. Malformed payloads are rejected before your command runs.
 - **Trigger rules** --- Filter by payload fields, restrict to time windows, enforce cooldowns, and apply rate limits before execution.
-- **Three executor types** --- Shell commands with payload interpolation, managed scripts, or HTTP forwarding. Per-hook timeouts and working directories.
+- **Script runtime executors** --- Shell commands with payload interpolation, executable scripts, JavaScript, Python, or HTTP forwarding. Per-hook timeouts and working directories.
 - **Retries with backoff** --- None, linear, or exponential. Configurable per hook or globally, with max delay caps.
 - **Execution barriers** --- Mutex or queue-based concurrency control. Approval workflows gate hooks behind human review with optional timeouts.
 - **Secret masking** --- Redact env var values and regex patterns from dashboard output and log files.
@@ -211,12 +213,28 @@ type = "shell"
 command = "deploy.sh --env production"
 ```
 
-**Script** --- runs a managed script from the scripts directory:
+**Script** --- runs an executable script directly. The file needs executable permissions and a shebang:
 
 ```toml
 [hooks.executor]
 type = "script"
-path = "deploy.sh"
+path = "data/scripts/deploy.sh"
+```
+
+**JavaScript** --- runs a script with `node`:
+
+```toml
+[hooks.executor]
+type = "javascript"
+path = "data/scripts/deploy.js"
+```
+
+**Python** --- runs a script with `python3`, falling back to `python`:
+
+```toml
+[hooks.executor]
+type = "python"
+path = "data/scripts/deploy.py"
 ```
 
 **HTTP** --- forwards to an endpoint:
@@ -229,6 +247,22 @@ url = "https://api.example.com/deploy"
 headers = { Authorization = "Bearer token" }
 body = '{"ref": "main"}'
 follow_redirects = true
+```
+
+The Docker image includes Node.js and Python. Outside Docker, JavaScript hooks require `node` on `PATH`, and Python hooks require `python3` or `python`.
+
+Shell commands receive the raw payload in `SENDWORD_PAYLOAD`. Script, JavaScript, and Python executors also receive `SENDWORD_PAYLOAD`, flattened payload fields as `SENDWORD_FIELD_*`, and a `payload.json` file in the execution log directory. In Node.js, read these through `process.env`; in Python, read them through `os.environ`.
+
+```js
+console.log(process.env.SENDWORD_PAYLOAD);
+console.log(process.env.SENDWORD_FIELD_ACTION);
+```
+
+```python
+import os
+
+print(os.environ["SENDWORD_PAYLOAD"])
+print(os.environ.get("SENDWORD_FIELD_ACTION", ""))
 ```
 
 ### Webhook authentication

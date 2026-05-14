@@ -179,6 +179,13 @@ impl AppConfig {
                 ExecutorConfig::Shell { command } if command.is_empty() => {
                     errors.push(format!("{prefix}.executor.command must be non-empty"));
                 }
+                ExecutorConfig::Script { path }
+                | ExecutorConfig::JavaScript { path }
+                | ExecutorConfig::Python { path }
+                    if path.is_empty() =>
+                {
+                    errors.push(format!("{prefix}.executor.path must be non-empty"));
+                }
                 _ => {}
             }
 
@@ -541,6 +548,14 @@ pub enum ExecutorConfig {
     Script {
         path: String,
     },
+    #[serde(rename = "javascript")]
+    JavaScript {
+        path: String,
+    },
+    #[serde(rename = "python")]
+    Python {
+        path: String,
+    },
     Http {
         method: HttpMethod,
         url: String,
@@ -879,6 +894,52 @@ mod tests {
     }
 
     #[test]
+    fn javascript_executor_config_from_toml() {
+        figment::Jail::expect_with(|_jail| {
+            let toml = r#"
+                [[hooks]]
+                name = "Deploy JS"
+                slug = "deploy-js"
+
+                [hooks.executor]
+                type = "javascript"
+                path = "data/scripts/deploy.js"
+            "#;
+
+            let config: AppConfig = Figment::new().merge(Data::<Toml>::string(toml)).extract()?;
+
+            let ExecutorConfig::JavaScript { path } = &config.hooks[0].executor else {
+                panic!("expected javascript executor");
+            };
+            assert_eq!(path, "data/scripts/deploy.js");
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn python_executor_config_from_toml() {
+        figment::Jail::expect_with(|_jail| {
+            let toml = r#"
+                [[hooks]]
+                name = "Deploy Python"
+                slug = "deploy-python"
+
+                [hooks.executor]
+                type = "python"
+                path = "data/scripts/deploy.py"
+            "#;
+
+            let config: AppConfig = Figment::new().merge(Data::<Toml>::string(toml)).extract()?;
+
+            let ExecutorConfig::Python { path } = &config.hooks[0].executor else {
+                panic!("expected python executor");
+            };
+            assert_eq!(path, "data/scripts/deploy.py");
+            Ok(())
+        });
+    }
+
+    #[test]
     fn auth_and_scripts_config_from_toml() {
         figment::Jail::expect_with(|_jail| {
             let toml = r#"
@@ -1122,6 +1183,32 @@ mod tests {
         let config = valid_config_with_hooks(vec![make_hook("Deploy", "deploy", "")]);
         let err = config.validate().unwrap_err();
         assert!(err.to_string().contains("command must be non-empty"));
+    }
+
+    #[test]
+    fn validation_catches_empty_script_like_paths() {
+        let cases = [
+            ExecutorConfig::Script {
+                path: String::new(),
+            },
+            ExecutorConfig::JavaScript {
+                path: String::new(),
+            },
+            ExecutorConfig::Python {
+                path: String::new(),
+            },
+        ];
+
+        for executor in cases {
+            let mut hook = make_hook("Deploy", "deploy", "echo ok");
+            hook.executor = executor;
+            let config = valid_config_with_hooks(vec![hook]);
+            let err = config.validate().unwrap_err();
+            assert!(
+                err.to_string().contains("executor.path must be non-empty"),
+                "unexpected error: {err}"
+            );
+        }
     }
 
     #[test]

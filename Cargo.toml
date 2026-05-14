@@ -4,6 +4,25 @@ version = "0.0.2"
 authors = ["wavefunk"]
 description = "Simple HTTP webhook to command runner sidecar. Frontend for managing hooks, JSON state for config portability, SQLite for execution history and logs."
 edition = "2024"
+license = "MIT"
+homepage = "https://sendword.online"
+repository = "https://github.com/wavefunk/sendword"
+readme = "README.md"
+keywords = ["webhook", "automation", "sidecar", "http", "cli"]
+categories = ["command-line-utilities", "web-programming::http-server"]
+include = [
+    "src/**",
+    "templates/**",
+    "static/**",
+    "migrations/**",
+    "/Cargo.toml",
+    "/Cargo.lock",
+    "/build.rs",
+    "/README.md",
+    "/LICENSE",
+    "/sendword.toml",
+    "/sqlx.toml",
+]
 
 [[bin]]
 name = "sendword"
@@ -52,6 +71,8 @@ tempfile = "3.8"
 async-stream = "0.3"
 futures-core = "0.3"
 lettre = { version = "0.11", default-features = false, features = ["tokio1-rustls-tls", "smtp-transport", "builder"] }
+rust-embed = "8.11.0"
+mime_guess = "2.0.5"
 
 [build-dependencies]
 minijinja-embed = "2"
@@ -65,3 +86,8 @@ incremental = true
 
 [profile.dev.package.sqlx-macros]
 opt-level = 3
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"

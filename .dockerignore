@@ -1,0 +1,16 @@
+.git/
+.beads/
+.codex/
+.claude/
+.cargo/
+.direnv/
+.playwright/
+.playwright-cli/
+target/
+data/
+node_modules/
+website/dist/
+website/.eigen_cache/
+*.db
+*.db-shm
+*.db-wal

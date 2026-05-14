@@ -7,9 +7,8 @@ use std::sync::Arc;
 
 use sqlx::SqlitePool;
 
-use crate::config::{ApprovalConfig, ConcurrencyConfig, ConcurrencyMode, ExecutorConfig};
-use crate::executor::ResolvedExecutor;
-use crate::interpolation::interpolate_command;
+use crate::config::{ApprovalConfig, ConcurrencyConfig, ConcurrencyMode};
+use crate::executor::resolve_executor;
 use crate::models::trigger_attempt::TriggerAttemptStatus;
 use crate::models::{ExecutionStatus, execution};
 use crate::server::AppState;
@@ -155,44 +154,7 @@ async fn run_dequeued(
     };
 
     let timeout = hook.timeout.unwrap_or(app_config.defaults.timeout);
-    let resolved_executor = match &hook.executor {
-        ExecutorConfig::Shell { command } => {
-            let interpolated = if let Ok(payload_value) =
-                serde_json::from_str::<serde_json::Value>(&exec.request_payload)
-            {
-                interpolate_command(command, &payload_value).into_owned()
-            } else {
-                command.clone()
-            };
-            ResolvedExecutor::Shell {
-                command: interpolated,
-            }
-        }
-        ExecutorConfig::Script { path } => ResolvedExecutor::Script {
-            path: std::path::PathBuf::from(path),
-        },
-        ExecutorConfig::Http {
-            method,
-            url,
-            headers,
-            body,
-            follow_redirects,
-        } => {
-            let payload_value: serde_json::Value = serde_json::from_str(&exec.request_payload)
-                .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
-            let interpolated_url = interpolate_command(url, &payload_value).into_owned();
-            let interpolated_body = body
-                .as_deref()
-                .map(|b| interpolate_command(b, &payload_value).into_owned());
-            ResolvedExecutor::Http {
-                method: *method,
-                url: interpolated_url,
-                headers: headers.clone(),
-                body: interpolated_body,
-                follow_redirects: *follow_redirects,
-            }
-        }
-    };
+    let resolved_executor = resolve_executor(&hook.executor, &exec.request_payload);
 
     let notification_config = hook.notification.clone();
     let hook_snapshot = hook.clone();

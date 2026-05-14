@@ -9,8 +9,16 @@ use std::time::Duration;
 use sqlx::SqlitePool;
 use tokio::fs;
 
-use crate::config::HttpMethod;
+use crate::config::{ExecutorConfig, HttpMethod};
+use crate::interpolation::interpolate_command;
 use crate::models::ExecutionStatus;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScriptRuntime {
+    Direct,
+    JavaScript,
+    Python,
+}
 
 /// Which executor to use for a hook.
 #[derive(Clone)]
@@ -20,6 +28,7 @@ pub enum ResolvedExecutor {
     },
     Script {
         path: PathBuf,
+        runtime: ScriptRuntime,
     },
     Http {
         method: HttpMethod,
@@ -28,6 +37,56 @@ pub enum ResolvedExecutor {
         body: Option<String>,
         follow_redirects: bool,
     },
+}
+
+pub fn resolve_executor(config: &ExecutorConfig, payload_json: &str) -> ResolvedExecutor {
+    match config {
+        ExecutorConfig::Shell { command } => {
+            let interpolated = if let Ok(payload_value) =
+                serde_json::from_str::<serde_json::Value>(payload_json)
+            {
+                interpolate_command(command, &payload_value).into_owned()
+            } else {
+                command.clone()
+            };
+            ResolvedExecutor::Shell {
+                command: interpolated,
+            }
+        }
+        ExecutorConfig::Script { path } => ResolvedExecutor::Script {
+            path: PathBuf::from(path),
+            runtime: ScriptRuntime::Direct,
+        },
+        ExecutorConfig::JavaScript { path } => ResolvedExecutor::Script {
+            path: PathBuf::from(path),
+            runtime: ScriptRuntime::JavaScript,
+        },
+        ExecutorConfig::Python { path } => ResolvedExecutor::Script {
+            path: PathBuf::from(path),
+            runtime: ScriptRuntime::Python,
+        },
+        ExecutorConfig::Http {
+            method,
+            url,
+            headers,
+            body,
+            follow_redirects,
+        } => {
+            let payload_value: serde_json::Value = serde_json::from_str(payload_json)
+                .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+            let interpolated_url = interpolate_command(url, &payload_value).into_owned();
+            let interpolated_body = body
+                .as_deref()
+                .map(|b| interpolate_command(b, &payload_value).into_owned());
+            ResolvedExecutor::Http {
+                method: *method,
+                url: interpolated_url,
+                headers: headers.clone(),
+                body: interpolated_body,
+                follow_redirects: *follow_redirects,
+            }
+        }
+    }
 }
 
 /// Everything the executor needs to run a command.
@@ -114,7 +173,9 @@ pub(crate) fn system_env_vars() -> HashMap<String, String> {
 pub async fn run(pool: &SqlitePool, ctx: ExecutionContext) -> ExecutionResult {
     match &ctx.executor {
         ResolvedExecutor::Shell { command } => shell::run_shell(pool, &ctx, command).await,
-        ResolvedExecutor::Script { path } => script::run_script(pool, &ctx, path).await,
+        ResolvedExecutor::Script { path, runtime } => {
+            script::run_script(pool, &ctx, path, *runtime).await
+        }
         ResolvedExecutor::Http { .. } => {
             let client = ctx.http_client.clone().unwrap_or_default();
             http::run_http(pool, &ctx, &client).await
@@ -165,6 +226,101 @@ mod tests {
             "arbitrary env vars should not be inherited"
         );
         unsafe { std::env::remove_var("SENDWORD_TEST_ARBITRARY_XYZ_999") };
+    }
+
+    #[test]
+    fn resolve_shell_interpolates_payload_fields() {
+        let resolved = resolve_executor(
+            &ExecutorConfig::Shell {
+                command: "deploy {{ action }}".into(),
+            },
+            r#"{"action":"prod"}"#,
+        );
+
+        let ResolvedExecutor::Shell { command } = resolved else {
+            panic!("expected shell executor");
+        };
+        assert_eq!(command, "deploy 'prod'");
+    }
+
+    #[test]
+    fn resolve_direct_script_runtime() {
+        let resolved = resolve_executor(
+            &ExecutorConfig::Script {
+                path: "data/scripts/deploy.sh".into(),
+            },
+            "{}",
+        );
+
+        let ResolvedExecutor::Script { path, runtime } = resolved else {
+            panic!("expected script executor");
+        };
+        assert_eq!(path, PathBuf::from("data/scripts/deploy.sh"));
+        assert_eq!(runtime, ScriptRuntime::Direct);
+    }
+
+    #[test]
+    fn resolve_javascript_script_runtime() {
+        let resolved = resolve_executor(
+            &ExecutorConfig::JavaScript {
+                path: "data/scripts/deploy.js".into(),
+            },
+            "{}",
+        );
+
+        let ResolvedExecutor::Script { path, runtime } = resolved else {
+            panic!("expected script executor");
+        };
+        assert_eq!(path, PathBuf::from("data/scripts/deploy.js"));
+        assert_eq!(runtime, ScriptRuntime::JavaScript);
+    }
+
+    #[test]
+    fn resolve_python_script_runtime() {
+        let resolved = resolve_executor(
+            &ExecutorConfig::Python {
+                path: "data/scripts/deploy.py".into(),
+            },
+            "{}",
+        );
+
+        let ResolvedExecutor::Script { path, runtime } = resolved else {
+            panic!("expected script executor");
+        };
+        assert_eq!(path, PathBuf::from("data/scripts/deploy.py"));
+        assert_eq!(runtime, ScriptRuntime::Python);
+    }
+
+    #[test]
+    fn resolve_http_interpolates_url_and_body() {
+        let mut headers = HashMap::new();
+        headers.insert("X-Test".into(), "static".into());
+        let resolved = resolve_executor(
+            &ExecutorConfig::Http {
+                method: HttpMethod::Post,
+                url: "https://example.test/{{ action }}".into(),
+                headers: headers.clone(),
+                body: Some(r#"{"action":"{{ action }}"}"#.into()),
+                follow_redirects: false,
+            },
+            r#"{"action":"deploy"}"#,
+        );
+
+        let ResolvedExecutor::Http {
+            method,
+            url,
+            headers: resolved_headers,
+            body,
+            follow_redirects,
+        } = resolved
+        else {
+            panic!("expected http executor");
+        };
+        assert_eq!(method, HttpMethod::Post);
+        assert_eq!(url, "https://example.test/'deploy'");
+        assert_eq!(resolved_headers, headers);
+        assert_eq!(body.as_deref(), Some(r#"{"action":"'deploy'"}"#));
+        assert!(!follow_redirects);
     }
 
     #[tokio::test]

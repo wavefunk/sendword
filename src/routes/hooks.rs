@@ -18,9 +18,8 @@ use crate::config::{
 };
 use crate::config_writer::{self, HookFormData, RetryFormData, WriteError};
 use crate::error::AppError;
-use crate::executor::ResolvedExecutor;
+use crate::executor::resolve_executor;
 use crate::extractors::AuthUser;
-use crate::interpolation::interpolate_command;
 use crate::models::trigger_attempt::{NewTriggerAttempt, TriggerAttemptStatus};
 use crate::models::{ExecutionStatus, execution, trigger_attempt};
 use crate::payload::{FieldType, PayloadField, PayloadSchema};
@@ -211,45 +210,7 @@ async fn trigger_hook(
 
     let timeout = hook.timeout.unwrap_or(config.defaults.timeout);
 
-    let resolved_executor = match &hook.executor {
-        ExecutorConfig::Shell { command } => {
-            // Interpolate payload fields into command template
-            let interpolated = if let Ok(payload_value) =
-                serde_json::from_str::<serde_json::Value>(&payload_str)
-            {
-                interpolate_command(command, &payload_value).into_owned()
-            } else {
-                command.clone()
-            };
-            ResolvedExecutor::Shell {
-                command: interpolated,
-            }
-        }
-        ExecutorConfig::Script { path } => ResolvedExecutor::Script {
-            path: std::path::PathBuf::from(path),
-        },
-        ExecutorConfig::Http {
-            method,
-            url,
-            headers,
-            body,
-            follow_redirects,
-        } => {
-            let payload_value: serde_json::Value = serde_json::from_str(&payload_str)
-                .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
-            let interpolated_url = interpolate_command(url, &payload_value).into_owned();
-            let interpolated_body = body
-                .as_deref()
-                .map(|b| interpolate_command(b, &payload_value).into_owned());
-            ResolvedExecutor::Http {
-                method: *method,
-                url: interpolated_url,
-                headers: headers.clone(),
-                body: interpolated_body,
-                follow_redirects: *follow_redirects,
-            }
-        }
-    };
+    let resolved_executor = resolve_executor(&hook.executor, &payload_str);
 
     let env = hook.env.clone();
     let cwd = hook.cwd.clone();
@@ -554,10 +515,18 @@ async fn hook_detail(
     let total_pages = (total + EXECUTIONS_PER_PAGE - 1) / EXECUTIONS_PER_PAGE;
     let has_more = total_pages > 1;
 
-    let (executor_command, executor_type) = match &hook.executor {
-        ExecutorConfig::Shell { command } => (command.as_str(), "shell"),
-        ExecutorConfig::Script { path } => (path.as_str(), "script"),
-        ExecutorConfig::Http { url, .. } => (url.as_str(), "http"),
+    let (executor_command, executor_type, executor_value_label, is_script_like) = match &hook
+        .executor
+    {
+        ExecutorConfig::Shell { command } => (command.as_str(), "Shell", "Command", false),
+        ExecutorConfig::Script { path } => {
+            (path.as_str(), "Executable script", "Script path", true)
+        }
+        ExecutorConfig::JavaScript { path } => {
+            (path.as_str(), "JavaScript script", "Script path", true)
+        }
+        ExecutorConfig::Python { path } => (path.as_str(), "Python script", "Script path", true),
+        ExecutorConfig::Http { url, .. } => (url.as_str(), "HTTP", "URL", false),
     };
 
     // Check if the command references a script in the managed scripts directory.
@@ -566,7 +535,7 @@ async fn hook_detail(
         let scripts_dir = &config.scripts.dir;
         let cmd_path = std::path::Path::new(executor_command);
         // Match commands like "data/scripts/deploy.sh" against the scripts dir
-        if let Ok(stripped) = cmd_path.strip_prefix(scripts_dir) {
+        if is_script_like && let Ok(stripped) = cmd_path.strip_prefix(scripts_dir) {
             stripped
                 .to_str()
                 .filter(|name| !name.contains('/') && !name.is_empty())
@@ -681,6 +650,7 @@ async fn hook_detail(
             description => hook.description,
             enabled => hook.enabled,
             executor_type => executor_type,
+            executor_value_label => executor_value_label,
             executor_command => executor_command,
             script_edit_url => script_edit_url,
             cwd => hook.cwd,
@@ -870,6 +840,8 @@ struct HookForm {
     /// Checkbox: present with value "true" when checked, absent when unchecked.
     #[serde(default)]
     enabled: Option<String>,
+    #[serde(default)]
+    executor_type: String,
     command: String,
     #[serde(default)]
     cwd: String,
@@ -1274,12 +1246,22 @@ fn parse_hook_form(form: &HookForm) -> Result<HookFormData, String> {
         None
     };
 
+    let command = form.command.trim().to_owned();
+    let executor = match form.executor_type.trim() {
+        "" | "shell" => ExecutorConfig::Shell { command },
+        "script" => ExecutorConfig::Script { path: command },
+        "javascript" => ExecutorConfig::JavaScript { path: command },
+        "python" => ExecutorConfig::Python { path: command },
+        "http" => return Err(http_executor_form_error().to_owned()),
+        other => return Err(format!("unknown executor type '{other}'")),
+    };
+
     Ok(HookFormData {
         name: form.name.trim().to_owned(),
         slug: form.slug.trim().to_owned(),
         description: form.description.trim().to_owned(),
         enabled: form.enabled.is_some(),
-        command: form.command.trim().to_owned(),
+        executor,
         cwd,
         env,
         timeout,
@@ -1317,6 +1299,7 @@ async fn new_hook_form(
             form_slug => "",
             form_description => "",
             form_enabled => true,
+            form_executor_type => "shell",
             form_command => "",
             form_cwd => "",
             form_timeout => "",
@@ -1396,9 +1379,11 @@ async fn edit_hook_form(
         .find(|h| h.slug == slug)
         .ok_or(AppError::not_found("hook"))?;
 
-    let (command, _) = match &hook.executor {
+    let (command, executor_type) = match &hook.executor {
         ExecutorConfig::Shell { command } => (command.as_str(), "shell"),
         ExecutorConfig::Script { path } => (path.as_str(), "script"),
+        ExecutorConfig::JavaScript { path } => (path.as_str(), "javascript"),
+        ExecutorConfig::Python { path } => (path.as_str(), "python"),
         ExecutorConfig::Http { url, .. } => (url.as_str(), "http"),
     };
 
@@ -1542,6 +1527,7 @@ async fn edit_hook_form(
             form_slug => &hook.slug,
             form_description => &hook.description,
             form_enabled => hook.enabled,
+            form_executor_type => executor_type,
             form_command => command,
             form_cwd => hook.cwd.as_deref().unwrap_or(""),
             form_timeout => timeout_str,
@@ -1580,6 +1566,11 @@ async fn update_hook(
     Path(slug): Path<String>,
     Form(form): Form<HookForm>,
 ) -> Response {
+    if existing_hook_is_http(&state, &slug) {
+        let encoded = urlencoding::encode(http_executor_form_error());
+        return Redirect::to(&format!("/hooks/{slug}/edit?error={encoded}")).into_response();
+    }
+
     let data = match parse_hook_form(&form) {
         Ok(d) => d,
         Err(msg) => {
@@ -1600,6 +1591,19 @@ async fn update_hook(
     }
 
     Redirect::to(&format!("/hooks/{slug}?success=Changes+saved")).into_response()
+}
+
+fn existing_hook_is_http(state: &AppState, slug: &str) -> bool {
+    state
+        .config
+        .load()
+        .hooks
+        .iter()
+        .any(|hook| hook.slug == slug && matches!(hook.executor, ExecutorConfig::Http { .. }))
+}
+
+fn http_executor_form_error() -> &'static str {
+    "HTTP executors are not supported by this form"
 }
 
 // ---------------------------------------------------------------------------
@@ -1878,6 +1882,64 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_hook_with_javascript_executor_type() {
+        let (state, _dir) = test_state_with_config("[server]\nport = 8080\n").await;
+        let cookie = create_test_session(&state).await;
+
+        let resp = app(state.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/hooks/new")
+                    .header("Cookie", &cookie)
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    .body(Body::from(
+                        "name=Deploy+JS&slug=deploy-js&executor_type=javascript&command=data%2Fscripts%2Fdeploy.js&enabled=true",
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+
+        let config = state.config.load();
+        let ExecutorConfig::JavaScript { path } = &config.hooks[0].executor else {
+            panic!("expected JavaScript executor");
+        };
+        assert_eq!(path, "data/scripts/deploy.js");
+    }
+
+    #[tokio::test]
+    async fn create_hook_with_python_executor_type() {
+        let (state, _dir) = test_state_with_config("[server]\nport = 8080\n").await;
+        let cookie = create_test_session(&state).await;
+
+        let resp = app(state.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/hooks/new")
+                    .header("Cookie", &cookie)
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    .body(Body::from(
+                        "name=Deploy+Python&slug=deploy-python&executor_type=python&command=data%2Fscripts%2Fdeploy.py&enabled=true",
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+
+        let config = state.config.load();
+        let ExecutorConfig::Python { path } = &config.hooks[0].executor else {
+            panic!("expected Python executor");
+        };
+        assert_eq!(path, "data/scripts/deploy.py");
+    }
+
+    #[tokio::test]
     async fn create_hook_duplicate_slug_shows_error() {
         let toml = r#"[server]
 port = 8080
@@ -1966,6 +2028,42 @@ max_delay = "30s"
     }
 
     #[tokio::test]
+    async fn edit_hook_form_renders_existing_http_executor_as_http() {
+        let toml = r#"[server]
+port = 8080
+
+[[hooks]]
+name = "Notify"
+slug = "notify"
+[hooks.executor]
+type = "http"
+method = "POST"
+url = "https://example.com/webhook"
+"#;
+        let (state, _dir) = test_state_with_config(toml).await;
+        let cookie = create_test_session(&state).await;
+
+        let resp = app(state)
+            .oneshot(
+                Request::builder()
+                    .uri("/hooks/notify/edit")
+                    .header("Cookie", &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let html = String::from_utf8(body.to_vec()).unwrap();
+        assert!(html.contains(r#"<option value="http" selected"#));
+        assert!(html.contains("https://example.com/webhook"));
+    }
+
+    #[tokio::test]
     async fn edit_hook_form_not_found() {
         let (state, _dir) = test_state_with_config("[server]\nport = 8080\n").await;
         let cookie = create_test_session(&state).await;
@@ -2028,6 +2126,165 @@ command = "echo old"
             panic!("expected Shell executor");
         };
         assert_eq!(command, "echo new");
+    }
+
+    #[tokio::test]
+    async fn update_hook_preserves_javascript_executor_type() {
+        let toml = r#"[server]
+port = 8080
+
+[[hooks]]
+name = "Deploy JS"
+slug = "deploy-js"
+[hooks.executor]
+type = "javascript"
+path = "data/scripts/old.js"
+"#;
+        let (state, _dir) = test_state_with_config(toml).await;
+        let cookie = create_test_session(&state).await;
+
+        let resp = app(state.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/hooks/deploy-js/edit")
+                    .header("Cookie", &cookie)
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    .body(Body::from(
+                        "name=Deploy+JS&slug=deploy-js&executor_type=javascript&command=data%2Fscripts%2Fnew.js&enabled=true",
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+
+        let config = state.config.load();
+        let ExecutorConfig::JavaScript { path } = &config.hooks[0].executor else {
+            panic!("expected JavaScript executor");
+        };
+        assert_eq!(path, "data/scripts/new.js");
+    }
+
+    #[tokio::test]
+    async fn update_hook_preserves_python_executor_type() {
+        let toml = r#"[server]
+port = 8080
+
+[[hooks]]
+name = "Deploy Python"
+slug = "deploy-python"
+[hooks.executor]
+type = "python"
+path = "data/scripts/old.py"
+"#;
+        let (state, _dir) = test_state_with_config(toml).await;
+        let cookie = create_test_session(&state).await;
+
+        let resp = app(state.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/hooks/deploy-python/edit")
+                    .header("Cookie", &cookie)
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    .body(Body::from(
+                        "name=Deploy+Python&slug=deploy-python&executor_type=python&command=data%2Fscripts%2Fnew.py&enabled=true",
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+
+        let config = state.config.load();
+        let ExecutorConfig::Python { path } = &config.hooks[0].executor else {
+            panic!("expected Python executor");
+        };
+        assert_eq!(path, "data/scripts/new.py");
+    }
+
+    #[tokio::test]
+    async fn update_http_hook_rejects_shell_submission_and_preserves_executor() {
+        let toml = r#"[server]
+port = 8080
+
+[[hooks]]
+name = "Notify"
+slug = "notify"
+[hooks.executor]
+type = "http"
+method = "POST"
+url = "https://example.com/webhook"
+"#;
+        let (state, _dir) = test_state_with_config(toml).await;
+        let cookie = create_test_session(&state).await;
+
+        let resp = app(state.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/hooks/notify/edit")
+                    .header("Cookie", &cookie)
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    .body(Body::from(
+                        "name=Notify&slug=notify&executor_type=shell&command=echo+notify&enabled=true",
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+        let location = resp.headers().get("location").unwrap().to_str().unwrap();
+        assert!(location.starts_with("/hooks/notify/edit?error="));
+        assert!(location.contains("HTTP"));
+
+        let config = state.config.load();
+        let ExecutorConfig::Http { url, .. } = &config.hooks[0].executor else {
+            panic!("expected HTTP executor to be preserved");
+        };
+        assert_eq!(url, "https://example.com/webhook");
+    }
+
+    #[tokio::test]
+    async fn update_http_hook_rejects_http_submission_with_form_error() {
+        let toml = r#"[server]
+port = 8080
+
+[[hooks]]
+name = "Notify"
+slug = "notify"
+[hooks.executor]
+type = "http"
+method = "POST"
+url = "https://example.com/webhook"
+"#;
+        let (state, _dir) = test_state_with_config(toml).await;
+        let cookie = create_test_session(&state).await;
+
+        let resp = app(state)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/hooks/notify/edit")
+                    .header("Cookie", &cookie)
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    .body(Body::from(
+                        "name=Notify&slug=notify&executor_type=http&command=https%3A%2F%2Fexample.com%2Fwebhook&enabled=true",
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+        let location = resp.headers().get("location").unwrap().to_str().unwrap();
+        assert!(location.starts_with("/hooks/notify/edit?error="));
+        assert!(location.contains("HTTP"));
+        assert!(location.contains("not+supported") || location.contains("not%20supported"));
     }
 
     #[tokio::test]
