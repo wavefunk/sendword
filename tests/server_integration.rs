@@ -1213,11 +1213,15 @@ async fn execution_detail_shows_fallback_when_logs_missing() {
     assert_eq!(resp.status(), 200);
     let body = resp.text().await.unwrap();
 
-    // The fallback message should appear (at least twice, once for stdout and once for stderr)
+    // Stdout keeps an explicit empty-state fallback; empty stderr is omitted.
     let count = body.matches("No output captured.").count();
     assert!(
-        count >= 2,
-        "should show 'No output captured.' for both stdout and stderr, found {count} occurrences"
+        count == 1,
+        "should show stdout fallback once without an empty stderr fallback, found {count} occurrences"
+    );
+    assert!(
+        !body.contains(r#"<span class="wf-panel-title">STDERR</span>"#),
+        "should not show a stderr panel when no stderr output was captured"
     );
 }
 
