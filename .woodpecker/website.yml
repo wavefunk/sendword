@@ -1,0 +1,42 @@
+when:
+  - event: push
+    branch: main
+    path:
+      include:
+        - website/**
+        - .woodpecker/website.yml
+  - event: manual
+
+clone:
+  git:
+    image: woodpeckerci/plugin-git
+    settings:
+      partial: true
+      depth: 1
+      lfs: false
+      recursive: false
+
+steps:
+  - name: build
+    image: ghcr.io/wavefunk/eigen:0.17.1
+    pull: true
+    commands:
+      - cd website
+      - eigen build
+      - test -s dist/index.html
+
+  - name: deploy
+    image: node:22-slim
+    depends_on: [build]
+    environment:
+      CLOUDFLARE_API_TOKEN:
+        from_secret: cloudflare_api_token
+      CLOUDFLARE_ACCOUNT_ID:
+        from_secret: cloudflare_account_id
+      CLOUDFLARE_PAGES_PROJECT: sendword
+      WRANGLER_VERSION: "4.91.0"
+    commands:
+      - test -s website/dist/index.html
+      - '! find website/dist -type f -size +25M -print -quit | grep .'
+      - npm install --prefix .wrangler --no-audit --no-fund "wrangler@$WRANGLER_VERSION"
+      - ./.wrangler/node_modules/.bin/wrangler pages deploy website/dist --project-name="$CLOUDFLARE_PAGES_PROJECT" --branch="$CI_COMMIT_BRANCH" --commit-hash="$CI_COMMIT_SHA"
