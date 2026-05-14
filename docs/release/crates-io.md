@@ -34,11 +34,12 @@ cargo install sendword
    cargo publish --locked
    ```
 
-5. In crates.io, configure Trusted Publishing for this repository:
+5. Decide how crates.io publishing should be automated.
 
-   - Repository: `wavefunk/sendword`
-   - Workflow: `.github/workflows/publish-crate.yml`
-   - Environment: `release`
+   The repository no longer keeps GitHub or Forgejo Actions workflows. If
+   publishing is added to Woodpecker, create a crates.io API token and store it
+   as a Woodpecker secret. The publish step should expose that secret as
+   `CARGO_REGISTRY_TOKEN` before running `cargo publish --locked`.
 
 ## Release Flow
 
@@ -51,4 +52,6 @@ cargo install sendword
    git push origin v0.0.2
    ```
 
-4. GitHub Actions publishes the crate when the tag matches the Cargo package version.
+4. Publish the crate manually with `cargo publish --locked`, or push a matching
+   tag after a Woodpecker crates.io publishing workflow has been added and
+   configured with a crates.io API token.
