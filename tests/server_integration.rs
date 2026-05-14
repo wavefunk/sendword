@@ -34,9 +34,12 @@ async fn spawn_server(state: Arc<AppState>) -> String {
     let url = format!("http://{addr}");
 
     tokio::spawn(async move {
-        axum::serve(listener, sendword::server::into_service(state, axum::Router::new()))
-            .await
-            .expect("server");
+        axum::serve(
+            listener,
+            sendword::server::into_service(state, axum::Router::new()),
+        )
+        .await
+        .expect("server");
     });
 
     url
@@ -510,7 +513,10 @@ async fn hook_detail_renders_hook_config() {
     assert!(body.contains("30"), "should show timeout");
 
     // Breadcrumb navigation back to hooks list
-    assert!(body.contains("HOOKS"), "should have breadcrumb to hooks list");
+    assert!(
+        body.contains("HOOKS"),
+        "should have breadcrumb to hooks list"
+    );
 
     // Auth section is hidden when auth_mode is "none" (public hooks)
     assert!(
@@ -643,10 +649,7 @@ async fn hook_detail_shows_execution_history() {
     assert_eq!(resp.status(), 200);
     let body = resp.text().await.unwrap();
 
-    assert!(
-        body.contains("Executions"),
-        "should have executions tab"
-    );
+    assert!(body.contains("Executions"), "should have executions tab");
 
     // Test the HTMX partial endpoint
     let resp = client
@@ -1026,15 +1029,9 @@ async fn execution_detail_renders_metadata() {
     assert!(body.contains("10.0.0.5"), "should show trigger source");
 
     // Timing labels (uppercase in wf-dl)
-    assert!(
-        body.contains("TRIGGERED"),
-        "should show triggered at label"
-    );
+    assert!(body.contains("TRIGGERED"), "should show triggered at label");
     assert!(body.contains("STARTED"), "should show started at label");
-    assert!(
-        body.contains("COMPLETED"),
-        "should show completed at label"
-    );
+    assert!(body.contains("COMPLETED"), "should show completed at label");
     assert!(body.contains("DURATION"), "should show duration label");
 
     // Replay button (uppercase)
@@ -1297,10 +1294,7 @@ async fn execution_detail_shows_retry_info_when_replay() {
     // The new template only shows the RETRY row when retry_count > 0.
     // A directly-created replay (retry_count=0) won't render the section,
     // but the execution page should still render successfully.
-    assert!(
-        body.contains("DETAILS"),
-        "should show details panel"
-    );
+    assert!(body.contains("DETAILS"), "should show details panel");
     assert!(
         body.contains(&replay_id),
         "should show the replay execution ID"

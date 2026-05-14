@@ -159,11 +159,10 @@ pub async fn list_by_hook_filtered(
 }
 
 pub async fn count_by_hook(pool: &SqlitePool, hook_slug: &str) -> DbResult<i64> {
-    let row: (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM trigger_attempts WHERE hook_slug = ?")
-            .bind(hook_slug)
-            .fetch_one(pool)
-            .await?;
+    let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM trigger_attempts WHERE hook_slug = ?")
+        .bind(hook_slug)
+        .fetch_one(pool)
+        .await?;
     Ok(row.0)
 }
 

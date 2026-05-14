@@ -18,10 +18,7 @@ use crate::templates::context;
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/admin/users", get(list_users).post(create_user))
-        .route(
-            "/admin/users/{id}/delete",
-            axum::routing::post(delete_user),
-        )
+        .route("/admin/users/{id}/delete", axum::routing::post(delete_user))
 }
 
 // --- Query params for flash messages ---
@@ -144,7 +141,6 @@ async fn delete_user(
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -358,5 +354,4 @@ mod tests {
         let users = state.ath.db().list_users().await.unwrap();
         assert_eq!(users.len(), 1);
     }
-
 }
