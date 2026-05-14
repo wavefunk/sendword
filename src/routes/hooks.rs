@@ -300,21 +300,20 @@ async fn trigger_hook(
         .as_ref()
         .and_then(|r| r.rate_limit.as_ref())
         .is_some();
-    if !has_trigger_rl {
-        if let Some(rl) = hook_rate_limit_as_trigger(hook.rate_limit.as_ref())
-            && let trigger_rules::EvalOutcome::Reject { status, reason } =
-                rate_limit::evaluate(pool, &slug, &rl).await
-        {
-            log_rejection(pool, &slug, &source_ip, status.clone(), &reason).await;
-            return Err((
-                StatusCode::TOO_MANY_REQUESTS,
-                Json(serde_json::json!({
-                    "status": status.to_string(),
-                    "reason": reason,
-                })),
-            )
-                .into_response());
-        }
+    if !has_trigger_rl
+        && let Some(rl) = hook_rate_limit_as_trigger(hook.rate_limit.as_ref())
+        && let trigger_rules::EvalOutcome::Reject { status, reason } =
+            rate_limit::evaluate(pool, &slug, &rl).await
+    {
+        log_rejection(pool, &slug, &source_ip, status.clone(), &reason).await;
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(serde_json::json!({
+                "status": status.to_string(),
+                "reason": reason,
+            })),
+        )
+            .into_response());
     }
 
     // Pre-generate the execution ID so barriers can reference it before the record is created
