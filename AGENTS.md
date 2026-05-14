@@ -1,110 +1,42 @@
-# Agent Instructions
+# Project Overview : sendword
+Simple HTTP webhook to command runner sidecar. Frontend for managing hooks, JSON state for config portability, SQLite for execution history and logs. Supports authed hooks, trigger rules, custom payload definitions, configurable rate limiting, and command execution barriers.
 
-This project uses **bd** (beads) for issue tracking. Run `bd onboard` to get started.
+## Tech Stack
+Async runtime = Tokio
+Web framework = Axum
+Database = SQLite via SQLx
+Templating = MiniJinja
+Frontend = HTMX + Tailwind
 
-## Quick Reference
+## Local development
+Nix, direnv and flake to manage local dev environment
+just to run often used commands
 
-```bash
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --claim  # Claim work atomically
-bd close <id>         # Complete work
-bd dolt push          # Push beads data to remote
-```
+## Architecture Overview
 
-## Non-Interactive Shell Commands
+### Request Flow
+Axum handler → core logic → SQLx → MiniJinja template
 
-**ALWAYS use non-interactive flags** with file operations to avoid hanging on confirmation prompts.
+### Frontend Architecture
+HTMX + Tailwind for HTML pages. Templates in templates/. TypeScript bundled via esbuild.
 
-Shell commands like `cp`, `mv`, and `rm` may be aliased to include `-i` (interactive) mode on some systems, causing the agent to hang indefinitely waiting for y/n input.
+## Work Structure
+Always create a plan, then review, then implement.
+Always create a git branch for the work.
+Create atomic commits for coherent work done.
 
-**Use these forms instead:**
-```bash
-# Force overwrite without prompting
-cp -f source dest           # NOT: cp source dest
-mv -f source dest           # NOT: mv source dest
-rm -f file                  # NOT: rm file
+## Planning Style
+- Small milestones - never more than 5-10 tasks per milestone.
+- Each task single actionable item, not a group of outputs
+- use `br` for task tracking
 
-# For recursive operations
-rm -rf directory            # NOT: rm -r directory
-cp -rf source dest          # NOT: cp -r source dest
-```
+## Code Style
+- Idiomatic rust code
+- Optimized for readability first
+- Avoid long format!() chains and other allocations. Be memory efficient.
+- Write tests immediately after a feature.
+- Do not write "ceremony" tests that actually just test the library being used.
+- Do not use unwrap or expect unless its an invariant.
 
-**Other commands that may prompt:**
-- `scp` - use `-o BatchMode=yes` for non-interactive
-- `ssh` - use `-o BatchMode=yes` to fail instead of prompting
-- `apt-get` - use `-y` flag
-- `brew` - use `HOMEBREW_NO_AUTO_UPDATE=1` env var
-
-<!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
-## Beads Issue Tracker
-
-This project uses **bd (beads)** for issue tracking. Run `bd prime` to see full workflow context and commands.
-
-### Quick Reference
-
-```bash
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --claim  # Claim work
-bd close <id>         # Complete work
-```
-
-### Rules
-
-- Use `bd` for ALL task tracking — do NOT use TodoWrite, TaskCreate, or markdown TODO lists
-- Run `bd prime` for detailed command reference and session close protocol
-- Use `bd remember` for persistent knowledge — do NOT use MEMORY.md files
-
-## Session Completion
-
-**When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
-
-**MANDATORY WORKFLOW:**
-
-1. **File issues for remaining work** - Create issues for anything that needs follow-up
-2. **Run quality gates** (if code changed) - Tests, linters, builds
-3. **Update issue status** - Close finished work, update in-progress items
-4. **PUSH TO REMOTE** - This is MANDATORY:
-   ```bash
-   git pull --rebase
-   bd dolt push
-   git push
-   git status  # MUST show "up to date with origin"
-   ```
-5. **Clean up** - Clear stashes, prune remote branches
-6. **Verify** - All changes committed AND pushed
-7. **Hand off** - Provide context for next session
-
-**CRITICAL RULES:**
-- Work is NOT complete until `git push` succeeds
-- NEVER stop before pushing - that leaves work stranded locally
-- NEVER say "ready to push when you are" - YOU must push
-- If push fails, resolve and retry until it succeeds
-<!-- END BEADS INTEGRATION -->
-
-<!-- BEGIN YOUWHATKNOW INTEGRATION -->
-## File Summaries (youwhatknow)
-
-This project uses **youwhatknow** for automatic file summaries during Claude Code sessions.
-It works via hooks — no manual action needed.
-
-**How it works:**
-- Large files show a summary (description, symbols, line ranges) on first read
-- Read again for full content, or use offset/limit to target sections
-- Project structure is injected at session start
-
-**Useful commands:**
-```bash
-youwhatknow status              # Check daemon health
-youwhatknow status --json       # Machine-readable status
-youwhatknow reindex             # Refresh index after major changes
-youwhatknow reindex --full      # Full reindex (ignore change detection)
-youwhatknow summary <path>      # Preview a file summary
-youwhatknow reset <path>        # Reset read count for a file
-youwhatknow restart             # Restart daemon
-youwhatknow logs                # View daemon logs
-youwhatknow prime               # Full agent workflow context
-```
-
-<!-- END YOUWHATKNOW INTEGRATION -->
+## Available commands
+The just file has available commands. Be mindful of commands that you run often, add it to the justfile.
