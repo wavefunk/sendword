@@ -3266,7 +3266,7 @@ checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
 
 [[package]]
 name = "sendword"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "allowthem-core",
  "allowthem-server",
@@ -5164,11 +5164,3 @@ name = "zmij"
 version = "1.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
-
-[[patch.unused]]
-name = "allowthem-core"
-version = "0.0.6"
-
-[[patch.unused]]
-name = "allowthem-server"
-version = "0.0.6"
