@@ -14,17 +14,29 @@ clone:
 steps:
   - name: validate-release
     image: rust:1-bookworm
+    volumes:
+      - sendword-release-cache:/woodpecker-cache
     commands:
+      - mkdir -p /woodpecker-cache/target
+      - rm -rf target
+      - ln -s /woodpecker-cache/target target
       - sh scripts/ci/validate-release-tag.sh
 
   - name: build-artifacts
     image: rust:1-bookworm
     depends_on: [validate-release]
     environment:
+      CARGO_HOME: /woodpecker-cache/cargo
       R2_BUCKET: sendword-releases
       R2_PUBLIC_BASE_URL: https://releases.sendword.online
+      RUSTUP_HOME: /woodpecker-cache/rustup
       RUST_TOOLCHAIN: nightly-2026-01-05
+    volumes:
+      - sendword-release-cache:/woodpecker-cache
     commands:
+      - mkdir -p /woodpecker-cache/cargo /woodpecker-cache/rustup /woodpecker-cache/target
+      - rm -rf target
+      - ln -s /woodpecker-cache/target target
       - apt-get update
       - apt-get install -y --no-install-recommends ca-certificates mingw-w64 pkg-config libssl-dev zip
       - sh scripts/ci/build-release-artifacts.sh
@@ -37,18 +49,31 @@ steps:
         from_secret: cloudflare_api_token
       CLOUDFLARE_ACCOUNT_ID:
         from_secret: cloudflare_account_id
+      NPM_CONFIG_CACHE: /woodpecker-cache/npm
       R2_BUCKET: sendword-releases
       WRANGLER_VERSION: "4.91.0"
+      WRANGLER_BIN: /woodpecker-cache/wrangler/node_modules/.bin/wrangler
+      WRANGLER_PREFIX: /woodpecker-cache/wrangler
+    volumes:
+      - sendword-release-cache:/woodpecker-cache
     commands:
+      - mkdir -p /woodpecker-cache/docker-buildx /woodpecker-cache/npm "$WRANGLER_PREFIX" /woodpecker-cache/target
+      - rm -rf target
+      - ln -s /woodpecker-cache/target target
       - test -s target/release-upload/sendword-installer.sh
-      - npm install --prefix .wrangler --no-audit --no-fund "wrangler@$WRANGLER_VERSION"
+      - npm install --prefix "$WRANGLER_PREFIX" --prefer-offline --no-audit --no-fund "wrangler@$WRANGLER_VERSION"
       - sh scripts/ci/upload-r2-release.sh
 
   - name: publish-docker
     image: woodpeckerci/plugin-docker-buildx:5.1.0
     privileged: true
     depends_on: [upload-r2]
+    volumes:
+      - sendword-release-cache:/woodpecker-cache
     settings:
+      cache_from:
+        - type=local\,src=/woodpecker-cache/docker-buildx
+      cache_to: type=local,dest=/woodpecker-cache/docker-buildx,mode=max
       registry: ghcr.io
       repo: ghcr.io/wavefunk/sendword
       tags:
