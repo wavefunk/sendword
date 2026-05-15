@@ -1,6 +1,7 @@
 # Crates.io Release Setup
 
-`sendword` is published as a binary crate so users can install it with:
+`sendword` is not currently published as a binary crate. If crates.io
+publishing is added later, users should be able to install it with:
 
 ```sh
 cargo install sendword

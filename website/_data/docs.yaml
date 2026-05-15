@@ -11,14 +11,21 @@
 
     Install the latest Linux x86_64 binary:
 
-    ```
+    ```bash
     curl --proto '=https' --tlsv1.2 -LsSf https://releases.sendword.online/latest/sendword-installer.sh | sh
     ```
 
-    Or install via cargo:
+    Windows users can use PowerShell:
 
+    ```powershell
+    powershell -ExecutionPolicy Bypass -c "irm https://releases.sendword.online/latest/sendword-installer.ps1 | iex"
     ```
-    cargo install sendword
+
+    Or start the container image:
+
+    ```bash
+    mkdir -p data
+    docker run --rm -p 8080:8080 -v "$PWD/data:/data" ghcr.io/wavefunk/sendword:latest
     ```
 
     ## Create a configuration
@@ -66,13 +73,14 @@
   category: Getting Started
   description: "Installation options and requirements for sendword."
   content: |
-    Sendword is a single Rust binary with no runtime dependencies beyond SQLite.
+    Sendword ships as prebuilt release artifacts, a Docker image, and source code.
+    Cargo/crates.io publishing is not currently an install path.
 
-    ## Install script
+    ## Release installers
 
     Linux x86_64:
 
-    ```
+    ```bash
     curl --proto '=https' --tlsv1.2 -LsSf https://releases.sendword.online/latest/sendword-installer.sh | sh
     ```
 
@@ -82,14 +90,52 @@
     powershell -ExecutionPolicy Bypass -c "irm https://releases.sendword.online/latest/sendword-installer.ps1 | iex"
     ```
 
-    Set `SENDWORD_VERSION=v0.0.3` before running the installer to install a
-    specific release.
+    Both installers default to the latest release and install into
+    `$HOME/.cargo/bin`. Put that directory on your `PATH` before starting
+    sendword.
 
-    ## From cargo
+    Install a specific release by setting `SENDWORD_VERSION`:
 
+    ```bash
+    curl --proto '=https' --tlsv1.2 -LsSf https://releases.sendword.online/latest/sendword-installer.sh | SENDWORD_VERSION=v0.8.4 sh
     ```
-    cargo install sendword
+
+    In PowerShell:
+
+    ```powershell
+    $env:SENDWORD_VERSION = "v0.8.4"
+    powershell -ExecutionPolicy Bypass -c "irm https://releases.sendword.online/latest/sendword-installer.ps1 | iex"
     ```
+
+    Override the install directory with `SENDWORD_INSTALL_DIR`.
+
+    ## Docker
+
+    The official image is published to GitHub Container Registry:
+
+    ```bash
+    docker pull ghcr.io/wavefunk/sendword:latest
+    ```
+
+    Run with a mounted data directory:
+
+    ```bash
+    mkdir -p data
+    docker run --rm -p 8080:8080 -v "$PWD/data:/data" ghcr.io/wavefunk/sendword:latest
+    ```
+
+    Persistent files are written under `/data`. The image includes Node.js and
+    Python for webhook scripts that run inside the container.
+
+    ## Manual artifacts
+
+    Release archives and checksums are published under both `latest/` and the
+    version tag:
+
+    - `https://releases.sendword.online/latest/sendword-x86_64-unknown-linux-gnu.tar.gz`
+    - `https://releases.sendword.online/latest/sendword-x86_64-pc-windows-gnu.zip`
+    - `https://releases.sendword.online/latest/SHA256SUMS`
+    - `https://releases.sendword.online/v0.8.4/`
 
     ## From source
 
@@ -101,20 +147,20 @@
 
     The binary will be at `target/release/sendword`.
 
-    ## With Nix
+    ## Development shell
 
-    If you use Nix, sendword ships a flake:
+    If you use Nix and direnv, the repository dev shell provides the pinned
+    Rust toolchain and local build dependencies:
 
     ```bash
-    nix run github:wavefunk/sendword
+    direnv allow
     ```
-
-    Or add it to your development shell via `flake.nix`.
 
     ## Requirements
 
-    - Rust 1.80+ (for building from source)
-    - SQLite (bundled via SQLx)
+    - Linux x86_64 or Windows x86_64 for prebuilt release installers
+    - Docker for the container image
+    - Rust nightly `nightly-2026-01-05` for building from source
     - A directory with write access for the database and logs
 
 - title: "Configuration"

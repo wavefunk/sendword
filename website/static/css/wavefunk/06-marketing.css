@@ -21,7 +21,7 @@
 .mk-hero p { font-size: 17px; line-height: 1.55; color: var(--fg-muted); max-width: 54ch; margin: 0 0 32px; }
 .mk-hero-cta { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 .mk-hero-cta .sep { width: 1px; height: 28px; background: var(--hairline); }
-.mk-hero-cta .shell-line { font-family: var(--font-mono); font-size: 12px; color: var(--fg-muted); letter-spacing: 0.04em; }
+.mk-hero-cta .shell-line { font-family: var(--font-mono); font-size: 12px; color: var(--fg-muted); letter-spacing: 0.04em; max-width: 100%; overflow-wrap: anywhere; line-height: 1.45; }
 .mk-hero-cta .shell-line .prompt { color: var(--fg-faint); margin-right: 6px; }
 
 /* Stat strip */

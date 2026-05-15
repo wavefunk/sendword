@@ -2,7 +2,7 @@
 
 HTTP webhook receiver that runs commands. Define hooks in TOML, trigger them with HTTP requests, see results in a web dashboard.
 
-[Documentation](https://sendword.online) | [Install](https://releases.sendword.online/latest/sendword-installer.sh)
+[Documentation](https://sendword.online) | [Install](https://sendword.online/docs/installation)
 
 ## What it does
 
@@ -31,18 +31,10 @@ GitHub/CI/Monitoring ──HTTP POST──▶ sendword ──▶ shell command
 
 ## Quick start
 
-### Prerequisites
-
-- Rust nightly (the project pins `nightly-2026-01-05` via `rust-toolchain.toml`)
-- SQLite 3
-
-With [Nix](https://nixos.org/) and [direnv](https://direnv.net/), dependencies are managed automatically:
-
-```sh
-direnv allow
-```
-
 ### Install
+
+Prebuilt release artifacts are published for Linux x86_64 and Windows x86_64.
+The installers put `sendword` in `$HOME/.cargo/bin` by default.
 
 Linux x86_64:
 
@@ -56,7 +48,32 @@ Windows PowerShell:
 powershell -ExecutionPolicy Bypass -c "irm https://releases.sendword.online/latest/sendword-installer.ps1 | iex"
 ```
 
-### Build and run
+Install a specific release by setting `SENDWORD_VERSION`:
+
+```sh
+curl --proto '=https' --tlsv1.2 -LsSf https://releases.sendword.online/latest/sendword-installer.sh | SENDWORD_VERSION=v0.8.4 sh
+```
+
+Use Docker when you want sendword and its script runtimes packaged together:
+
+```sh
+mkdir -p data
+docker run --rm -p 8080:8080 -v "$PWD/data:/data" ghcr.io/wavefunk/sendword:latest
+```
+
+Manual archives and checksums are available at `https://releases.sendword.online/latest/`
+and under versioned prefixes such as `https://releases.sendword.online/v0.8.4/`.
+
+### Build from source
+
+Source builds require Rust nightly. The project pins `nightly-2026-01-05` via
+`rust-toolchain.toml`.
+
+With [Nix](https://nixos.org/) and [direnv](https://direnv.net/), dependencies are managed automatically:
+
+```sh
+direnv allow
+```
 
 ```sh
 # Build
