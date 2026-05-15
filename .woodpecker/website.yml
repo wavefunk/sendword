@@ -16,7 +16,12 @@ steps:
   - name: build
     image: ghcr.io/wavefunk/eigen:0.17.1
     pull: true
+    volumes:
+      - sendword-website-cache:/woodpecker-cache
     commands:
+      - mkdir -p /woodpecker-cache/eigen
+      - rm -rf website/.eigen_cache
+      - ln -s /woodpecker-cache/eigen website/.eigen_cache
       - cd website
       - eigen build
       - test -s dist/index.html
@@ -31,8 +36,12 @@ steps:
         from_secret: cloudflare_account_id
       CLOUDFLARE_PAGES_PROJECT: sendword
       WRANGLER_VERSION: "4.91.0"
+      WRANGLER_PREFIX: /woodpecker-cache/wrangler
+    volumes:
+      - sendword-website-cache:/woodpecker-cache
     commands:
       - test -s website/dist/index.html
       - '! find website/dist -type f -size +25M -print -quit | grep .'
-      - npm install --prefix .wrangler --no-audit --no-fund "wrangler@$WRANGLER_VERSION"
-      - ./.wrangler/node_modules/.bin/wrangler pages deploy website/dist --project-name="$CLOUDFLARE_PAGES_PROJECT" --branch="$CI_COMMIT_BRANCH" --commit-hash="$CI_COMMIT_SHA"
+      - mkdir -p "$WRANGLER_PREFIX"
+      - npm install --prefix "$WRANGLER_PREFIX" --prefer-offline --no-audit --no-fund "wrangler@$WRANGLER_VERSION"
+      - $WRANGLER_PREFIX/node_modules/.bin/wrangler pages deploy website/dist --project-name="$CLOUDFLARE_PAGES_PROJECT" --branch="$CI_COMMIT_BRANCH" --commit-hash="$CI_COMMIT_SHA"
