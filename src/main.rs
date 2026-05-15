@@ -127,28 +127,33 @@ async fn serve() -> eyre::Result<()> {
     let csrf_key = csrf_key_or_create().await?;
     tracing::info!("CSRF key ready");
 
-    let session_ttl = chrono::Duration::from_std(config.auth.session_lifetime)
-        .unwrap_or(chrono::Duration::hours(24));
-    let ath = AllowThemBuilder::with_pool(db.pool().clone())
-        .session_ttl(session_ttl)
-        .cookie_secure(config.auth.secure_cookie)
-        .csrf_key(csrf_key)
-        .build()
-        .await?;
-    let auth_client = Arc::new(EmbeddedAuthClient::new(ath.clone(), "/login"));
-    tracing::info!("allowthem auth ready");
-
-    let email_sender: Arc<dyn allowthem_core::EmailSender> = match &config.auth.smtp {
+    let email_sender: Box<dyn allowthem_core::EmailSender> = match &config.auth.smtp {
         Some(smtp_config) => {
             let sender = sendword::email::SmtpEmailSender::new(smtp_config)?;
             tracing::info!("SMTP email sender configured");
-            Arc::new(sender)
+            Box::new(sender)
         }
         None => {
             tracing::info!("no SMTP config — using log email sender");
-            Arc::new(LogEmailSender)
+            Box::new(LogEmailSender)
         }
     };
+
+    let session_ttl = chrono::Duration::from_std(config.auth.session_lifetime)
+        .unwrap_or(chrono::Duration::hours(24));
+    let mut ath_builder = AllowThemBuilder::with_pool(db.pool().clone())
+        .session_ttl(session_ttl)
+        .cookie_secure(config.auth.secure_cookie)
+        .csrf_key(csrf_key)
+        .email_sender(email_sender);
+
+    if let Some(base_url) = &config.auth.base_url {
+        ath_builder = ath_builder.base_url(base_url.clone());
+    }
+
+    let ath = ath_builder.build().await?;
+    let auth_client = Arc::new(EmbeddedAuthClient::new(ath.clone(), "/login"));
+    tracing::info!("allowthem auth ready");
 
     let branding = BrandingConfig::new("sendword").with_accent("#cba6f7", AccentInk::Black);
 
@@ -158,11 +163,10 @@ async fn serve() -> eyre::Result<()> {
         .settings()
         .default_branding(branding);
 
-    if config.auth.base_url.is_some() {
+    if let Some(base_url) = &config.auth.base_url {
         auth_routes_builder = auth_routes_builder
             .password_reset()
-            .email_sender(email_sender)
-            .base_url(config.auth.base_url.as_deref().unwrap().to_owned());
+            .base_url(base_url.clone());
     }
 
     let auth_router = auth_routes_builder.build(&ath)?;

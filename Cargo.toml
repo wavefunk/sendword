@@ -1,6 +1,6 @@
 [package]
 name = "sendword"
-version = "0.0.3"
+version = "0.8.1"
 authors = ["wavefunk"]
 description = "Simple HTTP webhook to command runner sidecar. Frontend for managing hooks, JSON state for config portability, SQLite for execution history and logs."
 edition = "2024"
@@ -29,8 +29,8 @@ name = "sendword"
 path = "src/main.rs"
 
 [dependencies]
-allowthem-core   = "0.0.5"
-allowthem-server = "0.0.5"
+allowthem-core   = "0.0.6"
+allowthem-server = "0.0.6"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 eyre = "0.6"
