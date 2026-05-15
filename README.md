@@ -58,7 +58,7 @@ The installers default to `latest`. To pin a release, set `SENDWORD_VERSION`
 to a version tag:
 
 ```sh
-curl --proto '=https' --tlsv1.2 -LsSf https://releases.sendword.online/latest/sendword-installer.sh | SENDWORD_VERSION=v0.8.6 sh
+curl --proto '=https' --tlsv1.2 -LsSf https://releases.sendword.online/latest/sendword-installer.sh | SENDWORD_VERSION=v0.8.7 sh
 ```
 
 Use Docker when you want sendword and its script runtimes packaged together:
@@ -70,7 +70,7 @@ docker run --rm -p 8080:8080 -v "$PWD/data:/data" ghcr.io/wavefunk/sendword:late
 
 Manual archives and checksums are available under
 `https://releases.sendword.online/latest/`. Replace `latest` with a version tag
-such as `v0.8.6` to download a specific release.
+such as `v0.8.7` to download a specific release.
 
 ### Build from source
 

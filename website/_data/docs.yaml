@@ -110,13 +110,13 @@
     `SENDWORD_VERSION` to a version tag:
 
     ```bash
-    curl --proto '=https' --tlsv1.2 -LsSf https://releases.sendword.online/latest/sendword-installer.sh | SENDWORD_VERSION=v0.8.6 sh
+    curl --proto '=https' --tlsv1.2 -LsSf https://releases.sendword.online/latest/sendword-installer.sh | SENDWORD_VERSION=v0.8.7 sh
     ```
 
     In PowerShell:
 
     ```powershell
-    $env:SENDWORD_VERSION = "v0.8.6"
+    $env:SENDWORD_VERSION = "v0.8.7"
     powershell -ExecutionPolicy Bypass -c "irm https://releases.sendword.online/latest/sendword-installer.ps1 | iex"
     ```
 
@@ -148,7 +148,7 @@
     - `https://releases.sendword.online/latest/sendword-x86_64-pc-windows-gnu.zip`
     - `https://releases.sendword.online/latest/SHA256SUMS`
 
-    Replace `latest` with a version tag such as `v0.8.6` to download a
+    Replace `latest` with a version tag such as `v0.8.7` to download a
     specific release.
 
     ## From source

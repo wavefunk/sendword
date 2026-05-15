@@ -2,7 +2,7 @@
 
 Woodpecker builds release artifacts when a `v*` tag is pushed. The tag must
 match the package version in `Cargo.toml`; for example, `Cargo.toml` version
-`0.8.6` must be tagged as `v0.8.6`.
+`0.8.7` must be tagged as `v0.8.7`.
 
 The release workflow builds:
 
@@ -40,7 +40,7 @@ The installers default to `latest`. To install a specific version, set
 `SENDWORD_VERSION` before running the installer:
 
 ```sh
-curl --proto '=https' --tlsv1.2 -LsSf https://releases.sendword.online/latest/sendword-installer.sh | SENDWORD_VERSION=v0.8.6 sh
+curl --proto '=https' --tlsv1.2 -LsSf https://releases.sendword.online/latest/sendword-installer.sh | SENDWORD_VERSION=v0.8.7 sh
 ```
 
 ## Maintainer Flow
@@ -50,8 +50,8 @@ curl --proto '=https' --tlsv1.2 -LsSf https://releases.sendword.online/latest/se
 3. Push a matching version tag:
 
    ```sh
-   git tag v0.8.6
-   git push origin v0.8.6
+   git tag v0.8.7
+   git push origin v0.8.7
    ```
 
 Woodpecker validates the tag, publishes the crate to crates.io, builds Linux
