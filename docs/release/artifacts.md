@@ -2,7 +2,7 @@
 
 Woodpecker builds release artifacts when a `v*` tag is pushed. The tag must
 match the package version in `Cargo.toml`; for example, `Cargo.toml` version
-`0.0.3` must be tagged as `v0.0.3`.
+`0.8.4` must be tagged as `v0.8.4`.
 
 The release workflow builds:
 
@@ -34,7 +34,7 @@ To install a specific version, set `SENDWORD_VERSION` before running the
 installer:
 
 ```sh
-SENDWORD_VERSION=v0.0.3 curl --proto '=https' --tlsv1.2 -LsSf https://releases.sendword.online/latest/sendword-installer.sh | sh
+curl --proto '=https' --tlsv1.2 -LsSf https://releases.sendword.online/latest/sendword-installer.sh | SENDWORD_VERSION=v0.8.4 sh
 ```
 
 ## Maintainer Flow
@@ -44,12 +44,25 @@ SENDWORD_VERSION=v0.0.3 curl --proto '=https' --tlsv1.2 -LsSf https://releases.s
 3. Push a matching version tag:
 
    ```sh
-   git tag v0.0.3
-   git push origin v0.0.3
+   git tag v0.8.4
+   git push origin v0.8.4
    ```
 
 Woodpecker validates the tag, builds Linux and Windows artifacts, uploads the
 artifacts and installers to R2, and publishes the Docker image to GHCR.
+
+## R2 Upload Verification
+
+`wrangler r2 object put` must include `--remote`. Without it, Wrangler writes to
+local R2 storage inside the CI container, prints `Upload complete`, and the real
+Cloudflare R2 bucket remains empty. The release logs should not say
+`Resource location: local`.
+
+After upload, verify one public object:
+
+```sh
+curl -f https://releases.sendword.online/latest/SHA256SUMS
+```
 
 ## Cloudflare Setup
 

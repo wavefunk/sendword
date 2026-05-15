@@ -37,15 +37,22 @@ upload_one() {
     src="$1"
     key="$2"
     type="$(content_type "$(basename "$src")")"
-    "$wrangler" r2 object put "$bucket/$key" --file "$src" --content-type "$type"
+    "$wrangler" r2 object put "$bucket/$key" --remote --file "$src" --content-type "$type"
 }
 
+uploaded=0
 for src in "$out_dir"/*; do
     [ -f "$src" ] || continue
     name="$(basename "$src")"
     [ "$name" = "release.env" ] && continue
     upload_one "$src" "$tag/$name"
     upload_one "$src" "latest/$name"
+    uploaded=$((uploaded + 1))
 done
+
+if [ "$uploaded" -eq 0 ]; then
+    echo "No release artifacts found in $out_dir" >&2
+    exit 1
+fi
 
 echo "Uploaded release artifacts to R2 bucket $bucket under $tag/ and latest/"
