@@ -1,6 +1,6 @@
 [package]
 name = "sendword"
-version = "0.8.1"
+version = "0.8.2"
 authors = ["wavefunk"]
 description = "Simple HTTP webhook to command runner sidecar. Frontend for managing hooks, JSON state for config portability, SQLite for execution history and logs."
 edition = "2024"
