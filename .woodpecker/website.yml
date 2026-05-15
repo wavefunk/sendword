@@ -5,7 +5,7 @@ when:
 
 clone:
   git:
-    image: woodpeckerci/plugin-git
+    image: docker.io/woodpeckerci/plugin-git:2.9.0
     settings:
       partial: true
       depth: 1
