@@ -7,9 +7,9 @@ docker pull ghcr.io/wavefunk/sendword:latest
 ```
 
 Woodpecker publishes the image when a matching `v*` release tag is pushed. The
-tag `v0.8.4` publishes:
+tag `v0.8.5` publishes:
 
-- `ghcr.io/wavefunk/sendword:0.8.4`
+- `ghcr.io/wavefunk/sendword:0.8.5`
 - `ghcr.io/wavefunk/sendword:latest`
 
 Run with a mounted data directory:

@@ -94,16 +94,17 @@
     `$HOME/.cargo/bin`. Put that directory on your `PATH` before starting
     sendword.
 
-    Install a specific release by setting `SENDWORD_VERSION`:
+    The installers default to `latest`. To pin a release, set
+    `SENDWORD_VERSION` to a version tag:
 
     ```bash
-    curl --proto '=https' --tlsv1.2 -LsSf https://releases.sendword.online/latest/sendword-installer.sh | SENDWORD_VERSION=v0.8.4 sh
+    curl --proto '=https' --tlsv1.2 -LsSf https://releases.sendword.online/latest/sendword-installer.sh | SENDWORD_VERSION=v0.8.5 sh
     ```
 
     In PowerShell:
 
     ```powershell
-    $env:SENDWORD_VERSION = "v0.8.4"
+    $env:SENDWORD_VERSION = "v0.8.5"
     powershell -ExecutionPolicy Bypass -c "irm https://releases.sendword.online/latest/sendword-installer.ps1 | iex"
     ```
 
@@ -129,13 +130,14 @@
 
     ## Manual artifacts
 
-    Release archives and checksums are published under both `latest/` and the
-    version tag:
+    Release archives and checksums are published under `latest/`:
 
     - `https://releases.sendword.online/latest/sendword-x86_64-unknown-linux-gnu.tar.gz`
     - `https://releases.sendword.online/latest/sendword-x86_64-pc-windows-gnu.zip`
     - `https://releases.sendword.online/latest/SHA256SUMS`
-    - `https://releases.sendword.online/v0.8.4/`
+
+    Replace `latest` with a version tag such as `v0.8.5` to download a
+    specific release.
 
     ## From source
 

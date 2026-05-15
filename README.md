@@ -48,10 +48,11 @@ Windows PowerShell:
 powershell -ExecutionPolicy Bypass -c "irm https://releases.sendword.online/latest/sendword-installer.ps1 | iex"
 ```
 
-Install a specific release by setting `SENDWORD_VERSION`:
+The installers default to `latest`. To pin a release, set `SENDWORD_VERSION`
+to a version tag:
 
 ```sh
-curl --proto '=https' --tlsv1.2 -LsSf https://releases.sendword.online/latest/sendword-installer.sh | SENDWORD_VERSION=v0.8.4 sh
+curl --proto '=https' --tlsv1.2 -LsSf https://releases.sendword.online/latest/sendword-installer.sh | SENDWORD_VERSION=v0.8.5 sh
 ```
 
 Use Docker when you want sendword and its script runtimes packaged together:
@@ -61,8 +62,9 @@ mkdir -p data
 docker run --rm -p 8080:8080 -v "$PWD/data:/data" ghcr.io/wavefunk/sendword:latest
 ```
 
-Manual archives and checksums are available at `https://releases.sendword.online/latest/`
-and under versioned prefixes such as `https://releases.sendword.online/v0.8.4/`.
+Manual archives and checksums are available under
+`https://releases.sendword.online/latest/`. Replace `latest` with a version tag
+such as `v0.8.5` to download a specific release.
 
 ### Build from source
 

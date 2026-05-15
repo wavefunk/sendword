@@ -2,7 +2,7 @@
 
 Woodpecker builds release artifacts when a `v*` tag is pushed. The tag must
 match the package version in `Cargo.toml`; for example, `Cargo.toml` version
-`0.8.4` must be tagged as `v0.8.4`.
+`0.8.5` must be tagged as `v0.8.5`.
 
 The release workflow builds:
 
@@ -30,11 +30,11 @@ Windows PowerShell:
 powershell -ExecutionPolicy Bypass -c "irm https://releases.sendword.online/latest/sendword-installer.ps1 | iex"
 ```
 
-To install a specific version, set `SENDWORD_VERSION` before running the
-installer:
+The installers default to `latest`. To install a specific version, set
+`SENDWORD_VERSION` before running the installer:
 
 ```sh
-curl --proto '=https' --tlsv1.2 -LsSf https://releases.sendword.online/latest/sendword-installer.sh | SENDWORD_VERSION=v0.8.4 sh
+curl --proto '=https' --tlsv1.2 -LsSf https://releases.sendword.online/latest/sendword-installer.sh | SENDWORD_VERSION=v0.8.5 sh
 ```
 
 ## Maintainer Flow
@@ -44,8 +44,8 @@ curl --proto '=https' --tlsv1.2 -LsSf https://releases.sendword.online/latest/se
 3. Push a matching version tag:
 
    ```sh
-   git tag v0.8.4
-   git push origin v0.8.4
+   git tag v0.8.5
+   git push origin v0.8.5
    ```
 
 Woodpecker validates the tag, builds Linux and Windows artifacts, uploads the
