@@ -1,7 +1,6 @@
 # Crates.io Release Setup
 
-`sendword` is not currently published as a binary crate. If crates.io
-publishing is added later, users should be able to install it with:
+`sendword` is published as a binary crate. Users can install it with:
 
 ```sh
 cargo install sendword
@@ -29,18 +28,13 @@ cargo install sendword
    cargo publish --dry-run --locked
    ```
 
-4. Publish the first version manually if crates.io requires an existing crate before trusted publishing can be configured:
+4. Create a crates.io API token and store it as the Woodpecker secret
+   `cargo_registry_token`.
 
-   ```sh
-   cargo publish --locked
-   ```
-
-5. Decide how crates.io publishing should be automated.
-
-   The repository no longer keeps GitHub or Forgejo Actions workflows. If
-   publishing is added to Woodpecker, create a crates.io API token and store it
-   as a Woodpecker secret. The publish step should expose that secret as
-   `CARGO_REGISTRY_TOKEN` before running `cargo publish --locked`.
+The Woodpecker release workflow exposes that secret to the `publish-crate` step
+as `CARGO_REGISTRY_TOKEN`. The step uses the same Cargo registry and target
+cache volume as the release artifact build, and it runs before `build-artifacts`
+so Cargo package verification warms the cache for the release binaries.
 
 ## Release Flow
 
@@ -53,6 +47,5 @@ cargo install sendword
    git push origin v0.0.2
    ```
 
-4. Publish the crate manually with `cargo publish --locked`, or push a matching
-   tag after a Woodpecker crates.io publishing workflow has been added and
-   configured with a crates.io API token.
+4. Push a matching tag. Woodpecker validates the tag, publishes the crate to
+   crates.io, then builds and uploads the other release artifacts.

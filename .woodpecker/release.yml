@@ -23,12 +23,30 @@ steps:
       - ln -s /woodpecker-cache/target target
       - sh scripts/ci/validate-release-tag.sh
 
-  - name: build-artifacts
+  - name: publish-crate
     image: git.wavefunk.io/wavefunk/ci-rust:nightly-2026-01-05
     pull: true
     depends_on: [validate-release]
     environment:
       CARGO_HOME: /woodpecker-cache/cargo
+      CARGO_REGISTRY_TOKEN:
+        from_secret: cargo_registry_token
+      CARGO_TARGET_DIR: /woodpecker-cache/target
+    volumes:
+      - sendword-release-cache:/woodpecker-cache
+    commands:
+      - mkdir -p /woodpecker-cache/cargo /woodpecker-cache/target
+      - rm -rf target
+      - ln -s /woodpecker-cache/target target
+      - sh scripts/ci/publish-crate.sh
+
+  - name: build-artifacts
+    image: git.wavefunk.io/wavefunk/ci-rust:nightly-2026-01-05
+    pull: true
+    depends_on: [publish-crate]
+    environment:
+      CARGO_HOME: /woodpecker-cache/cargo
+      CARGO_TARGET_DIR: /woodpecker-cache/target
       R2_BUCKET: sendword-releases
       R2_PUBLIC_BASE_URL: https://releases.sendword.online
       RUST_TOOLCHAIN: nightly-2026-01-05

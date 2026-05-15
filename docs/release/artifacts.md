@@ -2,7 +2,7 @@
 
 Woodpecker builds release artifacts when a `v*` tag is pushed. The tag must
 match the package version in `Cargo.toml`; for example, `Cargo.toml` version
-`0.8.5` must be tagged as `v0.8.5`.
+`0.8.6` must be tagged as `v0.8.6`.
 
 The release workflow builds:
 
@@ -17,6 +17,12 @@ both the versioned tag prefix and `latest/`. The public bucket domain is
 expected to be `https://releases.sendword.online`.
 
 ## User Install Commands
+
+Crates.io:
+
+```sh
+cargo install sendword
+```
 
 Linux x86_64:
 
@@ -34,7 +40,7 @@ The installers default to `latest`. To install a specific version, set
 `SENDWORD_VERSION` before running the installer:
 
 ```sh
-curl --proto '=https' --tlsv1.2 -LsSf https://releases.sendword.online/latest/sendword-installer.sh | SENDWORD_VERSION=v0.8.5 sh
+curl --proto '=https' --tlsv1.2 -LsSf https://releases.sendword.online/latest/sendword-installer.sh | SENDWORD_VERSION=v0.8.6 sh
 ```
 
 ## Maintainer Flow
@@ -44,17 +50,21 @@ curl --proto '=https' --tlsv1.2 -LsSf https://releases.sendword.online/latest/se
 3. Push a matching version tag:
 
    ```sh
-   git tag v0.8.5
-   git push origin v0.8.5
+   git tag v0.8.6
+   git push origin v0.8.6
    ```
 
-Woodpecker validates the tag, builds Linux and Windows artifacts, uploads the
-artifacts and installers to R2, and publishes the Docker image to GHCR.
+Woodpecker validates the tag, publishes the crate to crates.io, builds Linux
+and Windows artifacts, uploads the artifacts and installers to R2, and publishes
+the Docker image to GHCR.
 
 The release workflow uses `git.wavefunk.io/wavefunk/ci-rust:nightly-2026-01-05`
 for validation and artifact builds. That image already contains the pinned Rust
 toolchain, Linux and Windows target support, MinGW, OpenSSL headers, pkg-config,
 and zip, so the release pipeline does not install those packages at runtime.
+The crates.io publish step runs before artifact builds and shares
+`/woodpecker-cache/cargo` plus `/woodpecker-cache/target` with them, so publish
+verification warms the same Cargo cache used by the release binaries.
 
 ## R2 Upload Verification
 
@@ -88,8 +98,12 @@ Required Woodpecker secrets:
 
 - `cloudflare_api_token`
 - `cloudflare_account_id`
+- `cargo_registry_token`
 - `ghcr_username`
 - `ghcr_token`
+
+`cargo_registry_token` must be a crates.io API token with permission to publish
+`sendword`.
 
 `ghcr_token` must be a GitHub token with permission to push packages to
 `ghcr.io/wavefunk/sendword`.
