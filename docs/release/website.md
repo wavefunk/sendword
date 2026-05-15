@@ -3,10 +3,10 @@
 The website is deployed to Cloudflare Pages by Woodpecker from
 `.woodpecker/website.yml`.
 
-The workflow runs on pushes to `main` that touch `website/**` or the workflow
-itself, and it can also be started manually in Woodpecker. It builds
-`website/` with `ghcr.io/wavefunk/eigen:0.17.1`, then uploads `website/dist`
-to the Cloudflare Pages project named `sendword` with Wrangler.
+The workflow runs on pushes to `main`, and it can also be started manually in
+Woodpecker. It builds `website/` with `ghcr.io/wavefunk/eigen:0.17.1`, then
+uploads `website/dist` to the Cloudflare Pages project named `sendword` with
+Wrangler from `git.wavefunk.io/wavefunk/ci-node:node-22-wrangler-4.91.0`.
 
 ## Cloudflare Setup
 
@@ -39,10 +39,15 @@ The release pipeline also uploads artifacts to R2 with the same token. Include
 `Account > Workers R2 Storage > Edit` on this token, or replace it with another
 Cloudflare token that can edit both Pages and R2.
 
+The deploy step pulls the private `git.wavefunk.io/wavefunk/ci-node` image. In
+Woodpecker, add registry credentials for the `git.wavefunk.io` hostname with
+package read access before running the website workflow.
+
 For the website workflow, enable both secrets for push and manual events. The
 release workflow also uses them on tag events for R2 uploads, so keep tag events
 enabled if the same token is shared. If Woodpecker allows image/plugin filtering
-for these secrets, restrict them to `node:22-slim`.
+for these secrets, restrict them to
+`git.wavefunk.io/wavefunk/ci-node:node-22-wrangler-4.91.0`.
 
 ## Cloudflare API Token
 

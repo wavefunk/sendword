@@ -27,7 +27,8 @@ steps:
       - test -s dist/index.html
 
   - name: deploy
-    image: node:22-slim
+    image: git.wavefunk.io/wavefunk/ci-node:node-22-wrangler-4.91.0
+    pull: true
     depends_on: [build]
     environment:
       CLOUDFLARE_API_TOKEN:
@@ -35,13 +36,10 @@ steps:
       CLOUDFLARE_ACCOUNT_ID:
         from_secret: cloudflare_account_id
       CLOUDFLARE_PAGES_PROJECT: sendword
-      WRANGLER_VERSION: "4.91.0"
-      WRANGLER_PREFIX: /woodpecker-cache/wrangler
+      WRANGLER_BIN: /usr/local/bin/wrangler
     volumes:
       - sendword-website-cache:/woodpecker-cache
     commands:
       - test -s website/dist/index.html
       - '! find website/dist -type f -size +25M -print -quit | grep .'
-      - mkdir -p "$WRANGLER_PREFIX"
-      - npm install --prefix "$WRANGLER_PREFIX" --prefer-offline --no-audit --no-fund "wrangler@$WRANGLER_VERSION"
-      - $WRANGLER_PREFIX/node_modules/.bin/wrangler pages deploy website/dist --project-name="$CLOUDFLARE_PAGES_PROJECT" --branch="$CI_COMMIT_BRANCH" --commit-hash="$CI_COMMIT_SHA"
+      - $WRANGLER_BIN pages deploy website/dist --project-name="$CLOUDFLARE_PAGES_PROJECT" --branch="$CI_COMMIT_BRANCH" --commit-hash="$CI_COMMIT_SHA"

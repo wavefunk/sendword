@@ -51,6 +51,11 @@ curl --proto '=https' --tlsv1.2 -LsSf https://releases.sendword.online/latest/se
 Woodpecker validates the tag, builds Linux and Windows artifacts, uploads the
 artifacts and installers to R2, and publishes the Docker image to GHCR.
 
+The release workflow uses `git.wavefunk.io/wavefunk/ci-rust:nightly-2026-01-05`
+for validation and artifact builds. That image already contains the pinned Rust
+toolchain, Linux and Windows target support, MinGW, OpenSSL headers, pkg-config,
+and zip, so the release pipeline does not install those packages at runtime.
+
 ## R2 Upload Verification
 
 `wrangler r2 object put` must include `--remote`. Without it, Wrangler writes to
@@ -70,6 +75,11 @@ Create a bucket named `sendword-releases` in the same Cloudflare account as
 `sendword.online`. Attach the custom domain `releases.sendword.online` to the
 bucket and allow public access through that custom domain.
 
+The workflow pulls private CI images from `git.wavefunk.io`. In Woodpecker,
+add registry credentials for the `git.wavefunk.io` hostname with package read
+access before running a release build. These registry credentials are separate
+from step secrets; Woodpecker uses them only when pulling the step images.
+
 The same Woodpecker Cloudflare token used for Pages can be used if it also has
 `Account > Workers R2 Storage > Edit`. Otherwise create a separate token and
 store it as `cloudflare_api_token`.
@@ -85,5 +95,6 @@ Required Woodpecker secrets:
 `ghcr.io/wavefunk/sendword`.
 
 Enable the Cloudflare and GHCR secrets for tag events. If Woodpecker allows
-image/plugin filtering, restrict the Cloudflare secrets to `node:22-slim` and
-the GHCR secrets to `woodpeckerci/plugin-docker-buildx`.
+image/plugin filtering, restrict the Cloudflare secrets to
+`git.wavefunk.io/wavefunk/ci-node:node-22-wrangler-4.91.0` and the GHCR secrets
+to `woodpeckerci/plugin-docker-buildx`.
