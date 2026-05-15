@@ -76,6 +76,7 @@ steps:
       cache_to: type=local,dest=/woodpecker-cache/docker-buildx,mode=max
       registry: ghcr.io
       repo: ghcr.io/wavefunk/sendword
+      target: release-runtime
       tags:
         - ${CI_COMMIT_TAG##v}
         - latest

@@ -20,7 +20,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cargo build --release --bin sendword --locked && \
     cp target/release/sendword /tmp/sendword
 
-FROM debian:bookworm-slim AS runtime
+FROM debian:bookworm-slim AS runtime-base
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ca-certificates \
@@ -33,7 +33,6 @@ RUN apt-get update && \
     useradd --uid 1000 --gid sendword --home-dir /home/sendword \
         --create-home --shell /usr/sbin/nologin sendword
 
-COPY --from=builder /tmp/sendword /usr/local/bin/sendword
 COPY docker-entrypoint.sh /usr/local/bin/sendword-docker-entrypoint
 
 RUN mkdir -p /data && \
@@ -49,7 +48,13 @@ ENV HOME=/home/sendword
 
 EXPOSE 8080
 
-USER sendword
-
 ENTRYPOINT ["sendword-docker-entrypoint"]
 CMD ["sendword", "serve"]
+
+FROM runtime-base AS release-runtime
+COPY --chmod=0755 .docker-release/sendword /usr/local/bin/sendword
+USER sendword
+
+FROM runtime-base AS runtime
+COPY --chmod=0755 --from=builder /tmp/sendword /usr/local/bin/sendword
+USER sendword

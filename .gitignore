@@ -1,4 +1,5 @@
 /target
+/.docker-release/
 /.direnv/
 /.envrc.private
 .env

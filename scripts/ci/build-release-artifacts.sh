@@ -4,6 +4,7 @@ set -eu
 export PATH="/usr/local/cargo/bin:$HOME/.cargo/bin:$PATH"
 
 out_dir="${RELEASE_OUT_DIR:-target/release-upload}"
+docker_dir="${RELEASE_DOCKER_DIR:-.docker-release}"
 env_file="$out_dir/release.env"
 if [ -f "$env_file" ]; then
     # shellcheck disable=SC1090
@@ -36,6 +37,11 @@ cargo "+$toolchain" build --release --locked --bin sendword --target "$windows_t
 
 rm -rf "$out_dir"
 mkdir -p "$out_dir"
+rm -rf "$docker_dir"
+mkdir -p "$docker_dir"
+cp "target/$linux_target/release/sendword" "$docker_dir/sendword"
+chmod 0755 "$docker_dir/sendword"
+
 work_dir="$(mktemp -d)"
 trap 'rm -rf "$work_dir"' EXIT
 
