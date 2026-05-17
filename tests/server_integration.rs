@@ -84,6 +84,36 @@ fn client_no_redirect() -> reqwest::Client {
         .unwrap()
 }
 
+fn assert_wavefunk_app_shell(body: &str) {
+    assert!(body.contains(r#"<!doctype html>"#));
+    assert!(body.contains(r#"<html lang="en" data-mode="dark">"#));
+    assert!(body.contains(r#"<body class="wf-app density-dense" hx-boost="true">"#));
+    assert!(body.contains(r#"<div class="wf-shell">"#));
+    assert!(body.contains(r#"/static/wavefunk/css/wavefunk.css"#));
+    assert!(body.contains(r#"/static/wavefunk/js/htmx.min.js"#));
+    assert!(body.contains(r#"/static/wavefunk/js/wavefunk.js"#));
+    assert!(body.contains(r#"id="toast-host""#));
+    assert!(!body.contains(r#"/static/css/wavefunk.css"#));
+    assert!(!body.contains(r#"/static/js/echo.js"#));
+    assert!(!body.contains("unpkg.com/htmx"));
+}
+
+fn assert_authenticated_app_chrome(body: &str) {
+    assert_wavefunk_app_shell(body);
+    assert!(body.contains(r#"<nav class="wf-nav-list" id="app-nav">"#));
+    assert!(body.contains(r#"class="wf-sidebar-profile"#));
+    assert!(body.contains(r#"href="/settings""#));
+    assert!(body.contains(r#"hx-post="/logout""#));
+    assert!(body.contains(r#"/static/js/sendword.js"#));
+}
+
+fn assert_htmx_partial_response(body: &str) {
+    assert!(!body.contains(r#"<!doctype html>"#));
+    assert!(!body.contains(r#"<body class="wf-app"#));
+    assert!(!body.contains(r#"/static/wavefunk/js/wavefunk.js"#));
+    assert!(!body.contains(r#"/static/js/sendword.js"#));
+}
+
 #[tokio::test]
 async fn healthz_returns_ok() {
     let url = spawn_test_server().await;
@@ -118,6 +148,7 @@ async fn dashboard_returns_html() {
         .unwrap();
     assert_eq!(resp.status(), 200);
     let body = resp.text().await.unwrap();
+    assert_authenticated_app_chrome(&body);
     assert!(body.contains("sendword"));
     assert!(body.contains("Hooks"));
 }
@@ -130,7 +161,8 @@ async fn nonexistent_route_returns_404() {
     let body = resp.text().await.unwrap();
     assert!(body.contains("PAGE NOT FOUND"));
     assert!(body.contains("BACK TO DASHBOARD"));
-    assert!(body.contains("/static/wavefunk/css/wavefunk.css"));
+    assert_wavefunk_app_shell(&body);
+    assert!(!body.contains(r#"/static/js/sendword.js"#));
     assert!(!body.contains(r#"hx-post="/logout""#));
 }
 
@@ -687,7 +719,11 @@ async fn hook_detail_shows_execution_history() {
     assert_eq!(resp.status(), 200);
     let body = resp.text().await.unwrap();
 
+    assert_authenticated_app_chrome(&body);
     assert!(body.contains("Executions"), "should have executions tab");
+    assert!(body.contains(r#"data-sendword-activity-tab="executions""#));
+    assert!(body.contains(r#"hx-get="/hooks/test-hook/executions?page=1""#));
+    assert!(body.contains(r#"hx-get="/hooks/test-hook/attempts""#));
 
     // Test the HTMX partial endpoint
     let resp = client
@@ -699,6 +735,7 @@ async fn hook_detail_shows_execution_history() {
     assert_eq!(resp.status(), 200);
     let partial = resp.text().await.unwrap();
 
+    assert_htmx_partial_response(&partial);
     // Both executions should appear in the partial (uppercase in wf-tag)
     assert!(partial.contains("SUCCESS"), "should show success status");
     assert!(partial.contains("FAILED"), "should show failed status");
@@ -1449,6 +1486,60 @@ async fn execution_detail_shows_pending_status_with_yellow_badge() {
     // Started row is hidden when started_at is None (pending state)
 }
 
+#[tokio::test]
+async fn running_execution_detail_uses_sse_shell_assets() {
+    use sendword::models::execution::{self, NewExecution};
+
+    let config = AppConfig {
+        hooks: vec![make_test_hook("Test Hook", "test-hook", "echo hello")],
+        ..AppConfig::default()
+    };
+
+    let state = test_state(config).await;
+    let token = create_test_session(&state).await;
+
+    let exec = execution::create(
+        state.db.pool(),
+        &NewExecution {
+            id: None,
+            hook_slug: "test-hook",
+            log_path: "data/logs/test",
+            trigger_source: "127.0.0.1",
+            request_payload: "{}",
+            retry_of: None,
+            status: None,
+        },
+    )
+    .await
+    .unwrap();
+    execution::mark_running(state.db.pool(), &exec.id)
+        .await
+        .unwrap();
+
+    let exec_id = exec.id.clone();
+    let url = spawn_server(state).await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .get(format!("{url}/executions/{exec_id}"))
+        .header("Cookie", format!("allowthem_session={token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+
+    assert_authenticated_app_chrome(&body);
+    assert!(body.contains("RUNNING"), "should show running status");
+    assert!(body.contains(r#"/static/wavefunk/js/htmx-sse.js"#));
+    assert!(body.contains(r#"hx-ext="sse""#));
+    assert!(body.contains(&format!(
+        r#"sse-connect="/executions/{exec_id}/logs/stream""#
+    )));
+    assert!(body.contains(r#"sse-swap="stdout""#));
+    assert!(body.contains(r#"data-sendword-reload-after-settle="500""#));
+}
+
 // --- Auth redirect tests ---
 
 #[tokio::test]
@@ -1544,6 +1635,7 @@ async fn scripts_new_renders_editor() {
         .unwrap();
     assert_eq!(resp.status(), 200);
     let body = resp.text().await.unwrap();
+    assert_authenticated_app_chrome(&body);
     assert!(body.contains("New Script"));
     assert!(body.contains("textarea"));
     assert!(body.contains("CREATE"));
