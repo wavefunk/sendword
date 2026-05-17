@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::convert::Infallible;
 use std::path::Path as FsPath;
 use std::sync::Arc;
@@ -16,11 +17,12 @@ use crate::barriers::{self, execution_lock, execution_queue};
 use crate::error::{AppError, DbError};
 use crate::executor::resolve_executor;
 use crate::extractors::AuthUser;
-use crate::masking::mask_secrets;
+use crate::masking::{MaskingConfig, mask_secrets};
 use crate::models::execution;
 use crate::retry;
 use crate::server::AppState;
 use crate::templates::context;
+use crate::views::execution_detail::{ExecutionDetailPage, render_execution_detail_page};
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -45,6 +47,96 @@ fn html_escape(s: &str) -> String {
         }
     }
     out
+}
+
+fn mask_and_escape(
+    text: &str,
+    masking: &MaskingConfig,
+    hook_env: &HashMap<String, String>,
+) -> String {
+    html_escape(&mask_secrets(text, masking, hook_env))
+}
+
+fn stream_mask_tail_chars(masking: &MaskingConfig, hook_env: &HashMap<String, String>) -> usize {
+    let env_tail = masking
+        .env_vars
+        .iter()
+        .filter_map(|name| {
+            hook_env
+                .get(name.as_str())
+                .cloned()
+                .or_else(|| std::env::var(name).ok())
+        })
+        .map(|value| value.chars().count().saturating_sub(1))
+        .max()
+        .unwrap_or(0);
+
+    let pattern_tail = if masking.compiled_patterns.is_empty() {
+        0
+    } else {
+        1024
+    };
+
+    env_tail.max(pattern_tail)
+}
+
+#[derive(Clone, Debug)]
+struct LogStreamMasker {
+    masking: MaskingConfig,
+    hook_env: HashMap<String, String>,
+    buffer: String,
+    tail_chars: usize,
+}
+
+impl LogStreamMasker {
+    fn new(masking: MaskingConfig, hook_env: HashMap<String, String>) -> Self {
+        let tail_chars = stream_mask_tail_chars(&masking, &hook_env);
+        Self {
+            masking,
+            hook_env,
+            buffer: String::new(),
+            tail_chars,
+        }
+    }
+
+    fn push(&mut self, text: &str) -> Option<String> {
+        self.buffer.push_str(text);
+        let emit_len = emit_prefix_len(&self.buffer, self.tail_chars);
+        if emit_len == 0 {
+            return None;
+        }
+
+        let tail = self.buffer.split_off(emit_len);
+        let chunk = std::mem::replace(&mut self.buffer, tail);
+        Some(mask_and_escape(&chunk, &self.masking, &self.hook_env))
+            .filter(|value| !value.is_empty())
+    }
+
+    fn flush(&mut self) -> Option<String> {
+        if self.buffer.is_empty() {
+            return None;
+        }
+
+        let chunk = std::mem::take(&mut self.buffer);
+        Some(mask_and_escape(&chunk, &self.masking, &self.hook_env))
+            .filter(|value| !value.is_empty())
+    }
+}
+
+fn emit_prefix_len(text: &str, tail_chars: usize) -> usize {
+    if tail_chars == 0 {
+        return text.len();
+    }
+
+    let char_count = text.chars().count();
+    if char_count <= tail_chars {
+        return 0;
+    }
+
+    text.char_indices()
+        .nth(char_count - tail_chars)
+        .map(|(index, _)| index)
+        .unwrap_or(text.len())
 }
 
 /// Read a log file, returning non-empty contents when present.
@@ -116,28 +208,23 @@ async fn execution_detail(
 
     let duration = compute_duration(&exec.started_at, &exec.completed_at);
 
-    let html = state.templates.render(
-        "execution_detail.html",
-        context! {
-            id => exec.id,
-            hook_slug => exec.hook_slug,
-            status => exec.status.to_string(),
-            exit_code => exec.exit_code,
-            triggered_at => exec.triggered_at,
-            started_at => exec.started_at,
-            completed_at => exec.completed_at,
-            duration => duration,
-            trigger_source => exec.trigger_source,
-            retry_count => exec.retry_count,
-            retry_of => exec.retry_of,
-            stdout => stdout,
-            stderr => stderr,
-            username => auth.email.as_str(),
-            nav_active => "hooks",
-        },
-    )?;
+    let page = ExecutionDetailPage::new(
+        exec.id,
+        exec.hook_slug,
+        &exec.status,
+        exec.exit_code,
+        exec.triggered_at,
+        exec.started_at,
+        exec.completed_at,
+        duration,
+        exec.trigger_source,
+        exec.retry_count,
+        exec.retry_of,
+        stdout,
+        stderr,
+    );
 
-    Ok(Html(html))
+    render_execution_detail_page(auth.email.as_str(), &page)
 }
 
 #[derive(Serialize)]
@@ -420,7 +507,6 @@ async fn log_stream(
     let pool = state.db.pool().clone();
     let config = state.config.load();
     let logs_dir = config.logs.dir.clone();
-    drop(config);
 
     let exec = execution::get_by_id(&pool, &id)
         .await
@@ -428,6 +514,13 @@ async fn log_stream(
             crate::error::DbError::NotFound(_) => AppError::not_found("execution"),
             other => AppError::from(other),
         })?;
+    let hook_env = config
+        .hooks
+        .iter()
+        .find(|hook| hook.slug == exec.hook_slug)
+        .map(|hook| hook.env.clone())
+        .unwrap_or_default();
+    let masking = config.masking.clone();
 
     let is_terminal = exec.status.is_terminal();
     let log_dir = format!("{logs_dir}/{id}");
@@ -442,10 +535,14 @@ async fn log_stream(
                 .await
                 .unwrap_or_default();
             if !stdout.is_empty() {
-                yield Ok::<Event, Infallible>(Event::default().event("stdout").data(html_escape(&stdout)));
+                yield Ok::<Event, Infallible>(Event::default().event("stdout").data(
+                    mask_and_escape(&stdout, &masking, &hook_env)
+                ));
             }
             if !stderr.is_empty() {
-                yield Ok(Event::default().event("stderr").data(html_escape(&stderr)));
+                yield Ok(Event::default().event("stderr").data(
+                    mask_and_escape(&stderr, &masking, &hook_env)
+                ));
             }
             let status = execution::get_by_id(&pool, &id)
                 .await
@@ -465,6 +562,8 @@ async fn log_stream(
             let stderr_path = format!("{log_dir}/stderr.log");
             let mut stdout_offset: u64 = 0;
             let mut stderr_offset: u64 = 0;
+            let mut stdout_masker = LogStreamMasker::new(masking.clone(), hook_env.clone());
+            let mut stderr_masker = LogStreamMasker::new(masking.clone(), hook_env.clone());
 
             loop {
                 tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
@@ -476,9 +575,11 @@ async fn log_stream(
                         stdout_offset = content.len() as u64;
                         if let Ok(text) = std::str::from_utf8(new)
                             && !text.is_empty() {
-                                yield Ok::<Event, Infallible>(
-                                    Event::default().event("stdout").data(html_escape(text))
-                                );
+                                if let Some(data) = stdout_masker.push(text) {
+                                    yield Ok::<Event, Infallible>(
+                                        Event::default().event("stdout").data(data)
+                                    );
+                                }
                             }
                     }
 
@@ -489,9 +590,11 @@ async fn log_stream(
                         stderr_offset = content.len() as u64;
                         if let Ok(text) = std::str::from_utf8(new)
                             && !text.is_empty() {
-                                yield Ok::<Event, Infallible>(
-                                    Event::default().event("stderr").data(html_escape(text))
-                                );
+                                if let Some(data) = stderr_masker.push(text) {
+                                    yield Ok::<Event, Infallible>(
+                                        Event::default().event("stderr").data(data)
+                                    );
+                                }
                             }
                     }
 
@@ -504,6 +607,16 @@ async fn log_stream(
                             "failed" => "err",
                             _ => "",
                         };
+                        if let Some(data) = stdout_masker.flush() {
+                            yield Ok::<Event, Infallible>(
+                                Event::default().event("stdout").data(data)
+                            );
+                        }
+                        if let Some(data) = stderr_masker.flush() {
+                            yield Ok::<Event, Infallible>(
+                                Event::default().event("stderr").data(data)
+                            );
+                        }
                         yield Ok(Event::default().event("done").data(
                             format!(r#"<span class="wf-tag {tag_class}"><span class="dot"></span>{}</span>"#, status.to_uppercase())
                         ));

@@ -4184,3 +4184,88 @@ async fn sse_returns_done_for_terminal_execution() {
         "done event data should contain the terminal status; got:\n{body}"
     );
 }
+
+#[tokio::test]
+async fn sse_terminal_logs_mask_hook_env_secrets() {
+    use sendword::config::LogsConfig;
+    use sendword::masking::MaskingConfig;
+    use sendword::models::execution::{self, ExecutionStatus, NewExecution};
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let logs_dir = tmp.path().to_str().unwrap();
+    let mut hook = make_test_hook("SSE Test Hook", "sse-test-hook", "echo secret");
+    hook.env
+        .insert("SECRET_TOKEN".to_owned(), "live-secret-value".to_owned());
+
+    let config = AppConfig {
+        logs: LogsConfig {
+            dir: logs_dir.to_owned(),
+        },
+        masking: MaskingConfig {
+            env_vars: vec!["SECRET_TOKEN".to_owned()],
+            ..Default::default()
+        },
+        hooks: vec![hook],
+        ..AppConfig::default()
+    };
+    let state = test_state(config).await;
+    let token = create_test_session(&state).await;
+
+    let exec_id = sendword::id::new_id();
+    let log_path = format!("{logs_dir}/{exec_id}");
+    tokio::fs::create_dir_all(&log_path).await.unwrap();
+    tokio::fs::write(
+        format!("{log_path}/stdout.log"),
+        "stdout includes live-secret-value",
+    )
+    .await
+    .unwrap();
+    tokio::fs::write(
+        format!("{log_path}/stderr.log"),
+        "stderr includes live-secret-value",
+    )
+    .await
+    .unwrap();
+
+    let exec = execution::create(
+        state.db.pool(),
+        &NewExecution {
+            id: Some(&exec_id),
+            hook_slug: "sse-test-hook",
+            log_path: &log_path,
+            trigger_source: "127.0.0.1",
+            request_payload: "{}",
+            retry_of: None,
+            status: None,
+        },
+    )
+    .await
+    .expect("create execution");
+    execution::mark_running(state.db.pool(), &exec.id)
+        .await
+        .expect("mark running");
+    execution::mark_completed(state.db.pool(), &exec.id, ExecutionStatus::Success, Some(0))
+        .await
+        .expect("mark completed");
+
+    let url = spawn_server(state).await;
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("{url}/executions/{}/logs/stream", exec.id))
+        .header("Cookie", format!("allowthem_session={token}"))
+        .send()
+        .await
+        .expect("request SSE endpoint");
+
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.expect("read SSE body");
+
+    assert!(
+        !body.contains("live-secret-value"),
+        "SSE leaked secret:\n{body}"
+    );
+    assert!(
+        body.contains("stdout includes ***") && body.contains("stderr includes ***"),
+        "SSE should mask stdout and stderr secrets:\n{body}"
+    );
+}
