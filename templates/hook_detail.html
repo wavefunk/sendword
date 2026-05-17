@@ -12,7 +12,7 @@
 {% block actions %}
 <a class="wf-btn sm" href="/hooks/{{ slug }}/edit">EDIT</a>
 <form method="post" action="/hooks/{{ slug }}/delete"
-      onsubmit="return confirm('Delete hook {{ name }}?')" class="wf-ib">
+      data-sendword-confirm="Delete hook {{ name }}?" class="wf-ib">
   <button type="submit" class="wf-btn sm danger">DELETE</button>
 </form>
 {% endblock %}
@@ -189,8 +189,8 @@
 {# ── Right: activity ── #}
 <div class="wf-panel wf-p-0 wf-grow">
   <div class="wf-tabs" id="activity-tabs">
-    <button class="is-active" onclick="switchActivityTab('executions', this)">Executions</button>
-    <button onclick="switchActivityTab('attempts', this)">Trigger Attempts</button>
+    <button class="is-active" data-sendword-activity-tab="executions">Executions</button>
+    <button data-sendword-activity-tab="attempts">Trigger Attempts</button>
   </div>
 
   <div id="activity-tab-executions" class="wf-f wf-col wf-grow wf-min-w-0"
@@ -208,25 +208,4 @@
 
 </div>
 
-<script>
-function switchActivityTab(tab, el) {
-  var tabs = document.querySelectorAll('#activity-tabs button');
-  for (var i = 0; i < tabs.length; i++) tabs[i].classList.remove('is-active');
-  el.classList.add('is-active');
-
-  var exec = document.getElementById('activity-tab-executions');
-  var att = document.getElementById('activity-tab-attempts');
-  if (tab === 'executions') {
-    exec.classList.remove('wf-hidden');
-    exec.classList.add('wf-f');
-    att.classList.add('wf-hidden');
-    att.classList.remove('wf-f');
-  } else {
-    exec.classList.add('wf-hidden');
-    exec.classList.remove('wf-f');
-    att.classList.remove('wf-hidden');
-    att.classList.add('wf-f');
-  }
-}
-</script>
 {% endblock %}

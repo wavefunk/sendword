@@ -12,8 +12,7 @@
 
 {% block actions %}
 <form method="post" style="display: inline;"
-  hx-post="/executions/{{ id }}/replay" hx-swap="none"
-  hx-on::after-request="if(event.detail.successful){var d=JSON.parse(event.detail.xhr.responseText);location.href='/executions/'+d.execution_id;}">
+  hx-post="/executions/{{ id }}/replay" hx-swap="none" data-sendword-replay>
   <button type="submit" class="wf-btn sm">REPLAY</button>
 </form>
 {% endblock %}
@@ -58,7 +57,7 @@
     </div>
   </div>
   <div sse-swap="done" hx-swap="innerHTML" style="display: none;"
-    hx-on::after-settle="setTimeout(function(){location.reload()},500)"></div>
+    data-sendword-reload-after-settle="500"></div>
 </div>
 {% else %}
 <div class="wf-panel" style="margin-bottom: 20px;">

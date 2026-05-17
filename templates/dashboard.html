@@ -30,7 +30,7 @@
     <span class="wf-panel-title">ALL HOOKS</span>
     <div class="wf-input-group" style="max-width: 240px;">
       <span class="wf-input-addon">&#x2315;</span>
-      <input class="wf-input sm" placeholder="Filter hooks…" id="hook-filter" oninput="filterHooks(this.value)">
+      <input class="wf-input sm" placeholder="Filter hooks…" id="hook-filter" data-sendword-hook-filter="true">
     </div>
   </div>
   <table class="wf-table is-interactive">
@@ -74,14 +74,4 @@
 </div>
 {% endif %}
 
-<script>
-function filterHooks(query) {
-  var q = query.toLowerCase();
-  document.querySelectorAll('#hook-list tr').forEach(function(row) {
-    var name = row.getAttribute('data-hook-name') || '';
-    var slug = row.getAttribute('data-hook-slug') || '';
-    row.style.display = (name.includes(q) || slug.includes(q)) ? '' : 'none';
-  });
-}
-</script>
 {% endblock %}

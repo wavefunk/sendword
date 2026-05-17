@@ -15,6 +15,7 @@ pub mod hook_form;
 
 const APP_NAME: &str = "SENDWORD";
 const APP_STATUS_VERSION: &str = "V1.0";
+pub const SENDWORD_APP_SCRIPT_TAG: &str = r#"<script src="/static/js/sendword.js" defer></script>"#;
 const APP_HEAD_HTML: &str = r##"<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='2' y='6' width='28' height='20' rx='3' fill='%230c0a09' stroke='%23f59e0b' stroke-width='2'/%3E%3Cpath d='M2 8l14 10 14-10' fill='none' stroke='%23f59e0b' stroke-width='2' stroke-linecap='round'/%3E%3Ccircle cx='26' cy='8' r='5' fill='%23ef4444'/%3E%3C/svg%3E">
 <style>
   :root { --accent: #e06c75; --accent-ink: #000000; }

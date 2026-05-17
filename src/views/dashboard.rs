@@ -8,20 +8,9 @@ use crate::error::AppError;
 use crate::models::ExecutionStatus;
 
 use super::{
-    ActionKind, FlashMessages, NavActive, PageShell, render_action_link, render_breadcrumbs,
-    render_empty_state, render_shell, render_template,
+    ActionKind, FlashMessages, NavActive, PageShell, SENDWORD_APP_SCRIPT_TAG, render_action_link,
+    render_breadcrumbs, render_empty_state, render_shell, render_template,
 };
-
-const DASHBOARD_FILTER_SCRIPT: &str = r#"<script>
-function filterHooks(query) {
-  var q = query.toLowerCase();
-  document.querySelectorAll('#hook-list tr').forEach(function(row) {
-    var name = row.getAttribute('data-hook-name') || '';
-    var slug = row.getAttribute('data-hook-slug') || '';
-    row.style.display = (name.includes(q) || slug.includes(q)) ? '' : 'none';
-  });
-}
-</script>"#;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DashboardStatusDot {
@@ -111,7 +100,8 @@ pub fn render_dashboard_page(
             TrustedHtml::new(&content),
         )
         .with_actions(TrustedHtml::new(&new_hook_action))
-        .with_flash(flash.success, flash.error),
+        .with_flash(flash.success, flash.error)
+        .with_scripts(TrustedHtml::new(SENDWORD_APP_SCRIPT_TAG)),
     )
 }
 
@@ -123,16 +113,10 @@ fn render_dashboard_content(hooks: &[DashboardHookRow]) -> Result<String, AppErr
     } else {
         render_hooks_panel(hooks)?
     };
-    let script_html = if hooks.is_empty() {
-        None
-    } else {
-        Some(TrustedHtml::new(DASHBOARD_FILTER_SCRIPT))
-    };
 
     render_template(&DashboardContentTemplate {
         header_html: TrustedHtml::new(&header),
         body_html: TrustedHtml::new(&body),
-        script_html,
     })
 }
 
@@ -156,7 +140,7 @@ fn render_hooks_panel(hooks: &[DashboardHookRow]) -> Result<String, AppError> {
 fn render_search_control() -> Result<String, AppError> {
     let attrs = [
         HtmlAttr::new("id", "hook-filter"),
-        HtmlAttr::new("oninput", "filterHooks(this.value)"),
+        HtmlAttr::new("data-sendword-hook-filter", "true"),
     ];
     let input = render_template(
         &Input::search("hook-filter")
@@ -180,18 +164,12 @@ fn hook_count_label(count: usize) -> String {
     source = r#"
 {{ header_html }}
 {{ body_html }}
-{%- match script_html -%}
-{%- when Some with (html) -%}
-{{ html }}
-{%- when None -%}
-{%- endmatch -%}
 "#,
     ext = "html"
 )]
 struct DashboardContentTemplate<'a> {
     header_html: TrustedHtml<'a>,
     body_html: TrustedHtml<'a>,
-    script_html: Option<TrustedHtml<'a>>,
 }
 
 #[derive(Debug, Template)]
@@ -293,11 +271,11 @@ mod tests {
         assert!(html.contains("var(--ok)"));
         assert!(html.contains("var(--err)"));
         assert!(html.contains(r#"id="hook-filter""#));
-        assert!(html.contains("function filterHooks(query)"));
+        assert!(html.contains(r#"/static/js/sendword.js"#));
+        assert!(!html.contains("function filterHooks(query)"));
         assert!(html.contains("Created &#60;hook&#62;"));
         assert!(html.contains(r#"data-ts="2026-05-17T10:00:00Z&#34; onclick=&#34;bad""#));
         assert!(html.contains(r#"/static/wavefunk/js/wavefunk.js"#));
-        assert!(!html.contains(r#"/static/js/sendword.js"#));
     }
 
     #[test]
@@ -316,6 +294,7 @@ mod tests {
         assert!(html.contains("NO HOOKS YET"));
         assert!(html.contains(r#"href="/hooks/new""#));
         assert!(!html.contains(r#"id="hook-filter""#));
+        assert!(html.contains(r#"/static/js/sendword.js"#));
         assert!(!html.contains("function filterHooks(query)"));
     }
 }

@@ -7,31 +7,9 @@ use wavefunk_ui::components::{
 use crate::error::AppError;
 
 use super::{
-    ActionKind, FlashMessages, NavActive, PageShell, StatusKind, render_action_link,
-    render_breadcrumbs, render_shell, render_status_tag, render_template,
+    ActionKind, FlashMessages, NavActive, PageShell, SENDWORD_APP_SCRIPT_TAG, StatusKind,
+    render_action_link, render_breadcrumbs, render_shell, render_status_tag, render_template,
 };
-
-const ACTIVITY_TAB_SCRIPT: &str = r#"<script>
-function switchActivityTab(tab, el) {
-  var tabs = document.querySelectorAll('#activity-tabs button');
-  for (var i = 0; i < tabs.length; i++) tabs[i].classList.remove('is-active');
-  el.classList.add('is-active');
-
-  var exec = document.getElementById('activity-tab-executions');
-  var att = document.getElementById('activity-tab-attempts');
-  if (tab === 'executions') {
-    exec.classList.remove('wf-hidden');
-    exec.classList.add('wf-f');
-    att.classList.add('wf-hidden');
-    att.classList.remove('wf-f');
-  } else {
-    exec.classList.add('wf-hidden');
-    exec.classList.remove('wf-f');
-    att.classList.remove('wf-hidden');
-    att.classList.add('wf-f');
-  }
-}
-</script>"#;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AuthModeView {
@@ -183,7 +161,8 @@ pub fn render_hook_detail_page(
             TrustedHtml::new(&content),
         )
         .with_actions(TrustedHtml::new(&actions))
-        .with_flash(flash.success, flash.error),
+        .with_flash(flash.success, flash.error)
+        .with_scripts(TrustedHtml::new(SENDWORD_APP_SCRIPT_TAG)),
     )
 }
 
@@ -225,7 +204,6 @@ fn render_hook_detail_content(hook: &HookDetailPage) -> Result<String, AppError>
         header_html: TrustedHtml::new(&header),
         overview_html: TrustedHtml::new(&overview),
         activity_html: TrustedHtml::new(&activity),
-        script_html: TrustedHtml::new(ACTIVITY_TAB_SCRIPT),
     })
 }
 
@@ -233,7 +211,7 @@ fn render_hook_detail_content(hook: &HookDetailPage) -> Result<String, AppError>
 #[template(
     source = r#"
 {{ edit_html }}
-<form method="post" action="/hooks/{{ hook.slug }}/delete" data-confirm="Delete hook {{ hook.name }}?" onsubmit="return confirm(this.dataset.confirm)" class="wf-ib">
+<form method="post" action="/hooks/{{ hook.slug }}/delete" data-sendword-confirm="Delete hook {{ hook.name }}?" class="wf-ib">
   {{ delete_button_html }}
 </form>
 "#,
@@ -253,7 +231,6 @@ struct HookActionsTemplate<'a> {
   {{ overview_html }}
   {{ activity_html }}
 </div>
-{{ script_html }}
 "#,
     ext = "html"
 )]
@@ -261,7 +238,6 @@ struct HookDetailContentTemplate<'a> {
     header_html: TrustedHtml<'a>,
     overview_html: TrustedHtml<'a>,
     activity_html: TrustedHtml<'a>,
-    script_html: TrustedHtml<'a>,
 }
 
 #[derive(Debug, Template)]
@@ -435,8 +411,8 @@ struct HookOverviewTemplate<'a> {
     source = r#"
 <section class="wf-panel wf-p-0 wf-grow">
   <div class="wf-tabs" id="activity-tabs">
-    <button class="is-active" onclick="switchActivityTab('executions', this)">Executions</button>
-    <button onclick="switchActivityTab('attempts', this)">Trigger Attempts</button>
+    <button class="is-active" data-sendword-activity-tab="executions">Executions</button>
+    <button data-sendword-activity-tab="attempts">Trigger Attempts</button>
   </div>
 
   <div id="activity-tab-executions" class="wf-f wf-col wf-grow wf-min-w-0" hx-get="/hooks/{{ hook.slug }}/executions?page=1" hx-trigger="load" hx-swap="innerHTML"></div>
@@ -502,10 +478,10 @@ mod tests {
 
         assert!(html.contains("Deploy &#39;App&#39; &#60;script&#62;"));
         assert!(!html.contains("Deploy 'App' <script>"));
-        assert!(
-            html.contains(r#"data-confirm="Delete hook Deploy &#39;App&#39; &#60;script&#62;?""#)
-        );
-        assert!(html.contains(r#"onsubmit="return confirm(this.dataset.confirm)""#));
+        assert!(html.contains(
+            r#"data-sendword-confirm="Delete hook Deploy &#39;App&#39; &#60;script&#62;?""#
+        ));
+        assert!(!html.contains(r#"onsubmit="return confirm(this.dataset.confirm)""#));
         assert!(html.contains(r#"/hooks/deploy-app/edit"#));
         assert!(html.contains(r#"/hooks/deploy-app/delete"#));
         assert!(html.contains(r#"data-auth-mode="hmac""#));
@@ -514,7 +490,9 @@ mod tests {
         assert!(html.contains("TRIGGER RULES"));
         assert!(html.contains(r#"hx-get="/hooks/deploy-app/executions?page=1""#));
         assert!(html.contains(r#"hx-get="/hooks/deploy-app/attempts""#));
-        assert!(html.contains("function switchActivityTab(tab, el)"));
+        assert!(html.contains(r#"data-sendword-activity-tab="executions""#));
+        assert!(html.contains(r#"/static/js/sendword.js"#));
+        assert!(!html.contains("function switchActivityTab(tab, el)"));
         assert!(html.contains("Updated &#60;hook&#62;"));
     }
 

@@ -1040,6 +1040,14 @@ async fn execution_detail_renders_metadata() {
         body.contains(&format!("/executions/{exec_id}/replay")),
         "replay should target correct URL"
     );
+    assert!(
+        body.contains("data-sendword-replay"),
+        "replay redirect should be handled by the app script"
+    );
+    assert!(
+        !body.contains("hx-on::after-request"),
+        "execution detail should not inline replay redirect JavaScript"
+    );
 }
 
 #[tokio::test]

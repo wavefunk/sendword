@@ -5,7 +5,8 @@ use wavefunk_ui::components::{BreadcrumbItem, PageHeader, TrustedHtml};
 use crate::error::AppError;
 
 use super::{
-    FlashMessages, NavActive, PageShell, render_breadcrumbs, render_shell, render_template,
+    FlashMessages, NavActive, PageShell, SENDWORD_APP_SCRIPT_TAG, render_breadcrumbs, render_shell,
+    render_template,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -123,7 +124,8 @@ pub fn render_hook_form_page(
             TrustedHtml::new(&breadcrumbs),
             TrustedHtml::new(&content),
         )
-        .with_flash(flash.success, flash.error),
+        .with_flash(flash.success, flash.error)
+        .with_scripts(TrustedHtml::new(SENDWORD_APP_SCRIPT_TAG)),
     )
 }
 
@@ -205,7 +207,7 @@ struct HookFormContentTemplate<'a> {
     <div class="wf-panel-body">
       <div class="wf-field wf-mb-4">
         <label class="wf-label" for="auth_mode">Auth mode</label>
-        <select id="auth_mode" name="auth_mode" class="wf-select" onchange="toggleAuthFields()">
+        <select id="auth_mode" name="auth_mode" class="wf-select">
           <option value="none"{% if page.option_selected(page.form_auth_mode.as_str(), "none") %} selected{% endif %}>None (public)</option>
           <option value="bearer"{% if page.option_selected(page.form_auth_mode.as_str(), "bearer") %} selected{% endif %}>Bearer token</option>
           <option value="hmac"{% if page.option_selected(page.form_auth_mode.as_str(), "hmac") %} selected{% endif %}>HMAC signature</option>
@@ -247,7 +249,7 @@ struct HookFormContentTemplate<'a> {
     <div class="wf-panel-body">
       <div class="wf-field wf-mb-4">
         <label class="wf-label" for="executor_type">Executor type</label>
-        <select id="executor_type" name="executor_type" class="wf-select" onchange="updateExecutorField()">
+        <select id="executor_type" name="executor_type" class="wf-select">
           <option value="shell"{% if page.option_selected(page.form_executor_type.as_str(), "shell") %} selected{% endif %}>Shell command</option>
           <option value="script"{% if page.option_selected(page.form_executor_type.as_str(), "script") %} selected{% endif %}>Executable script</option>
           <option value="javascript"{% if page.option_selected(page.form_executor_type.as_str(), "javascript") %} selected{% endif %}>JavaScript script</option>
@@ -307,7 +309,7 @@ struct HookFormContentTemplate<'a> {
         <input type="text" id="trigger_cooldown" name="trigger_cooldown" value="{{ page.form_trigger_cooldown }}" placeholder="5m" class="wf-input">
         <span class="wf-field-hint">Duration with unit, e.g. 30s, 5m, 1h.</span>
       </div>
-      <div class="wf-form-grid">
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
         <div class="wf-field">
           <label class="wf-label" for="trigger_rate_max">Rate limit max</label>
           <input type="number" id="trigger_rate_max" name="trigger_rate_max" value="{{ page.form_trigger_rate_max }}" min="1" placeholder="10" class="wf-input">
@@ -336,7 +338,7 @@ struct HookFormContentTemplate<'a> {
           <option value="exponential"{% if page.option_selected(page.form_retry_backoff.as_str(), "exponential") %} selected{% endif %}>Exponential</option>
         </select>
       </div>
-      <div class="wf-form-grid">
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
         <div class="wf-field">
           <label class="wf-label" for="retry_initial_delay">Initial delay</label>
           <input type="text" id="retry_initial_delay" name="retry_initial_delay" value="{{ page.form_retry_initial_delay }}" placeholder="1s" class="wf-input">
@@ -355,52 +357,6 @@ struct HookFormContentTemplate<'a> {
   </div>
 </form>
 
-<script>
-function toggleAuthFields() {
-  var mode = document.getElementById('auth_mode').value;
-  document.getElementById('bearer-fields').style.display = mode === 'bearer' ? '' : 'none';
-  document.getElementById('hmac-fields').style.display = mode === 'hmac' ? '' : 'none';
-}
-function updateExecutorField() {
-  var type = document.getElementById('executor_type').value;
-  var command = document.getElementById('command');
-  var label = document.getElementById('command_label');
-  var hint = document.getElementById('command_hint');
-  var copy = {
-    shell: {
-      label: 'Shell command',
-      placeholder: 'make deploy',
-      hint: 'Shell commands may use payload interpolation like \u007b\u007b action \u007d\u007d.'
-    },
-    script: {
-      label: 'Script path',
-      placeholder: 'data/scripts/deploy.sh',
-      hint: 'Executable scripts are run directly and need a shebang plus executable permissions.'
-    },
-    javascript: {
-      label: 'JavaScript path',
-      placeholder: 'data/scripts/deploy.js',
-      hint: 'JavaScript scripts run with node and can read payload fields from process.env.'
-    },
-    python: {
-      label: 'Python path',
-      placeholder: 'data/scripts/deploy.py',
-      hint: 'Python scripts run with python3, then python, and can read payload fields from os.environ.'
-    },
-    http: {
-      label: 'HTTP URL',
-      placeholder: 'https://example.com/webhook',
-      hint: 'HTTP executors are view-only in this form and cannot be saved here.'
-    }
-  };
-  var selected = copy[type] || copy.shell;
-  label.textContent = selected.label;
-  command.placeholder = selected.placeholder;
-  hint.textContent = selected.hint;
-}
-toggleAuthFields();
-updateExecutorField();
-</script>
 "##,
     ext = "html"
 )]
@@ -435,7 +391,9 @@ mod tests {
         assert!(html.contains(r#"<option value="exponential" selected>Exponential</option>"#));
         assert!(html.contains("CREATE HOOK"));
         assert!(html.contains("Bad &#60;hook&#62;"));
-        assert!(html.contains(r#"function toggleAuthFields()"#));
+        assert!(html.contains(r#"/static/js/sendword.js"#));
+        assert!(!html.contains(r#"function toggleAuthFields()"#));
+        assert!(!html.contains(r#"onchange="toggleAuthFields()""#));
     }
 
     #[test]
