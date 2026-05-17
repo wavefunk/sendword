@@ -5,20 +5,28 @@ Simple HTTP webhook to command runner sidecar. Frontend for managing hooks, JSON
 Async runtime = Tokio
 Web framework = Axum
 Database = SQLite via SQLx
-Templating = MiniJinja
-Frontend = HTMX + Tailwind
+Templating = Askama
+UI components/layout = wavefunk-ui
+Frontend = HTMX + Sendword-specific JavaScript
 
 ## Local development
 Nix, direnv and flake to manage local dev environment
 just to run often used commands
+Cargo.toml depends on the published `wavefunk-ui` crate. During local UI
+co-development, the gitignored `.cargo/config.toml` can use a path override to
+`../ui` so local crate changes are exercised without changing committed
+dependency metadata.
 
 ## Architecture Overview
 
 ### Request Flow
-Axum handler → core logic → SQLx → MiniJinja template
+Axum handler → core logic → SQLx → typed Askama view
 
 ### Frontend Architecture
-HTMX + Tailwind for HTML pages. Templates in templates/. TypeScript bundled via esbuild.
+HTML pages live in `src/views/` as typed Askama templates that compose
+`wavefunk-ui` components and layouts. Shared Wave Funk CSS, fonts, HTMX, SSE,
+and JavaScript are served by the `wavefunk-ui` asset router under
+`/static/wavefunk`. Sendword-owned behavior lives in `static/js/sendword.js`.
 
 ## Work Structure
 Always create a plan, then review, then implement.

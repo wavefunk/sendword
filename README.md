@@ -465,6 +465,17 @@ just watch    # bacon (file watcher)
 just build    # cargo build --release
 ```
 
+The web UI is rendered by typed Askama views in `src/views/` that compose the
+published `wavefunk-ui` component and app-shell crate. `Cargo.toml` should keep
+the crates.io dependency (`wavefunk-ui = "0.1.2"`); for local co-development,
+use the gitignored `.cargo/config.toml` path override to point Cargo at
+`../ui` while preserving the published dependency metadata.
+
+`wavefunk-ui` serves shared CSS, fonts, HTMX, SSE, and Wave Funk JavaScript
+under `/static/wavefunk`. Sendword only vendors app-specific behavior under
+`static/js/sendword.js`; the old MiniJinja template directory and local Wave
+Funk CSS/font copies are no longer part of the project.
+
 ### Database
 
 ```sh
@@ -482,8 +493,9 @@ just sqlx-reset       # reset database and re-run migrations
 | Async runtime | Tokio |
 | Web framework | Axum |
 | Database | SQLite via SQLx |
-| Templating | MiniJinja |
-| Frontend | HTMX + Tailwind CSS |
+| Templating | Askama |
+| Frontend | HTMX + wavefunk-ui |
+| UI assets | `wavefunk-ui` asset router plus `static/js/sendword.js` |
 | Config | Figment (TOML + JSON + env) |
 
 ## License
