@@ -1,7 +1,8 @@
 use askama::Template;
 use axum::response::Html;
 use wavefunk_ui::components::{
-    Alert, Avatar, BreadcrumbItem, Breadcrumbs, FeedbackKind, NavItem, NavSection, TrustedHtml,
+    Alert, Avatar, BreadcrumbItem, Breadcrumbs, Button, ButtonSize, ButtonVariant, EmptyState,
+    FeedbackKind, NavItem, NavSection, Tag, TrustedHtml,
 };
 use wavefunk_ui::layouts::{AppShell, SidebarProfile};
 
@@ -109,6 +110,144 @@ pub fn render_partial(template: &impl Template) -> Result<Html<String>, AppError
 
 pub fn render_breadcrumbs(items: &[BreadcrumbItem<'_>]) -> Result<String, AppError> {
     render_template(&Breadcrumbs::new(items))
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StatusKind {
+    Neutral,
+    Ok,
+    Info,
+    Warn,
+    Error,
+}
+
+impl StatusKind {
+    const fn feedback(self) -> Option<FeedbackKind> {
+        match self {
+            Self::Neutral => None,
+            Self::Ok => Some(FeedbackKind::Ok),
+            Self::Info => Some(FeedbackKind::Info),
+            Self::Warn => Some(FeedbackKind::Warn),
+            Self::Error => Some(FeedbackKind::Error),
+        }
+    }
+}
+
+pub fn render_status_tag(label: &str, kind: StatusKind) -> Result<String, AppError> {
+    let tag = match kind.feedback() {
+        Some(feedback) => Tag::status(feedback, label),
+        None => Tag::new(label).with_dot(),
+    };
+    render_template(&tag)
+}
+
+#[derive(Debug, Template)]
+#[template(source = r#"<span data-ts="{{ value }}">{{ value }}</span>"#, ext = "html")]
+struct DateSpan<'a> {
+    value: &'a str,
+}
+
+pub fn render_date_span(value: &str) -> Result<String, AppError> {
+    render_template(&DateSpan { value })
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ActionKind {
+    Default,
+    Primary,
+    Danger,
+}
+
+impl ActionKind {
+    const fn variant(self) -> ButtonVariant {
+        match self {
+            Self::Default => ButtonVariant::Default,
+            Self::Primary => ButtonVariant::Primary,
+            Self::Danger => ButtonVariant::Danger,
+        }
+    }
+}
+
+pub fn render_action_link(label: &str, href: &str, kind: ActionKind) -> Result<String, AppError> {
+    render_template(
+        &Button::link(label, href)
+            .with_variant(kind.variant())
+            .with_size(ButtonSize::Small),
+    )
+}
+
+pub fn render_empty_state(
+    title: &str,
+    body: &str,
+    actions_html: Option<TrustedHtml<'_>>,
+) -> Result<String, AppError> {
+    let empty = EmptyState::new(title, body);
+    let empty = if let Some(actions_html) = actions_html {
+        empty.with_actions(actions_html)
+    } else {
+        empty
+    };
+    render_template(&empty)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PaginationState {
+    pub page: i64,
+    pub per_page: i64,
+    pub total: i64,
+    pub item_count: i64,
+}
+
+impl PaginationState {
+    pub fn new(page: i64, per_page: i64, total: i64, item_count: i64) -> Self {
+        Self {
+            page: page.max(1),
+            per_page: per_page.max(1),
+            total: total.max(0),
+            item_count: item_count.max(0),
+        }
+    }
+
+    pub fn total_pages(&self) -> i64 {
+        if self.total == 0 {
+            1
+        } else {
+            (self.total + self.per_page - 1) / self.per_page
+        }
+    }
+
+    pub fn start_index(&self) -> i64 {
+        if self.total == 0 {
+            0
+        } else {
+            ((self.page - 1) * self.per_page) + 1
+        }
+    }
+
+    pub fn end_index(&self) -> i64 {
+        if self.total == 0 {
+            0
+        } else {
+            (self.start_index() + self.item_count - 1).min(self.total)
+        }
+    }
+
+    pub fn has_previous(&self) -> bool {
+        self.page > 1
+    }
+
+    pub fn has_next(&self) -> bool {
+        self.page < self.total_pages()
+    }
+
+    pub fn summary_label(&self) -> String {
+        format!(
+            "{}-{} OF {}",
+            self.start_index(),
+            self.end_index(),
+            self.total
+        )
+    }
 }
 
 pub fn render_shell(shell: &PageShell<'_>) -> Result<Html<String>, AppError> {
@@ -289,5 +428,43 @@ mod tests {
         assert!(html.contains(r#"/static/wavefunk/js/htmx-sse.js"#));
         assert!(html.contains(r#"<script id="execution-hooks">"#));
         assert!(html.contains(r#"<section>Logs</section>"#));
+    }
+
+    #[test]
+    fn shared_status_and_date_helpers_escape_and_classify() {
+        let success = super::render_status_tag("SUCCESS", super::StatusKind::Ok).unwrap();
+        let neutral = super::render_status_tag("DISABLED", super::StatusKind::Neutral).unwrap();
+        let date = super::render_date_span(r#"2026-05-17T10:00:00Z" onclick="bad"#).unwrap();
+
+        assert!(success.contains(r#"class="wf-tag ok""#));
+        assert!(success.contains("SUCCESS"));
+        assert!(neutral.contains(r#"class="wf-tag""#));
+        assert!(neutral.contains("DISABLED"));
+        assert!(date.contains(r#"data-ts="2026-05-17T10:00:00Z&#34; onclick=&#34;bad""#));
+        assert!(date.contains("2026-05-17T10:00:00Z&#34; onclick=&#34;bad"));
+    }
+
+    #[test]
+    fn shared_action_empty_state_and_pagination_helpers_render() {
+        let action =
+            super::render_action_link("NEW HOOK", "/hooks/new", super::ActionKind::Primary)
+                .unwrap();
+        let empty = super::render_empty_state(
+            "NO HOOKS YET",
+            "Create your first hook.",
+            Some(TrustedHtml::new(&action)),
+        )
+        .unwrap();
+        let pagination = super::PaginationState::new(2, 20, 45, 20);
+
+        assert!(action.contains(r#"class="wf-btn primary sm" href="/hooks/new""#));
+        assert!(empty.contains(r#"class="wf-empty""#));
+        assert!(empty.contains("NO HOOKS YET"));
+        assert_eq!(pagination.start_index(), 21);
+        assert_eq!(pagination.end_index(), 40);
+        assert_eq!(pagination.total_pages(), 3);
+        assert!(pagination.has_previous());
+        assert!(pagination.has_next());
+        assert_eq!(pagination.summary_label(), "21-40 OF 45");
     }
 }
