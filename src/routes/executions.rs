@@ -21,7 +21,7 @@ use crate::masking::{MaskingConfig, mask_secrets};
 use crate::models::execution;
 use crate::retry;
 use crate::server::AppState;
-use crate::templates::context;
+use crate::views::approvals::{ApprovalRow, ApprovalsPage, render_approvals_page};
 use crate::views::execution_detail::{ExecutionDetailPage, render_execution_detail_page};
 
 pub fn router() -> Router<Arc<AppState>> {
@@ -465,28 +465,13 @@ async fn list_pending_approvals(
     let pool = state.db.pool();
     let executions = execution::list_pending_approval(pool).await?;
 
-    let exec_list: Vec<serde_json::Value> = executions
-        .iter()
-        .map(|e| {
-            serde_json::json!({
-                "id": e.id,
-                "hook_slug": e.hook_slug,
-                "triggered_at": e.triggered_at,
-                "trigger_source": e.trigger_source,
-            })
-        })
+    let rows = executions
+        .into_iter()
+        .map(ApprovalRow::from_execution)
         .collect();
+    let page = ApprovalsPage::new(rows);
 
-    let html = state.templates.render(
-        "approvals.html",
-        context! {
-            executions => exec_list,
-            username => user.email.as_str(),
-            nav_active => "approvals",
-        },
-    )?;
-
-    Ok(Html(html))
+    render_approvals_page(user.email.as_str(), &page)
 }
 
 /// GET /executions/:id/logs/stream

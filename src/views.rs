@@ -8,6 +8,7 @@ use wavefunk_ui::layouts::{AppShell, SidebarProfile};
 
 use crate::error::AppError;
 
+pub mod approvals;
 pub mod dashboard;
 pub mod execution_detail;
 pub mod hook_activity;
