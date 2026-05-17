@@ -173,8 +173,8 @@ mod tests {
     use tower::ServiceExt;
 
     #[test]
-    fn embedded_static_response_serves_css_asset() {
-        let response = embedded_static_response("css/wavefunk.css");
+    fn embedded_static_response_serves_sendword_script() {
+        let response = embedded_static_response("js/sendword.js");
 
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(
@@ -182,7 +182,7 @@ mod tests {
                 .headers()
                 .get(header::CONTENT_TYPE)
                 .and_then(|value| value.to_str().ok()),
-            Some("text/css")
+            Some("text/javascript")
         );
     }
 
