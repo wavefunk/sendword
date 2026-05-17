@@ -20,4 +20,5 @@ pub mod tasks;
 pub mod templates;
 pub mod timestamp;
 pub mod trigger_rules;
+pub mod views;
 pub mod webhook_auth;

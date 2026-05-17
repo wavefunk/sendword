@@ -26,6 +26,7 @@ pub type DbResult<T> = Result<T, DbError>;
 
 // --- AppError: Axum handler error type ---
 
+#[derive(Debug)]
 pub enum AppError {
     NotFound(&'static str),
     Internal(eyre::Report),
