@@ -10,7 +10,8 @@ use crate::error::AppError;
 use crate::extractors::AuthUser;
 use crate::models::execution;
 use crate::server::AppState;
-use crate::templates::context;
+use crate::views::FlashMessages;
+use crate::views::dashboard::{DashboardHookRow, DashboardStatusDot, render_dashboard_page};
 
 #[derive(Deserialize)]
 struct FlashParams {
@@ -42,32 +43,27 @@ async fn dashboard(
 
         let last = recent.first();
 
-        // Build a list of status strings for the last 5 executions (oldest last,
-        // displayed as dots left-to-right from oldest to newest).
-        let recent_statuses: Vec<String> =
-            recent.iter().rev().map(|e| e.status.to_string()).collect();
+        let recent_statuses = recent
+            .iter()
+            .rev()
+            .map(|e| DashboardStatusDot::from_execution_status(&e.status))
+            .collect();
 
-        hooks.push(context! {
-            name => h.name,
-            slug => h.slug,
-            description => h.description,
-            enabled => h.enabled,
-            last_status => last.map(|e| e.status.to_string()),
-            last_triggered_at => last.map(|e| &e.triggered_at),
-            last_execution_id => last.map(|e| &e.id),
-            recent_statuses => recent_statuses,
-        });
+        hooks.push(DashboardHookRow::new(
+            &h.name,
+            &h.slug,
+            h.enabled,
+            last.map(|e| e.triggered_at.clone()),
+            recent_statuses,
+        ));
     }
 
-    let html = state.templates.render(
-        "dashboard.html",
-        context! {
-            hooks => hooks,
-            success => flash.success,
-            error => flash.error,
-            username => auth.email.as_str(),
-            nav_active => "dashboard",
+    render_dashboard_page(
+        auth.email.as_str(),
+        &hooks,
+        FlashMessages {
+            success: flash.success.as_deref(),
+            error: flash.error.as_deref(),
         },
-    )?;
-    Ok(Html(html))
+    )
 }

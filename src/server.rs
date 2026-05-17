@@ -174,8 +174,8 @@ async fn shutdown_signal() {
 mod tests {
     use super::embedded_static_response;
     use axum::body::Body;
-    use axum::http::{StatusCode, header};
     use axum::http::Request;
+    use axum::http::{StatusCode, header};
     use tower::ServiceExt;
 
     #[test]
