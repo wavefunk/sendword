@@ -17,7 +17,6 @@ pub mod retry;
 pub mod routes;
 pub mod server;
 pub mod tasks;
-pub mod templates;
 pub mod timestamp;
 pub mod trigger_rules;
 pub mod views;

@@ -258,9 +258,7 @@ mod tests {
             .expect("allowthem build");
         let auth_client = Arc::new(EmbeddedAuthClient::new(ath.clone(), "/login"));
 
-        let templates =
-            crate::templates::Templates::new(crate::templates::Templates::default_dir());
-        let state = AppState::new(config, &config_path, db, templates, ath, auth_client);
+        let state = AppState::new(config, &config_path, db, ath, auth_client);
         (state, dir)
     }
 

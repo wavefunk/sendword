@@ -16,13 +16,11 @@ use allowthem_core::{AllowThem, AuthClient};
 use crate::config::AppConfig;
 use crate::config_writer::ConfigWriter;
 use crate::db::Db;
-use crate::templates::Templates;
 
 pub struct AppState {
     pub config: ArcSwap<AppConfig>,
     pub config_writer: ConfigWriter,
     pub db: Db,
-    pub templates: Templates,
     pub http_client: reqwest::Client,
     pub ath: AllowThem,
     pub auth_client: Arc<dyn AuthClient>,
@@ -33,7 +31,6 @@ impl AppState {
         config: AppConfig,
         config_path: impl Into<std::path::PathBuf>,
         db: Db,
-        templates: Templates,
         ath: AllowThem,
         auth_client: Arc<dyn AuthClient>,
     ) -> Arc<Self> {
@@ -43,7 +40,6 @@ impl AppState {
             config: ArcSwap::from_pointee(config),
             config_writer: ConfigWriter::new(config_path),
             db,
-            templates,
             http_client,
             ath,
             auth_client,

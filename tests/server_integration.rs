@@ -11,7 +11,6 @@ use sendword::db::Db;
 use sendword::models::trigger_attempt::{self, TriggerAttemptStatus};
 use sendword::payload::{FieldType, PayloadField, PayloadSchema};
 use sendword::server::AppState;
-use sendword::templates::Templates;
 
 async fn test_state(config: AppConfig) -> Arc<AppState> {
     let db = Db::new_in_memory().await.expect("in-memory db");
@@ -23,8 +22,7 @@ async fn test_state(config: AppConfig) -> Arc<AppState> {
         .await
         .expect("allowthem build");
     let auth_client = Arc::new(EmbeddedAuthClient::new(ath.clone(), "/login"));
-    let templates = Templates::new(Templates::default_dir());
-    AppState::new(config, "sendword.toml", db, templates, ath, auth_client)
+    AppState::new(config, "sendword.toml", db, ath, auth_client)
 }
 
 async fn spawn_server_with_router(state: Arc<AppState>, auth_router: axum::Router) -> String {
@@ -543,7 +541,6 @@ async fn hook_detail_renders_hook_config() {
     // Executor config
     assert!(body.contains("shell"), "should show executor type");
     assert!(body.contains("make deploy"), "should show command");
-    // MiniJinja HTML-escapes "/" to "&#x2f;", so check for the escaped form
     assert!(
         body.contains("&#x2f;tmp") || body.contains("/tmp"),
         "should show working directory"
@@ -2005,8 +2002,7 @@ async fn create_hook_with_bearer_auth_via_form() {
         .await
         .expect("allowthem build");
     let auth_client = Arc::new(EmbeddedAuthClient::new(ath.clone(), "/login"));
-    let templates = Templates::new(Templates::default_dir());
-    let state = AppState::new(config, &config_path, db, templates, ath, auth_client);
+    let state = AppState::new(config, &config_path, db, ath, auth_client);
     let token = create_test_session(&state).await;
     let url = spawn_server(state).await;
 
@@ -2060,8 +2056,7 @@ async fn create_hook_with_hmac_auth_via_form() {
         .await
         .expect("allowthem build");
     let auth_client = Arc::new(EmbeddedAuthClient::new(ath.clone(), "/login"));
-    let templates = Templates::new(Templates::default_dir());
-    let state = AppState::new(config, &config_path, db, templates, ath, auth_client);
+    let state = AppState::new(config, &config_path, db, ath, auth_client);
     let token = create_test_session(&state).await;
     let url = spawn_server(state).await;
 
@@ -2124,8 +2119,7 @@ command = "echo ok"
         .await
         .expect("allowthem build");
     let auth_client = Arc::new(EmbeddedAuthClient::new(ath.clone(), "/login"));
-    let templates = Templates::new(Templates::default_dir());
-    let state = AppState::new(config, &config_path, db, templates, ath, auth_client);
+    let state = AppState::new(config, &config_path, db, ath, auth_client);
     let token = create_test_session(&state).await;
     let url = spawn_server(state).await;
 
@@ -2853,8 +2847,7 @@ async fn spawn_file_backed_server(
         .await
         .expect("allowthem build");
     let auth_client = Arc::new(EmbeddedAuthClient::new(ath.clone(), "/login"));
-    let templates = Templates::new(Templates::default_dir());
-    let state = AppState::new(config, &config_path, db, templates, ath, auth_client);
+    let state = AppState::new(config, &config_path, db, ath, auth_client);
     let token = create_test_session(&state).await;
     let url = spawn_server(state).await;
     (url, token, config_path, dir)

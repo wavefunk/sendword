@@ -1581,7 +1581,6 @@ mod tests {
     use super::*;
     use crate::config::AppConfig;
     use crate::db::Db;
-    use crate::templates::Templates;
     use allowthem_core::{AllowThemBuilder, Email, EmbeddedAuthClient, generate_token, hash_token};
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
@@ -1608,8 +1607,7 @@ mod tests {
             .expect("allowthem build");
         let auth_client = Arc::new(EmbeddedAuthClient::new(ath.clone(), "/login"));
 
-        let templates = Templates::new(Templates::default_dir());
-        let state = AppState::new(config, &config_path, db, templates, ath, auth_client);
+        let state = AppState::new(config, &config_path, db, ath, auth_client);
         (state, dir)
     }
 

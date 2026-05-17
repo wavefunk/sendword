@@ -172,12 +172,7 @@ async fn serve() -> eyre::Result<()> {
     let auth_router = auth_routes_builder.build(&ath)?;
     tracing::info!("allowthem auth routes ready");
 
-    let templates =
-        sendword::templates::Templates::new(sendword::templates::Templates::default_dir());
-    tracing::info!("templates loaded");
-
-    let state =
-        sendword::server::AppState::new(config, "sendword.toml", db, templates, ath, auth_client);
+    let state = sendword::server::AppState::new(config, "sendword.toml", db, ath, auth_client);
 
     let _rate_limit_sweep = sendword::tasks::spawn_rate_limit_sweep(state.db.pool().clone());
     tracing::info!("rate limit sweep task started");

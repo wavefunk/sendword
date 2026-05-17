@@ -150,7 +150,6 @@ mod tests {
     use crate::config::AppConfig;
     use crate::db::Db;
     use crate::server::AppState;
-    use crate::templates::Templates;
 
     async fn test_state() -> Arc<AppState> {
         let db = Db::new_in_memory().await.expect("in-memory db");
@@ -164,8 +163,7 @@ mod tests {
         let auth_client = Arc::new(EmbeddedAuthClient::new(ath.clone(), "/login"));
 
         let config = AppConfig::default();
-        let templates = Templates::new(Templates::default_dir());
-        AppState::new(config, "sendword.toml", db, templates, ath, auth_client)
+        AppState::new(config, "sendword.toml", db, ath, auth_client)
     }
 
     /// Create a test user and return a session cookie value for authenticated requests.
