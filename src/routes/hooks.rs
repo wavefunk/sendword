@@ -25,7 +25,6 @@ use crate::models::{ExecutionStatus, execution, trigger_attempt};
 use crate::payload::{FieldType, FieldValidationError, PayloadField, PayloadSchema};
 use crate::retry;
 use crate::server::AppState;
-use crate::templates::context;
 use crate::trigger_rules::{self, cooldown, payload_filter, rate_limit, time_window};
 use crate::views::FlashMessages;
 use crate::views::hook_activity::{
@@ -36,6 +35,7 @@ use crate::views::hook_detail::{
     AuthModeView, HookDetailPage, PayloadFieldRow, TriggerFilterRow, TriggerRateRow,
     TriggerWindowRow, render_hook_detail_page,
 };
+use crate::views::hook_form::{HookFormPage, render_hook_form_page};
 use crate::webhook_auth;
 
 const EXECUTIONS_PER_PAGE: i64 = 20;
@@ -1249,44 +1249,17 @@ struct FlashParams {
 
 async fn new_hook_form(
     AuthUser(auth): AuthUser,
-    State(state): State<Arc<AppState>>,
+    State(_state): State<Arc<AppState>>,
     Query(flash): Query<FlashParams>,
 ) -> Result<Html<String>, AppError> {
-    let html = state.templates.render(
-        "hook_form.html",
-        context! {
-            is_new => true,
-            form_name => "",
-            form_slug => "",
-            form_description => "",
-            form_enabled => true,
-            form_executor_type => "shell",
-            form_command => "",
-            form_cwd => "",
-            form_timeout => "",
-            form_env_text => "",
-            form_retry_count => 0,
-            form_retry_backoff => "exponential",
-            form_retry_initial_delay => "",
-            form_retry_max_delay => "",
-            form_auth_mode => "none",
-            form_auth_token => "",
-            form_auth_header => "X-Hub-Signature-256",
-            form_auth_algorithm => "sha256",
-            form_auth_secret => "",
-            form_payload_text => "",
-            form_trigger_filters_text => "",
-            form_trigger_windows_text => "",
-            form_trigger_cooldown => "",
-            form_trigger_rate_max => "",
-            form_trigger_rate_window => "",
-            success => flash.success,
-            error => flash.error,
-            username => auth.email.as_str(),
-            nav_active => "hooks",
+    render_hook_form_page(
+        auth.email.as_str(),
+        &HookFormPage::new_hook(),
+        FlashMessages {
+            success: flash.success.as_deref(),
+            error: flash.error.as_deref(),
         },
-    )?;
-    Ok(Html(html))
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -1479,42 +1452,38 @@ async fn edit_hook_form(
         )
     };
 
-    let html = state.templates.render(
-        "hook_form.html",
-        context! {
-            is_new => false,
-            slug => &hook.slug,
-            form_name => &hook.name,
-            form_slug => &hook.slug,
-            form_description => &hook.description,
-            form_enabled => hook.enabled,
-            form_executor_type => executor_type,
-            form_command => command,
-            form_cwd => hook.cwd.as_deref().unwrap_or(""),
-            form_timeout => timeout_str,
-            form_env_text => env_text,
-            form_retry_count => retry_count,
-            form_retry_backoff => retry_backoff,
-            form_retry_initial_delay => retry_initial_delay,
-            form_retry_max_delay => retry_max_delay,
-            form_auth_mode => auth_mode,
-            form_auth_token => auth_token,
-            form_auth_header => auth_header,
-            form_auth_algorithm => auth_algorithm,
-            form_auth_secret => auth_secret,
-            form_payload_text => payload_text,
-            form_trigger_filters_text => trigger_filters_text,
-            form_trigger_windows_text => trigger_windows_text,
-            form_trigger_cooldown => trigger_cooldown,
-            form_trigger_rate_max => trigger_rate_max,
-            form_trigger_rate_window => trigger_rate_window,
-            success => flash.success,
-            error => flash.error,
-            username => auth.email.as_str(),
-            nav_active => "hooks",
+    let mut view = HookFormPage::edit(&hook.slug, &hook.name);
+    view.form_description = hook.description.clone();
+    view.form_enabled = hook.enabled;
+    view.form_executor_type = executor_type.to_owned();
+    view.form_command = command.to_owned();
+    view.form_cwd = hook.cwd.clone().unwrap_or_default();
+    view.form_timeout = timeout_str;
+    view.form_env_text = env_text;
+    view.form_retry_count = retry_count;
+    view.form_retry_backoff = retry_backoff.to_owned();
+    view.form_retry_initial_delay = retry_initial_delay;
+    view.form_retry_max_delay = retry_max_delay;
+    view.form_auth_mode = auth_mode.to_owned();
+    view.form_auth_token = auth_token.to_owned();
+    view.form_auth_header = auth_header.to_owned();
+    view.form_auth_algorithm = auth_algorithm.to_owned();
+    view.form_auth_secret = auth_secret.to_owned();
+    view.form_payload_text = payload_text;
+    view.form_trigger_filters_text = trigger_filters_text;
+    view.form_trigger_windows_text = trigger_windows_text;
+    view.form_trigger_cooldown = trigger_cooldown;
+    view.form_trigger_rate_max = trigger_rate_max;
+    view.form_trigger_rate_window = trigger_rate_window;
+
+    render_hook_form_page(
+        auth.email.as_str(),
+        &view,
+        FlashMessages {
+            success: flash.success.as_deref(),
+            error: flash.error.as_deref(),
         },
-    )?;
-    Ok(Html(html))
+    )
 }
 
 // ---------------------------------------------------------------------------
