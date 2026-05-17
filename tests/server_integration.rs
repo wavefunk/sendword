@@ -18,6 +18,7 @@ async fn test_state(config: AppConfig) -> Arc<AppState> {
     db.migrate().await.expect("migration");
     let ath = AllowThemBuilder::with_pool(db.pool().clone())
         .cookie_secure(false)
+        .csrf_key([7; 32])
         .build()
         .await
         .expect("allowthem build");
@@ -26,7 +27,7 @@ async fn test_state(config: AppConfig) -> Arc<AppState> {
     AppState::new(config, "sendword.toml", db, templates, ath, auth_client)
 }
 
-async fn spawn_server(state: Arc<AppState>) -> String {
+async fn spawn_server_with_router(state: Arc<AppState>, auth_router: axum::Router) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind");
@@ -34,15 +35,16 @@ async fn spawn_server(state: Arc<AppState>) -> String {
     let url = format!("http://{addr}");
 
     tokio::spawn(async move {
-        axum::serve(
-            listener,
-            sendword::server::into_service(state, axum::Router::new()),
-        )
-        .await
-        .expect("server");
+        axum::serve(listener, sendword::server::into_service(state, auth_router))
+            .await
+            .expect("server");
     });
 
     url
+}
+
+async fn spawn_server(state: Arc<AppState>) -> String {
+    spawn_server_with_router(state, axum::Router::new()).await
 }
 
 async fn spawn_test_server() -> String {
@@ -127,6 +129,45 @@ async fn nonexistent_route_returns_404() {
     let url = spawn_test_server().await;
     let resp = reqwest::get(format!("{url}/nonexistent")).await.unwrap();
     assert_eq!(resp.status(), 404);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("PAGE NOT FOUND"));
+    assert!(body.contains("BACK TO DASHBOARD"));
+    assert!(body.contains("/static/wavefunk/css/wavefunk.css"));
+    assert!(!body.contains(r#"hx-post="/logout""#));
+}
+
+#[tokio::test]
+async fn auth_routes_are_not_shadowed_by_fallback() {
+    let state = test_state(AppConfig::default()).await;
+    let auth_router = allowthem_server::AllRoutesBuilder::new()
+        .login()
+        .logout()
+        .settings()
+        .build(&state.ath)
+        .expect("auth router");
+    let url = spawn_server_with_router(state, auth_router).await;
+    let client = client_no_redirect();
+
+    let login = client.get(format!("{url}/login")).send().await.unwrap();
+    assert_eq!(login.status(), 200);
+
+    let settings = client.get(format!("{url}/settings")).send().await.unwrap();
+    assert_eq!(settings.status(), 303);
+    let location = settings
+        .headers()
+        .get("location")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("");
+    assert!(location.starts_with("/login"));
+
+    let missing = client
+        .get(format!("{url}/missing-auth-check"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(missing.status(), 404);
+    let body = missing.text().await.unwrap();
+    assert!(body.contains("PAGE NOT FOUND"));
 }
 
 #[tokio::test]

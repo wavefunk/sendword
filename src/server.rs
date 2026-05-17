@@ -4,11 +4,10 @@ use std::sync::Arc;
 use arc_swap::ArcSwap;
 use axum::Router;
 use axum::body::Body;
-use axum::extract::{Path, State, connect_info::IntoMakeServiceWithConnectInfo};
+use axum::extract::{Path, connect_info::IntoMakeServiceWithConnectInfo};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
-use minijinja::context;
 use tokio::net::TcpListener;
 use tower_http::trace::TraceLayer;
 
@@ -110,16 +109,15 @@ pub fn router(state: Arc<AppState>, auth_router: Router) -> Router {
         .layer(TraceLayer::new_for_http())
 }
 
-async fn fallback_404(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let html = state
-        .templates
-        .render(
-            "404.html",
-            context! {
-                nav_active => "",
-            },
-        )
-        .unwrap_or_else(|_| "404 — page not found".to_owned());
+async fn fallback_404() -> impl IntoResponse {
+    let html = match crate::views::fallback::render_not_found_page() {
+        Ok(Html(html)) => html,
+        Err(err) => {
+            tracing::error!(error = ?err, "failed to render 404 page");
+            "404 - page not found".to_owned()
+        }
+    };
+
     (StatusCode::NOT_FOUND, Html(html))
 }
 

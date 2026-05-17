@@ -11,6 +11,7 @@ use crate::error::AppError;
 pub mod approvals;
 pub mod dashboard;
 pub mod execution_detail;
+pub mod fallback;
 pub mod hook_activity;
 pub mod hook_detail;
 pub mod hook_form;
