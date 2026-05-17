@@ -400,6 +400,8 @@ mod tests {
         assert!(html.contains(r#"/static/wavefunk/css/wavefunk.css"#));
         assert!(html.contains(r#"/static/wavefunk/js/wavefunk.js"#));
         assert!(html.contains(r#"/static/js/sendword.js"#));
+        assert!(!html.contains(r#"/static/css/wavefunk.css"#));
+        assert!(!html.contains("unpkg.com/htmx"));
         assert!(html.contains(r#"<a class="wf-nav-item is-active" href="/" aria-current="page">"#));
         assert!(html.contains(r#"<span class="wf-user-name">admin@example.com</span>"#));
         assert!(html.contains(r#"hx-post="/logout""#));
@@ -428,6 +430,21 @@ mod tests {
         assert!(html.contains(r#"/static/wavefunk/js/htmx-sse.js"#));
         assert!(html.contains(r#"<script id="execution-hooks">"#));
         assert!(html.contains(r#"<section>Logs</section>"#));
+    }
+
+    #[test]
+    fn render_shell_escapes_user_visible_profile_text() {
+        let Html(html) = super::render_shell(&super::PageShell::new(
+            "sendword - users",
+            r#"<admin@example.com>"#,
+            super::NavActive::Admin,
+            TrustedHtml::new(r#"<span aria-current="page">USERS</span>"#),
+            TrustedHtml::new("<h1>Users</h1>"),
+        ))
+        .unwrap();
+
+        assert!(!html.contains(r#"<span class="wf-user-name"><admin@example.com></span>"#));
+        assert!(html.contains("&#60;admin@example.com&#62;"));
     }
 
     #[test]
