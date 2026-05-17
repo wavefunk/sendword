@@ -149,17 +149,20 @@
     });
   }
 
-  function initFormConfirm() {
-    document.addEventListener('submit', event => {
-      const target = eventElement(event);
-      const form = target && target.closest('[data-sendword-confirm]');
-      if (!form) return;
+  function handleFormConfirm(event) {
+    const target = eventElement(event);
+    const form = target && target.closest('[data-sendword-confirm]');
+    if (!form) return;
 
-      const message = form.getAttribute('data-sendword-confirm');
-      if (message && !window.confirm(message)) {
-        event.preventDefault();
-      }
-    });
+    const message = form.getAttribute('data-sendword-confirm');
+    if (message && !window.confirm(message)) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }
+  }
+
+  function initFormConfirm() {
+    document.addEventListener('submit', handleFormConfirm, true);
   }
 
   function maybeReloadAfterSettle(event) {

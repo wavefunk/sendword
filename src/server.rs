@@ -176,6 +176,15 @@ mod tests {
         );
     }
 
+    #[test]
+    fn sendword_script_confirm_handler_runs_before_htmx_boosted_submit() {
+        let script =
+            std::str::from_utf8(super::SENDWORD_SCRIPT).expect("sendword.js is valid UTF-8");
+
+        assert!(script.contains("document.addEventListener('submit', handleFormConfirm, true);"));
+        assert!(script.contains("event.stopImmediatePropagation();"));
+    }
+
     #[tokio::test]
     async fn static_assets_router_serves_wavefunk_ui_and_sendword_assets() {
         let app = super::static_assets_router::<()>();
