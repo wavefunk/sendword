@@ -15,7 +15,6 @@ const APP_HEAD_HTML: &str = r##"<link rel="icon" href="data:image/svg+xml,%3Csvg
   :root { --accent: #e06c75; --accent-ink: #000000; }
   [data-mode="light"] { --accent: #d20f39; --accent-ink: #ffffff; }
 </style>"##;
-const SENDWORD_SCRIPT_TAG: &str = r#"<script src="/static/js/sendword.js" defer></script>"#;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum NavActive {
@@ -38,11 +37,15 @@ pub struct PageShell<'a> {
     pub title: &'a str,
     pub username: &'a str,
     pub active_nav: NavActive,
+    /// Already-rendered breadcrumb markup from Askama or wavefunk-ui components.
     pub breadcrumbs_html: TrustedHtml<'a>,
+    /// Already-rendered action markup from Askama or wavefunk-ui components.
     pub actions_html: Option<TrustedHtml<'a>>,
+    /// Already-rendered page body markup from Askama templates.
     pub content_html: TrustedHtml<'a>,
     pub flash: FlashMessages<'a>,
     pub include_htmx_sse: bool,
+    /// App-specific script tags only; generic wavefunk.js behavior is loaded by AppShell.
     pub scripts_html: Option<TrustedHtml<'a>>,
 }
 
@@ -200,11 +203,19 @@ pub struct PaginationState {
 
 impl PaginationState {
     pub fn new(page: i64, per_page: i64, total: i64, item_count: i64) -> Self {
+        let per_page = per_page.max(1);
+        let total = total.max(0);
+        let total_pages = if total == 0 {
+            1
+        } else {
+            (total + per_page - 1) / per_page
+        };
+
         Self {
-            page: page.max(1),
-            per_page: per_page.max(1),
-            total: total.max(0),
-            item_count: item_count.max(0),
+            page: page.clamp(1, total_pages),
+            per_page,
+            total,
+            item_count: item_count.clamp(0, per_page),
         }
     }
 
@@ -217,7 +228,7 @@ impl PaginationState {
     }
 
     pub fn start_index(&self) -> i64 {
-        if self.total == 0 {
+        if self.total == 0 || self.item_count == 0 {
             0
         } else {
             ((self.page - 1) * self.per_page) + 1
@@ -225,7 +236,7 @@ impl PaginationState {
     }
 
     pub fn end_index(&self) -> i64 {
-        if self.total == 0 {
+        if self.total == 0 || self.item_count == 0 {
             0
         } else {
             (self.start_index() + self.item_count - 1).min(self.total)
@@ -253,7 +264,6 @@ impl PaginationState {
 pub fn render_shell(shell: &PageShell<'_>) -> Result<Html<String>, AppError> {
     let nav_html = render_nav(shell.active_nav)?;
     let content_html = render_content(shell)?;
-    let scripts_html = render_scripts(shell.scripts_html);
     let avatar_initial = avatar_initial(shell.username);
     let profile = SidebarProfile::new()
         .with_name(shell.username)
@@ -264,11 +274,14 @@ pub fn render_shell(shell: &PageShell<'_>) -> Result<Html<String>, AppError> {
         .with_nav(&nav_html)
         .with_breadcrumbs(shell.breadcrumbs_html)
         .with_profile(profile)
-        .with_status(APP_NAME, APP_STATUS_VERSION)
-        .with_scripts(TrustedHtml::new(&scripts_html));
+        .with_status(APP_NAME, APP_STATUS_VERSION);
 
     if let Some(actions_html) = shell.actions_html {
         app_shell = app_shell.with_actions(actions_html.as_str());
+    }
+
+    if let Some(scripts_html) = shell.scripts_html {
+        app_shell = app_shell.with_scripts(scripts_html);
     }
 
     if shell.include_htmx_sse {
@@ -328,14 +341,6 @@ fn render_content(shell: &PageShell<'_>) -> Result<String, AppError> {
 
     html.push_str(shell.content_html.as_str());
     Ok(html)
-}
-
-fn render_scripts(extra: Option<TrustedHtml<'_>>) -> String {
-    let mut html = String::from(SENDWORD_SCRIPT_TAG);
-    if let Some(extra) = extra {
-        html.push_str(extra.as_str());
-    }
-    html
 }
 
 fn avatar_initial(username: &str) -> String {
@@ -399,7 +404,7 @@ mod tests {
         assert!(html.contains(r#"<span class="wf-brand-name">SENDWORD</span>"#));
         assert!(html.contains(r#"/static/wavefunk/css/wavefunk.css"#));
         assert!(html.contains(r#"/static/wavefunk/js/wavefunk.js"#));
-        assert!(html.contains(r#"/static/js/sendword.js"#));
+        assert!(!html.contains(r#"/static/js/sendword.js"#));
         assert!(!html.contains(r#"/static/css/wavefunk.css"#));
         assert!(!html.contains("unpkg.com/htmx"));
         assert!(html.contains(r#"<a class="wf-nav-item is-active" href="/" aria-current="page">"#));
@@ -483,5 +488,9 @@ mod tests {
         assert!(pagination.has_previous());
         assert!(pagination.has_next());
         assert_eq!(pagination.summary_label(), "21-40 OF 45");
+
+        let out_of_range = super::PaginationState::new(99, 20, 45, 20);
+        assert_eq!(out_of_range.page, 3);
+        assert_eq!(out_of_range.summary_label(), "41-45 OF 45");
     }
 }
