@@ -13,7 +13,8 @@ use allowthem_core::{AuthError, Email, UserId};
 use crate::error::AppError;
 use crate::extractors::AuthUser;
 use crate::server::AppState;
-use crate::templates::context;
+use crate::views::FlashMessages;
+use crate::views::users::{UserRow, UsersPage, render_users_page};
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -38,30 +39,24 @@ async fn list_users(
 ) -> Result<Html<String>, AppError> {
     let all_users = state.ath.db().list_users().await?;
 
-    let user_rows: Vec<_> = all_users
-        .iter()
-        .map(|u| {
-            context! {
-                id => u.id.to_string(),
-                // "username" key keeps existing template working until commit 8 updates login.html
-                username => u.email.as_str(),
-                created_at => u.created_at.to_rfc3339(),
-                is_self => u.id == auth.id,
-            }
+    let rows = all_users
+        .into_iter()
+        .map(|u| UserRow {
+            id: u.id.to_string(),
+            email: u.email.as_str().to_owned(),
+            created_at: u.created_at.to_rfc3339(),
+            is_self: u.id == auth.id,
         })
         .collect();
 
-    let html = state.templates.render(
-        "users.html",
-        context! {
-            users => user_rows,
-            success => flash.success,
-            error => flash.error,
-            username => auth.email.as_str(),
-            nav_active => "admin",
+    render_users_page(
+        auth.email.as_str(),
+        &UsersPage::new(rows),
+        FlashMessages {
+            success: flash.success.as_deref(),
+            error: flash.error.as_deref(),
         },
-    )?;
-    Ok(Html(html))
+    )
 }
 
 // --- POST /admin/users ---

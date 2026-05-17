@@ -15,6 +15,7 @@ pub mod hook_activity;
 pub mod hook_detail;
 pub mod hook_form;
 pub mod scripts;
+pub mod users;
 
 const APP_NAME: &str = "SENDWORD";
 const APP_STATUS_VERSION: &str = "V1.0";
