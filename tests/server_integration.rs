@@ -4397,6 +4397,102 @@ async fn sse_terminal_logs_mask_hook_env_secrets() {
 }
 
 #[tokio::test]
+async fn sse_running_env_masking_drains_large_terminal_backlog() {
+    use sendword::config::LogsConfig;
+    use sendword::masking::MaskingConfig;
+    use sendword::models::execution::{self, ExecutionStatus, NewExecution};
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let logs_dir = tmp.path().to_str().unwrap();
+    let mut hook = make_test_hook("SSE Backlog Hook", "sse-backlog-hook", "echo secret");
+    hook.env
+        .insert("SECRET_TOKEN".to_owned(), "live-secret-value".to_owned());
+
+    let config = AppConfig {
+        logs: LogsConfig {
+            dir: logs_dir.to_owned(),
+        },
+        masking: MaskingConfig {
+            env_vars: vec!["SECRET_TOKEN".to_owned()],
+            ..Default::default()
+        },
+        hooks: vec![hook],
+        ..AppConfig::default()
+    };
+    let state = test_state(config).await;
+    let token = create_test_session(&state).await;
+
+    let exec_id = sendword::id::new_id();
+    let log_path = format!("{logs_dir}/{exec_id}");
+    let stdout_path = format!("{log_path}/stdout.log");
+    tokio::fs::create_dir_all(&log_path).await.unwrap();
+    tokio::fs::write(
+        &stdout_path,
+        format!(
+            "{}terminal-backlog-tail live-secret-value after-padding-for-flush\n",
+            "a".repeat(140 * 1024)
+        ),
+    )
+    .await
+    .unwrap();
+    tokio::fs::write(format!("{log_path}/stderr.log"), "")
+        .await
+        .unwrap();
+
+    let exec = execution::create(
+        state.db.pool(),
+        &NewExecution {
+            id: Some(&exec_id),
+            hook_slug: "sse-backlog-hook",
+            log_path: &log_path,
+            trigger_source: "127.0.0.1",
+            request_payload: "{}",
+            retry_of: None,
+            status: None,
+        },
+    )
+    .await
+    .expect("create execution");
+    execution::mark_running(state.db.pool(), &exec.id)
+        .await
+        .expect("mark running");
+
+    let url = spawn_server(Arc::clone(&state)).await;
+    let client = reqwest::Client::new();
+    let request_exec_id = exec.id.clone();
+    let request = tokio::spawn(async move {
+        let resp = client
+            .get(format!("{url}/executions/{request_exec_id}/logs/stream"))
+            .header("Cookie", format!("allowthem_session={token}"))
+            .send()
+            .await
+            .expect("request SSE endpoint");
+        assert_eq!(resp.status(), 200);
+        resp.text().await.expect("read SSE body")
+    });
+
+    tokio::time::sleep(std::time::Duration::from_millis(350)).await;
+    execution::mark_completed(state.db.pool(), &exec.id, ExecutionStatus::Success, Some(0))
+        .await
+        .expect("mark completed");
+
+    let body = request.await.expect("join SSE request");
+
+    assert!(
+        body.contains("terminal-backlog-tail"),
+        "SSE should drain terminal backlog before done:\n{body}"
+    );
+    assert!(
+        !body.contains("live-secret-value"),
+        "SSE leaked secret:\n{body}"
+    );
+    assert!(
+        body.contains("***"),
+        "SSE should mask backlog secret:\n{body}"
+    );
+}
+
+#[tokio::test]
 async fn sse_running_regex_masking_handles_split_matches() {
     use sendword::config::LogsConfig;
     use sendword::masking::MaskingConfig;

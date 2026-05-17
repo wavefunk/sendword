@@ -63,21 +63,14 @@ fn mask_and_escape(
     html_escape(&mask_secrets(text, masking, hook_env))
 }
 
-fn mask_resolved_and_escape(
-    text: &str,
-    masking: &MaskingConfig,
-    secret_values: &[String],
-) -> String {
-    if secret_values.is_empty() && masking.compiled_patterns.is_empty() {
+fn mask_resolved_env_values_and_escape(text: &str, secret_values: &[String]) -> String {
+    if secret_values.is_empty() {
         return html_escape(text);
     }
 
     let mut masked = text.to_owned();
     for value in secret_values {
         masked = masked.replace(value, "***");
-    }
-    for re in &masking.compiled_patterns {
-        masked = re.replace_all(&masked, "***").into_owned();
     }
 
     html_escape(&masked)
@@ -110,32 +103,24 @@ fn stream_mask_secret_values(
 
 #[derive(Clone, Debug)]
 struct LogStreamMasker {
-    masking: MaskingConfig,
     secret_values: Vec<String>,
     buffer: String,
     tail_chars: usize,
-    defer_until_flush: bool,
 }
 
 impl LogStreamMasker {
-    fn new(masking: MaskingConfig, hook_env: HashMap<String, String>) -> Self {
-        let secret_values = stream_mask_secret_values(&masking, &hook_env);
+    fn new(masking: &MaskingConfig, hook_env: HashMap<String, String>) -> Self {
+        let secret_values = stream_mask_secret_values(masking, &hook_env);
         let tail_chars = stream_mask_tail_chars(&secret_values);
-        let defer_until_flush = !masking.compiled_patterns.is_empty();
         Self {
-            masking,
             secret_values,
             buffer: String::new(),
             tail_chars,
-            defer_until_flush,
         }
     }
 
     fn push(&mut self, text: &str) -> Option<String> {
         self.buffer.push_str(text);
-        if self.defer_until_flush {
-            return None;
-        }
 
         let emit_len =
             safe_emit_prefix_len(&self.buffer, self.tail_chars, self.secret_values.as_slice());
@@ -145,9 +130,8 @@ impl LogStreamMasker {
 
         let tail = self.buffer.split_off(emit_len);
         let chunk = std::mem::replace(&mut self.buffer, tail);
-        Some(mask_resolved_and_escape(
+        Some(mask_resolved_env_values_and_escape(
             &chunk,
-            &self.masking,
             self.secret_values.as_slice(),
         ))
         .filter(|value| !value.is_empty())
@@ -159,14 +143,15 @@ impl LogStreamMasker {
         }
 
         let chunk = std::mem::take(&mut self.buffer);
-        Some(mask_resolved_and_escape(
+        Some(mask_resolved_env_values_and_escape(
             &chunk,
-            &self.masking,
             self.secret_values.as_slice(),
         ))
         .filter(|value| !value.is_empty())
     }
 }
+
+const LOG_TAIL_READ_CHUNK_BYTES: usize = 64 * 1024;
 
 #[derive(Debug)]
 struct LogTail {
@@ -207,24 +192,30 @@ impl LogTail {
             return None;
         }
 
+        let remaining = len.saturating_sub(self.offset);
+        let read_len = remaining.min(LOG_TAIL_READ_CHUNK_BYTES as u64) as usize;
         if file.seek(SeekFrom::Start(self.offset)).await.is_err() {
             self.file = None;
             self.offset = 0;
             return None;
         }
 
-        let mut bytes = Vec::with_capacity((len - self.offset).min(64 * 1024) as usize);
-        if file.read_to_end(&mut bytes).await.is_err() {
-            self.file = None;
-            self.offset = 0;
+        let mut bytes = vec![0; read_len];
+        let bytes_read = match file.read(&mut bytes).await {
+            Ok(bytes_read) => bytes_read,
+            Err(_) => {
+                self.file = None;
+                self.offset = 0;
+                return None;
+            }
+        };
+
+        if bytes_read == 0 {
             return None;
         }
 
-        self.offset = self.offset.saturating_add(bytes.len() as u64);
-
-        if bytes.is_empty() {
-            return None;
-        }
+        bytes.truncate(bytes_read);
+        self.offset = self.offset.saturating_add(bytes_read as u64);
 
         String::from_utf8(bytes).ok()
     }
@@ -271,15 +262,15 @@ fn emit_prefix_len(text: &str, tail_chars: usize) -> usize {
         return text.len();
     }
 
-    let char_count = text.chars().count();
-    if char_count <= tail_chars {
-        return 0;
+    let mut retained_chars = 0;
+    for (index, _) in text.char_indices().rev() {
+        retained_chars += 1;
+        if retained_chars == tail_chars {
+            return index;
+        }
     }
 
-    text.char_indices()
-        .nth(char_count - tail_chars)
-        .map(|(index, _)| index)
-        .unwrap_or(text.len())
+    0
 }
 
 /// Read a log file, returning non-empty contents when present.
@@ -289,6 +280,34 @@ async fn read_log_file(logs_dir: &str, execution_id: &str, filename: &str) -> Op
         Ok(contents) if !contents.is_empty() => Some(contents),
         _ => None,
     }
+}
+
+async fn masked_log_file_event(
+    logs_dir: &str,
+    execution_id: &str,
+    filename: &str,
+    event_name: &'static str,
+    masking: &MaskingConfig,
+    hook_env: &HashMap<String, String>,
+) -> Option<Event> {
+    let contents = read_log_file(logs_dir, execution_id, filename).await?;
+    Some(
+        Event::default()
+            .event(event_name)
+            .data(mask_and_escape(&contents, masking, hook_env)),
+    )
+}
+
+fn done_event(status: &str) -> Event {
+    let tag_class = match status {
+        "success" => "ok",
+        "failed" => "err",
+        _ => "",
+    };
+    Event::default().event("done").data(format!(
+        r#"<span class="wf-tag {tag_class}"><span class="dot"></span>{}</span>"#,
+        status.to_uppercase()
+    ))
 }
 
 /// Compute a human-readable duration string from ISO8601 timestamps.
@@ -626,13 +645,15 @@ async fn list_pending_approvals(
 /// GET /executions/:id/logs/stream
 ///
 /// Streams log output as Server-Sent Events. For terminal executions, sends the
-/// full log content then closes. For running executions, polls log files at 200ms
-/// intervals and sends new chunks until the execution reaches a terminal state.
+/// full log content then closes. For running executions without regex masks,
+/// polls log files at 200ms intervals and sends new chunks until terminal.
+/// Regex-masked streams withhold live chunks and emit masked full logs at
+/// terminal state, since arbitrary regex matches are not boundary-safe.
 ///
 /// Events emitted:
 /// - `stdout` — new stdout content
 /// - `stderr` — new stderr content
-/// - `done`   — JSON `{"status": "..."}` when terminal
+/// - `done`   — status badge HTML when terminal
 async fn log_stream(
     _auth: AuthUser,
     State(state): State<Arc<AppState>>,
@@ -655,6 +676,7 @@ async fn log_stream(
         .map(|hook| hook.env.clone())
         .unwrap_or_default();
     let masking = config.masking.clone();
+    let defer_live_streaming = !masking.compiled_patterns.is_empty();
 
     let is_terminal = exec.status.is_terminal();
     let log_dir = format!("{logs_dir}/{id}");
@@ -662,40 +684,70 @@ async fn log_stream(
     let s = stream! {
         if is_terminal {
             // Execution already done — send full log content then close.
-            let stdout = tokio::fs::read_to_string(format!("{log_dir}/stdout.log"))
-                .await
-                .unwrap_or_default();
-            let stderr = tokio::fs::read_to_string(format!("{log_dir}/stderr.log"))
-                .await
-                .unwrap_or_default();
-            if !stdout.is_empty() {
-                yield Ok::<Event, Infallible>(Event::default().event("stdout").data(
-                    mask_and_escape(&stdout, &masking, &hook_env)
-                ));
+            if let Some(event) = masked_log_file_event(
+                &logs_dir,
+                &id,
+                "stdout.log",
+                "stdout",
+                &masking,
+                &hook_env,
+            ).await {
+                yield Ok::<Event, Infallible>(event);
             }
-            if !stderr.is_empty() {
-                yield Ok(Event::default().event("stderr").data(
-                    mask_and_escape(&stderr, &masking, &hook_env)
-                ));
+            if let Some(event) = masked_log_file_event(
+                &logs_dir,
+                &id,
+                "stderr.log",
+                "stderr",
+                &masking,
+                &hook_env,
+            ).await {
+                yield Ok::<Event, Infallible>(event);
             }
             let status = execution::get_by_id(&pool, &id)
                 .await
                 .map(|e| e.status.to_string())
                 .unwrap_or_else(|_| "unknown".into());
-            let tag_class = match status.as_str() {
-                "success" => "ok",
-                "failed" => "err",
-                _ => "",
-            };
-            yield Ok(Event::default().event("done").data(
-                format!(r#"<span class="wf-tag {tag_class}"><span class="dot"></span>{}</span>"#, status.to_uppercase())
-            ));
+            yield Ok(done_event(&status));
+        } else if defer_live_streaming {
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+
+                match execution::get_by_id(&pool, &id).await {
+                    Ok(e) if e.status.is_terminal() => {
+                        let status = e.status.to_string();
+                        if let Some(event) = masked_log_file_event(
+                            &logs_dir,
+                            &id,
+                            "stdout.log",
+                            "stdout",
+                            &masking,
+                            &hook_env,
+                        ).await {
+                            yield Ok::<Event, Infallible>(event);
+                        }
+                        if let Some(event) = masked_log_file_event(
+                            &logs_dir,
+                            &id,
+                            "stderr.log",
+                            "stderr",
+                            &masking,
+                            &hook_env,
+                        ).await {
+                            yield Ok::<Event, Infallible>(event);
+                        }
+                        yield Ok(done_event(&status));
+                        break;
+                    }
+                    _ => {}
+                }
+            }
         } else {
             // Execution is running — tail log files.
             let mut stdout_tail = LogTail::new(format!("{log_dir}/stdout.log"));
             let mut stderr_tail = LogTail::new(format!("{log_dir}/stderr.log"));
-            let mut stdout_masker = LogStreamMasker::new(masking.clone(), hook_env.clone());
-            let mut stderr_masker = LogStreamMasker::new(masking.clone(), hook_env.clone());
+            let mut stdout_masker = LogStreamMasker::new(&masking, hook_env.clone());
+            let mut stderr_masker = LogStreamMasker::new(&masking, hook_env.clone());
 
             loop {
                 tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
@@ -718,24 +770,32 @@ async fn log_stream(
                 match execution::get_by_id(&pool, &id).await {
                     Ok(e) if e.status.is_terminal() => {
                         let status = e.status.to_string();
-                        let tag_class = match status.as_str() {
-                            "success" => "ok",
-                            "failed" => "err",
-                            _ => "",
-                        };
+                        while let Some(text) = stdout_tail.read_new_text().await {
+                            if let Some(data) = stdout_masker.push(&text) {
+                                yield Ok::<Event, Infallible>(
+                                    Event::default().event("stdout").data(data)
+                                );
+                            }
+                        }
                         if let Some(data) = stdout_masker.flush() {
                             yield Ok::<Event, Infallible>(
                                 Event::default().event("stdout").data(data)
                             );
+                        }
+
+                        while let Some(text) = stderr_tail.read_new_text().await {
+                            if let Some(data) = stderr_masker.push(&text) {
+                                yield Ok::<Event, Infallible>(
+                                    Event::default().event("stderr").data(data)
+                                );
+                            }
                         }
                         if let Some(data) = stderr_masker.flush() {
                             yield Ok::<Event, Infallible>(
                                 Event::default().event("stderr").data(data)
                             );
                         }
-                        yield Ok(Event::default().event("done").data(
-                            format!(r#"<span class="wf-tag {tag_class}"><span class="dot"></span>{}</span>"#, status.to_uppercase())
-                        ));
+                        yield Ok(done_event(&status));
                         break;
                     }
                     _ => {}
@@ -856,7 +916,7 @@ mod tests {
             env_vars: vec!["SECRET_TOKEN".to_owned()],
             ..Default::default()
         };
-        let mut masker = LogStreamMasker::new(masking, hook_env);
+        let mut masker = LogStreamMasker::new(&masking, hook_env);
 
         assert_eq!(masker.push("live-secret-value\n"), None);
         let flushed = masker.flush().expect("masked tail");
@@ -874,7 +934,7 @@ mod tests {
             env_vars: vec!["SECRET_TOKEN".to_owned()],
             ..Default::default()
         };
-        let mut masker = LogStreamMasker::new(masking, hook_env);
+        let mut masker = LogStreamMasker::new(&masking, hook_env);
         let mut output = String::new();
 
         for chunk in [
@@ -892,25 +952,6 @@ mod tests {
         assert!(output.contains("prefix *** suffix"));
         assert!(!output.contains("live-secret-value"));
         assert!(!output.contains("live-"));
-    }
-
-    #[test]
-    fn log_stream_masker_defers_regex_patterns_until_flush() {
-        let mut masking = MaskingConfig {
-            patterns: vec![r"token-[a-z]+-secret".to_owned()],
-            ..Default::default()
-        };
-        masking.compile().expect("valid test pattern");
-        let mut masker = LogStreamMasker::new(masking, HashMap::new());
-        let long_middle = "a".repeat(1500);
-
-        assert_eq!(masker.push("prefix token-super"), None);
-        assert_eq!(masker.push(&format!("{long_middle}-secret suffix")), None);
-        let flushed = masker.flush().expect("masked regex output");
-
-        assert_eq!(flushed, "prefix *** suffix");
-        assert!(!flushed.contains("token-super"));
-        assert!(!flushed.contains("-secret"));
     }
 
     #[tokio::test]
@@ -936,5 +977,24 @@ mod tests {
         file.flush().await.expect("flush");
 
         assert_eq!(tail.read_new_text().await, Some("second".to_owned()));
+    }
+
+    #[tokio::test]
+    async fn log_tail_reads_large_appends_in_bounded_chunks() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let path = dir.path().join("stdout.log");
+        let mut tail = LogTail::new(&path);
+        let log_text = format!("{}tail", "a".repeat(LOG_TAIL_READ_CHUNK_BYTES));
+
+        tokio::fs::write(&path, &log_text).await.expect("write log");
+
+        let mut chunks = Vec::new();
+        while let Some(chunk) = tail.read_new_text().await {
+            assert!(chunk.len() <= LOG_TAIL_READ_CHUNK_BYTES);
+            chunks.push(chunk);
+        }
+
+        assert!(chunks.len() > 1);
+        assert_eq!(chunks.concat(), log_text);
     }
 }

@@ -24,7 +24,7 @@ GitHub/CI/Monitoring ──HTTP POST──▶ sendword ──▶ shell command
 - **Script runtime executors** --- Shell commands with payload interpolation, executable scripts, JavaScript, Python, or HTTP forwarding. Per-hook timeouts and working directories.
 - **Retries with backoff** --- None, linear, or exponential. Configurable per hook or globally, with max delay caps.
 - **Execution barriers** --- Mutex or queue-based concurrency control. Approval workflows gate hooks behind human review with optional timeouts.
-- **Secret masking** --- Redact env var values and regex patterns from dashboard output and log files.
+- **Secret masking** --- Redact env var values and regex pattern matches from dashboard log views.
 - **Backup and restore** --- Snapshot database and config to S3-compatible storage on a cron schedule. Restore with one command. Retention policies handle cleanup.
 - **Web dashboard** --- View hooks, executions, trigger attempts, and stream logs in real time via SSE.
 - **Config portability** --- Export/import configuration as JSON. Environment variable overrides for every setting.
@@ -241,6 +241,8 @@ schedule = "0 0 3 * * *"
 max_count = 30
 max_age = "90d"
 ```
+
+Masking is applied when logs are read for the dashboard; raw log files are left unchanged. Env-var value masks stream live with a small retained suffix. Regex masks are applied when the full log content can be evaluated, so running executions with regex masks withhold live log output until the execution reaches a terminal state.
 
 ### Executor types
 
