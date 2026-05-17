@@ -28,6 +28,10 @@ use crate::server::AppState;
 use crate::templates::context;
 use crate::trigger_rules::{self, cooldown, payload_filter, rate_limit, time_window};
 use crate::views::FlashMessages;
+use crate::views::hook_activity::{
+    AttemptListRow, AttemptListView, ExecutionListRow, ExecutionListView, render_attempt_list,
+    render_execution_list,
+};
 use crate::views::hook_detail::{
     AuthModeView, HookDetailPage, PayloadFieldRow, TriggerFilterRow, TriggerRateRow,
     TriggerWindowRow, render_hook_detail_page,
@@ -689,9 +693,13 @@ async fn execution_list(
     let page = params.page.unwrap_or(1).max(1);
     let offset = (page - 1) * EXECUTIONS_PER_PAGE;
 
-    let status_filter = params.status.as_deref().filter(|s| !s.is_empty());
-    let from_date_filter = params.from_date.as_deref().filter(|s| !s.is_empty());
-    let to_date_filter = params.to_date.as_deref().filter(|s| !s.is_empty());
+    let active_status = params.status.unwrap_or_default();
+    let active_from = params.from_date.unwrap_or_default();
+    let active_to = params.to_date.unwrap_or_default();
+
+    let status_filter = (!active_status.is_empty()).then_some(active_status.as_str());
+    let from_date_filter = (!active_from.is_empty()).then_some(active_from.as_str());
+    let to_date_filter = (!active_to.is_empty()).then_some(active_to.as_str());
 
     let filters = execution::ExecutionFilters {
         status: status_filter,
@@ -705,31 +713,22 @@ async fn execution_list(
         execution::list_by_hook_filtered(pool, &slug, &filters, EXECUTIONS_PER_PAGE, offset)
             .await?;
 
-    let total_pages = (total + EXECUTIONS_PER_PAGE - 1) / EXECUTIONS_PER_PAGE;
-    let has_more = page < total_pages;
+    let rows = executions
+        .iter()
+        .map(ExecutionListRow::from_execution)
+        .collect();
+    let view = ExecutionListView::new(
+        slug,
+        rows,
+        page,
+        EXECUTIONS_PER_PAGE,
+        total,
+        active_status,
+        active_from,
+        active_to,
+    );
 
-    let execution_rows = build_execution_rows(&executions);
-
-    let active_status = params.status.as_deref().unwrap_or("");
-    let active_from = params.from_date.as_deref().unwrap_or("");
-    let active_to = params.to_date.as_deref().unwrap_or("");
-
-    let html = state.templates.render(
-        "partials/execution_list.html",
-        context! {
-            slug => slug,
-            executions => execution_rows,
-            total => total,
-            page => page,
-            total_pages => total_pages,
-            has_more => has_more,
-            active_status => active_status,
-            active_from => active_from,
-            active_to => active_to,
-        },
-    )?;
-
-    Ok(Html(html))
+    render_execution_list(&view)
 }
 
 // ---------------------------------------------------------------------------
@@ -763,10 +762,9 @@ async fn trigger_attempt_list(
     let offset = (page - 1) * ATTEMPTS_PER_PAGE;
     let pool = state.db.pool();
 
-    let parsed_status = params
-        .status
-        .as_deref()
-        .filter(|s| !s.is_empty())
+    let active_status = params.status.unwrap_or_default();
+    let parsed_status = (!active_status.is_empty())
+        .then_some(active_status.as_str())
         .and_then(trigger_attempt::TriggerAttemptStatus::parse);
 
     let total =
@@ -779,37 +777,10 @@ async fn trigger_attempt_list(
         trigger_attempt::list_by_hook(pool, &slug, ATTEMPTS_PER_PAGE, offset).await?
     };
 
-    let total_pages = (total + ATTEMPTS_PER_PAGE - 1) / ATTEMPTS_PER_PAGE;
+    let rows = attempts.iter().map(AttemptListRow::from_attempt).collect();
+    let view = AttemptListView::new(slug, rows, page, ATTEMPTS_PER_PAGE, total, active_status);
 
-    let rows: Vec<serde_json::Value> = attempts
-        .iter()
-        .map(|a| {
-            serde_json::json!({
-                "id": a.id,
-                "attempted_at": a.attempted_at,
-                "status": a.status.to_string(),
-                "source_ip": a.source_ip,
-                "reason": a.reason,
-                "execution_id": a.execution_id,
-            })
-        })
-        .collect();
-
-    let active_status = params.status.as_deref().unwrap_or("");
-
-    let html = state.templates.render(
-        "partials/trigger_attempt_list.html",
-        context! {
-            slug => slug,
-            attempts => rows,
-            total => total,
-            page => page,
-            total_pages => total_pages,
-            active_status => active_status,
-        },
-    )?;
-
-    Ok(Html(html))
+    render_attempt_list(&view)
 }
 
 // ---------------------------------------------------------------------------
@@ -1633,51 +1604,6 @@ fn write_error_message(e: &WriteError) -> String {
             tracing::error!(error = %inner, "config parse error");
             "Failed to parse config file".to_owned()
         }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Execution list and helpers
-// ---------------------------------------------------------------------------
-
-fn build_execution_rows(executions: &[execution::Execution]) -> Vec<minijinja::Value> {
-    executions
-        .iter()
-        .map(|e| {
-            let duration = compute_duration(&e.started_at, &e.completed_at);
-            context! {
-                id => e.id,
-                triggered_at => e.triggered_at,
-                status => e.status.to_string(),
-                exit_code => e.exit_code,
-                duration => duration,
-            }
-        })
-        .collect()
-}
-
-/// Compute duration string from ISO8601 timestamps.
-/// Returns None if either timestamp is missing.
-fn compute_duration(started_at: &Option<String>, completed_at: &Option<String>) -> Option<String> {
-    let started = started_at.as_ref()?;
-    let completed = completed_at.as_ref()?;
-
-    let start = chrono::DateTime::parse_from_rfc3339(started).ok()?;
-    let end = chrono::DateTime::parse_from_rfc3339(completed).ok()?;
-    let dur = end.signed_duration_since(start);
-
-    let secs = dur.num_seconds();
-    if secs < 0 {
-        return None;
-    }
-
-    if secs < 60 {
-        let ms = dur.num_milliseconds() % 1000;
-        Some(format!("{secs}.{ms:03}s"))
-    } else if secs < 3600 {
-        Some(format!("{}m {}s", secs / 60, secs % 60))
-    } else {
-        Some(format!("{}h {}m", secs / 3600, (secs % 3600) / 60))
     }
 }
 
