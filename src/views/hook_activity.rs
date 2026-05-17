@@ -75,6 +75,25 @@ impl ExecutionListView {
     pub fn next_page(&self) -> i64 {
         self.pagination.page + 1
     }
+
+    pub fn previous_page_href(&self) -> String {
+        self.page_href(self.previous_page())
+    }
+
+    pub fn next_page_href(&self) -> String {
+        self.page_href(self.next_page())
+    }
+
+    fn page_href(&self, page: i64) -> String {
+        let mut href = format!(
+            "/hooks/{}/executions?page={page}",
+            urlencoding::encode(&self.slug)
+        );
+        append_query_param(&mut href, "status", &self.active_status);
+        append_query_param(&mut href, "from_date", &self.active_from);
+        append_query_param(&mut href, "to_date", &self.active_to);
+        href
+    }
 }
 
 pub fn render_execution_list(view: &ExecutionListView) -> Result<Html<String>, AppError> {
@@ -148,6 +167,23 @@ impl AttemptListView {
     pub fn next_page(&self) -> i64 {
         self.pagination.page + 1
     }
+
+    pub fn previous_page_href(&self) -> String {
+        self.page_href(self.previous_page())
+    }
+
+    pub fn next_page_href(&self) -> String {
+        self.page_href(self.next_page())
+    }
+
+    fn page_href(&self, page: i64) -> String {
+        let mut href = format!(
+            "/hooks/{}/attempts?page={page}",
+            urlencoding::encode(&self.slug)
+        );
+        append_query_param(&mut href, "status", &self.active_status);
+        href
+    }
 }
 
 pub fn render_attempt_list(view: &AttemptListView) -> Result<Html<String>, AppError> {
@@ -183,6 +219,17 @@ fn attempt_status_class(status: &TriggerAttemptStatus) -> &'static str {
 
 fn short_id(id: &str) -> String {
     id.chars().take(8).collect()
+}
+
+fn append_query_param(href: &mut String, name: &str, value: &str) {
+    if value.is_empty() {
+        return;
+    }
+
+    href.push('&');
+    href.push_str(name);
+    href.push('=');
+    href.push_str(&urlencoding::encode(value));
 }
 
 /// Compute duration string from ISO8601 timestamps.
@@ -257,13 +304,13 @@ fn compute_duration(started_at: &Option<String>, completed_at: &Option<String>) 
   {% if view.has_pages() %}
   <div class="wf-pagination">
     {% if view.pagination.has_previous() %}
-      <a hx-get="/hooks/{{ view.slug }}/executions?page={{ view.previous_page() }}&status={{ view.active_status }}&from_date={{ view.active_from }}&to_date={{ view.active_to }}" hx-target="#activity-tab-executions" hx-swap="innerHTML">&larr;</a>
+      <a hx-get="{{ view.previous_page_href() }}" hx-target="#activity-tab-executions" hx-swap="innerHTML">&larr;</a>
     {% else %}
       <button disabled>&larr;</button>
     {% endif %}
     <a class="is-active">{{ view.pagination.page }}</a>
     {% if view.pagination.has_next() %}
-      <a hx-get="/hooks/{{ view.slug }}/executions?page={{ view.next_page() }}&status={{ view.active_status }}&from_date={{ view.active_from }}&to_date={{ view.active_to }}" hx-target="#activity-tab-executions" hx-swap="innerHTML">&rarr;</a>
+      <a hx-get="{{ view.next_page_href() }}" hx-target="#activity-tab-executions" hx-swap="innerHTML">&rarr;</a>
     {% else %}
       <button disabled>&rarr;</button>
     {% endif %}
@@ -330,13 +377,13 @@ struct ExecutionListTemplate<'a> {
   {% if view.has_pages() %}
   <div class="wf-pagination">
     {% if view.pagination.has_previous() %}
-      <a hx-get="/hooks/{{ view.slug }}/attempts?page={{ view.previous_page() }}&status={{ view.active_status }}" hx-target="#activity-tab-attempts" hx-swap="innerHTML">&larr;</a>
+      <a hx-get="{{ view.previous_page_href() }}" hx-target="#activity-tab-attempts" hx-swap="innerHTML">&larr;</a>
     {% else %}
       <button disabled>&larr;</button>
     {% endif %}
     <a class="is-active">{{ view.pagination.page }}</a>
     {% if view.pagination.has_next() %}
-      <a hx-get="/hooks/{{ view.slug }}/attempts?page={{ view.next_page() }}&status={{ view.active_status }}" hx-target="#activity-tab-attempts" hx-swap="innerHTML">&rarr;</a>
+      <a hx-get="{{ view.next_page_href() }}" hx-target="#activity-tab-attempts" hx-swap="innerHTML">&rarr;</a>
     {% else %}
       <button disabled>&rarr;</button>
     {% endif %}
@@ -400,6 +447,34 @@ mod tests {
     }
 
     #[test]
+    fn execution_list_pagination_encodes_active_filters() {
+        let view = ExecutionListView::new(
+            "deploy-hook",
+            vec![ExecutionListRow {
+                id: "abcdef123456".to_owned(),
+                short_id: "abcdef12".to_owned(),
+                triggered_at: "2026-05-17T10:00:00Z".to_owned(),
+                status_label: "SUCCESS".to_owned(),
+                status_class: "wf-tag ok",
+                exit_code: Some(0),
+                duration: Some("1.234s".to_owned()),
+            }],
+            2,
+            20,
+            45,
+            "success&bad=1",
+            "2026-05-01?x=1",
+            "2026-05-17#tail",
+        );
+        let Html(html) = render_execution_list(&view).unwrap();
+
+        assert!(html.contains("status=success%26bad%3D1"));
+        assert!(html.contains("from_date=2026-05-01%3Fx%3D1"));
+        assert!(html.contains("to_date=2026-05-17%23tail"));
+        assert!(!html.contains("status=success&bad=1"));
+    }
+
+    #[test]
     fn attempt_list_renders_rows_filters_and_pagination() {
         let rows = vec![AttemptListRow {
             attempted_at: "2026-05-17T10:00:00Z".to_owned(),
@@ -432,5 +507,24 @@ mod tests {
 
         assert!(html.contains(r#"No trigger attempts matching "filtered"."#));
         assert!(!html.contains("<table"));
+    }
+
+    #[test]
+    fn attempt_list_pagination_encodes_active_filter() {
+        let rows = vec![AttemptListRow {
+            attempted_at: "2026-05-17T10:00:00Z".to_owned(),
+            status_label: "AUTH_FAILED".to_owned(),
+            status_class: "wf-tag err",
+            source_ip: "127.0.0.1".to_owned(),
+            reason: String::new(),
+            execution_id: None,
+            execution_short_id: None,
+        }];
+        let view = AttemptListView::new("auth-hook", rows, 2, 20, 45, "auth_failed&bad=1");
+
+        let Html(html) = render_attempt_list(&view).unwrap();
+
+        assert!(html.contains("status=auth_failed%26bad%3D1"));
+        assert!(!html.contains("status=auth_failed&bad=1"));
     }
 }

@@ -1,4 +1,32 @@
 (function () {
+  const executorCopy = {
+    shell: {
+      label: 'Shell command',
+      placeholder: 'make deploy',
+      hint: 'Shell commands may use payload interpolation like {{ action }}.'
+    },
+    script: {
+      label: 'Script path',
+      placeholder: 'data/scripts/deploy.sh',
+      hint: 'Executable scripts are run directly and need a shebang plus executable permissions.'
+    },
+    javascript: {
+      label: 'JavaScript path',
+      placeholder: 'data/scripts/deploy.js',
+      hint: 'JavaScript scripts run with node and can read payload fields from process.env.'
+    },
+    python: {
+      label: 'Python path',
+      placeholder: 'data/scripts/deploy.py',
+      hint: 'Python scripts run with python3, then python, and can read payload fields from os.environ.'
+    },
+    http: {
+      label: 'HTTP URL',
+      placeholder: 'https://example.com/webhook',
+      hint: 'HTTP executors are view-only in this form and cannot be saved here.'
+    }
+  };
+
   function find(root, selector) {
     if (!root) return null;
     if (root.matches && root.matches(selector)) return root;
@@ -78,41 +106,15 @@
     const hint = document.getElementById('command_hint');
     if (!type || !command || !label || !hint) return;
 
-    const copy = {
-      shell: {
-        label: 'Shell command',
-        placeholder: 'make deploy',
-        hint: 'Shell commands may use payload interpolation like {{ action }}.'
-      },
-      script: {
-        label: 'Script path',
-        placeholder: 'data/scripts/deploy.sh',
-        hint: 'Executable scripts are run directly and need a shebang plus executable permissions.'
-      },
-      javascript: {
-        label: 'JavaScript path',
-        placeholder: 'data/scripts/deploy.js',
-        hint: 'JavaScript scripts run with node and can read payload fields from process.env.'
-      },
-      python: {
-        label: 'Python path',
-        placeholder: 'data/scripts/deploy.py',
-        hint: 'Python scripts run with python3, then python, and can read payload fields from os.environ.'
-      },
-      http: {
-        label: 'HTTP URL',
-        placeholder: 'https://example.com/webhook',
-        hint: 'HTTP executors are view-only in this form and cannot be saved here.'
-      }
-    };
-
-    const selected = copy[type.value] || copy.shell;
+    const selected = executorCopy[type.value] || executorCopy.shell;
     label.textContent = selected.label;
     command.placeholder = selected.placeholder;
     hint.textContent = selected.hint;
   }
 
   function initHookForm(root) {
+    if (!find(root, '#auth_mode') && !find(root, '#executor_type')) return;
+
     const authMode = find(root, '#auth_mode');
     const executorType = find(root, '#executor_type');
 
