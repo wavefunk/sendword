@@ -1699,7 +1699,7 @@ mod tests {
             .await
             .unwrap();
         let html = String::from_utf8(body.to_vec()).unwrap();
-        assert!(html.contains("new hook"));
+        assert!(html.contains("New hook"));
         assert!(html.contains("CREATE HOOK"));
     }
 

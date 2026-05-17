@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::path::Path as FsPath;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_stream::stream;
@@ -12,6 +13,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use futures_core::Stream;
 use serde::Serialize;
+use tokio::io::{AsyncReadExt, AsyncSeekExt, SeekFrom};
 
 use crate::barriers::{self, execution_lock, execution_queue};
 use crate::error::{AppError, DbError};
@@ -57,17 +59,10 @@ fn mask_and_escape(
     html_escape(&mask_secrets(text, masking, hook_env))
 }
 
-fn stream_mask_tail_chars(masking: &MaskingConfig, hook_env: &HashMap<String, String>) -> usize {
-    let env_tail = masking
-        .env_vars
+fn stream_mask_tail_chars(masking: &MaskingConfig, secret_values: &[String]) -> usize {
+    let env_tail = secret_values
         .iter()
-        .filter_map(|name| {
-            hook_env
-                .get(name.as_str())
-                .cloned()
-                .or_else(|| std::env::var(name).ok())
-        })
-        .map(|value| value.chars().count().saturating_sub(1))
+        .map(|value| value.chars().count())
         .max()
         .unwrap_or(0);
 
@@ -80,20 +75,40 @@ fn stream_mask_tail_chars(masking: &MaskingConfig, hook_env: &HashMap<String, St
     env_tail.max(pattern_tail)
 }
 
+fn stream_mask_secret_values(
+    masking: &MaskingConfig,
+    hook_env: &HashMap<String, String>,
+) -> Vec<String> {
+    masking
+        .env_vars
+        .iter()
+        .filter_map(|name| {
+            hook_env
+                .get(name.as_str())
+                .cloned()
+                .or_else(|| std::env::var(name).ok())
+        })
+        .filter(|value| !value.is_empty())
+        .collect()
+}
+
 #[derive(Clone, Debug)]
 struct LogStreamMasker {
     masking: MaskingConfig,
     hook_env: HashMap<String, String>,
+    secret_values: Vec<String>,
     buffer: String,
     tail_chars: usize,
 }
 
 impl LogStreamMasker {
     fn new(masking: MaskingConfig, hook_env: HashMap<String, String>) -> Self {
-        let tail_chars = stream_mask_tail_chars(&masking, &hook_env);
+        let secret_values = stream_mask_secret_values(&masking, &hook_env);
+        let tail_chars = stream_mask_tail_chars(&masking, &secret_values);
         Self {
             masking,
             hook_env,
+            secret_values,
             buffer: String::new(),
             tail_chars,
         }
@@ -101,7 +116,8 @@ impl LogStreamMasker {
 
     fn push(&mut self, text: &str) -> Option<String> {
         self.buffer.push_str(text);
-        let emit_len = emit_prefix_len(&self.buffer, self.tail_chars);
+        let emit_len =
+            safe_emit_prefix_len(&self.buffer, self.tail_chars, self.secret_values.as_slice());
         if emit_len == 0 {
             return None;
         }
@@ -121,6 +137,104 @@ impl LogStreamMasker {
         Some(mask_and_escape(&chunk, &self.masking, &self.hook_env))
             .filter(|value| !value.is_empty())
     }
+}
+
+#[derive(Debug)]
+struct LogTail {
+    path: PathBuf,
+    file: Option<tokio::fs::File>,
+    offset: u64,
+}
+
+impl LogTail {
+    fn new(path: impl Into<PathBuf>) -> Self {
+        Self {
+            path: path.into(),
+            file: None,
+            offset: 0,
+        }
+    }
+
+    async fn read_new_text(&mut self) -> Option<String> {
+        if self.file.is_none() {
+            self.file = tokio::fs::File::open(&self.path).await.ok();
+        }
+
+        let file = self.file.as_mut()?;
+        let len = match file.metadata().await {
+            Ok(metadata) => metadata.len(),
+            Err(_) => {
+                self.file = None;
+                self.offset = 0;
+                return None;
+            }
+        };
+
+        if len < self.offset {
+            self.offset = 0;
+        }
+
+        if len == self.offset {
+            return None;
+        }
+
+        if file.seek(SeekFrom::Start(self.offset)).await.is_err() {
+            self.file = None;
+            self.offset = 0;
+            return None;
+        }
+
+        let mut bytes = Vec::with_capacity((len - self.offset).min(64 * 1024) as usize);
+        if file.read_to_end(&mut bytes).await.is_err() {
+            self.file = None;
+            self.offset = 0;
+            return None;
+        }
+
+        self.offset = self.offset.saturating_add(bytes.len() as u64);
+
+        if bytes.is_empty() {
+            return None;
+        }
+
+        String::from_utf8(bytes).ok()
+    }
+}
+
+fn safe_emit_prefix_len(text: &str, tail_chars: usize, secret_values: &[String]) -> usize {
+    let mut emit_len = emit_prefix_len(text, tail_chars);
+
+    loop {
+        if emit_len == 0 {
+            return 0;
+        }
+
+        let adjusted = adjust_emit_len_for_secret_prefixes(text, emit_len, secret_values);
+        if adjusted == emit_len {
+            return emit_len;
+        }
+        emit_len = adjusted;
+    }
+}
+
+fn adjust_emit_len_for_secret_prefixes(
+    text: &str,
+    emit_len: usize,
+    secret_values: &[String],
+) -> usize {
+    let emitted = &text[..emit_len];
+    let mut adjusted = emit_len;
+
+    for secret in secret_values {
+        for (prefix_end, _) in secret.char_indices().skip(1) {
+            let prefix = &secret[..prefix_end];
+            if emitted.ends_with(prefix) {
+                adjusted = adjusted.min(emit_len - prefix.len());
+            }
+        }
+    }
+
+    adjusted
 }
 
 fn emit_prefix_len(text: &str, tail_chars: usize) -> usize {
@@ -186,25 +300,31 @@ async fn execution_detail(
     })?;
 
     let logs_dir = &config.logs.dir;
-    let stdout = read_log_file(logs_dir, &exec.id, "stdout.log")
-        .await
-        .unwrap_or_else(|| "No output captured.".into());
-    let stderr = read_log_file(logs_dir, &exec.id, "stderr.log")
-        .await
-        .unwrap_or_default();
+    let (stdout, stderr) = if exec.status == execution::ExecutionStatus::Running {
+        (String::new(), String::new())
+    } else {
+        let stdout = read_log_file(logs_dir, &exec.id, "stdout.log")
+            .await
+            .unwrap_or_else(|| "No output captured.".into());
+        let stderr = read_log_file(logs_dir, &exec.id, "stderr.log")
+            .await
+            .unwrap_or_default();
 
-    // Apply secret masking to log output before rendering.
-    // If the hook has been removed from config, hook_env is empty and only
-    // system env vars and regex patterns are used for masking.
-    let hook_env = config
-        .hooks
-        .iter()
-        .find(|h| h.slug == exec.hook_slug)
-        .map(|h| &h.env)
-        .cloned()
-        .unwrap_or_default();
-    let stdout = mask_secrets(&stdout, &config.masking, &hook_env);
-    let stderr = mask_secrets(&stderr, &config.masking, &hook_env);
+        // Apply secret masking to log output before rendering.
+        // If the hook has been removed from config, hook_env is empty and only
+        // system env vars and regex patterns are used for masking.
+        let hook_env = config
+            .hooks
+            .iter()
+            .find(|h| h.slug == exec.hook_slug)
+            .map(|h| &h.env)
+            .cloned()
+            .unwrap_or_default();
+        (
+            mask_secrets(&stdout, &config.masking, &hook_env),
+            mask_secrets(&stderr, &config.masking, &hook_env),
+        )
+    };
 
     let duration = compute_duration(&exec.started_at, &exec.completed_at);
 
@@ -543,44 +663,26 @@ async fn log_stream(
             ));
         } else {
             // Execution is running — tail log files.
-            let stdout_path = format!("{log_dir}/stdout.log");
-            let stderr_path = format!("{log_dir}/stderr.log");
-            let mut stdout_offset: u64 = 0;
-            let mut stderr_offset: u64 = 0;
+            let mut stdout_tail = LogTail::new(format!("{log_dir}/stdout.log"));
+            let mut stderr_tail = LogTail::new(format!("{log_dir}/stderr.log"));
             let mut stdout_masker = LogStreamMasker::new(masking.clone(), hook_env.clone());
             let mut stderr_masker = LogStreamMasker::new(masking.clone(), hook_env.clone());
 
             loop {
                 tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
 
-                // Read new stdout bytes.
-                if let Ok(content) = tokio::fs::read(&stdout_path).await
-                    && content.len() as u64 > stdout_offset {
-                        let new = &content[stdout_offset as usize..];
-                        stdout_offset = content.len() as u64;
-                        if let Ok(text) = std::str::from_utf8(new)
-                            && !text.is_empty() {
-                                if let Some(data) = stdout_masker.push(text) {
-                                    yield Ok::<Event, Infallible>(
-                                        Event::default().event("stdout").data(data)
-                                    );
-                                }
-                            }
+                if let Some(text) = stdout_tail.read_new_text().await
+                    && let Some(data) = stdout_masker.push(&text) {
+                        yield Ok::<Event, Infallible>(
+                            Event::default().event("stdout").data(data)
+                        );
                     }
 
-                // Read new stderr bytes.
-                if let Ok(content) = tokio::fs::read(&stderr_path).await
-                    && content.len() as u64 > stderr_offset {
-                        let new = &content[stderr_offset as usize..];
-                        stderr_offset = content.len() as u64;
-                        if let Ok(text) = std::str::from_utf8(new)
-                            && !text.is_empty() {
-                                if let Some(data) = stderr_masker.push(text) {
-                                    yield Ok::<Event, Infallible>(
-                                        Event::default().event("stderr").data(data)
-                                    );
-                                }
-                            }
+                if let Some(text) = stderr_tail.read_new_text().await
+                    && let Some(data) = stderr_masker.push(&text) {
+                        yield Ok::<Event, Infallible>(
+                            Event::default().event("stderr").data(data)
+                        );
                     }
 
                 // Check if execution has reached a terminal state.
@@ -717,5 +819,76 @@ mod tests {
             read_log_file(dir.path().to_str().unwrap(), exec_id, "missing.log").await,
             None
         );
+    }
+
+    #[test]
+    fn log_stream_masker_holds_complete_secret_until_it_can_mask_it() {
+        let mut hook_env = HashMap::new();
+        hook_env.insert("SECRET_TOKEN".to_owned(), "live-secret-value".to_owned());
+        let masking = MaskingConfig {
+            env_vars: vec!["SECRET_TOKEN".to_owned()],
+            ..Default::default()
+        };
+        let mut masker = LogStreamMasker::new(masking, hook_env);
+
+        assert_eq!(masker.push("live-secret-value\n"), None);
+        let flushed = masker.flush().expect("masked tail");
+
+        assert_eq!(flushed, "***\n");
+        assert!(!flushed.contains("live-secret-value"));
+        assert!(!flushed.contains("live-"));
+    }
+
+    #[test]
+    fn log_stream_masker_does_not_emit_split_secret_prefixes() {
+        let mut hook_env = HashMap::new();
+        hook_env.insert("SECRET_TOKEN".to_owned(), "live-secret-value".to_owned());
+        let masking = MaskingConfig {
+            env_vars: vec!["SECRET_TOKEN".to_owned()],
+            ..Default::default()
+        };
+        let mut masker = LogStreamMasker::new(masking, hook_env);
+        let mut output = String::new();
+
+        for chunk in [
+            "prefix live-",
+            "secret-value suffix with enough padding to emit",
+        ] {
+            if let Some(data) = masker.push(chunk) {
+                output.push_str(&data);
+            }
+        }
+        if let Some(data) = masker.flush() {
+            output.push_str(&data);
+        }
+
+        assert!(output.contains("prefix *** suffix"));
+        assert!(!output.contains("live-secret-value"));
+        assert!(!output.contains("live-"));
+    }
+
+    #[tokio::test]
+    async fn log_tail_reads_new_bytes_without_replaying_old_content() {
+        use tokio::io::AsyncWriteExt;
+
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let path = dir.path().join("stdout.log");
+        let mut tail = LogTail::new(&path);
+
+        assert_eq!(tail.read_new_text().await, None);
+
+        tokio::fs::write(&path, "first").await.expect("write first");
+        assert_eq!(tail.read_new_text().await, Some("first".to_owned()));
+        assert_eq!(tail.read_new_text().await, None);
+
+        let mut file = tokio::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .await
+            .expect("open append");
+        file.write_all(b"second").await.expect("append second");
+        file.flush().await.expect("flush");
+
+        assert_eq!(tail.read_new_text().await, Some("second".to_owned()));
     }
 }
