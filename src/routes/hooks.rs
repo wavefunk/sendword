@@ -27,6 +27,11 @@ use crate::retry;
 use crate::server::AppState;
 use crate::templates::context;
 use crate::trigger_rules::{self, cooldown, payload_filter, rate_limit, time_window};
+use crate::views::FlashMessages;
+use crate::views::hook_detail::{
+    AuthModeView, HookDetailPage, PayloadFieldRow, TriggerFilterRow, TriggerRateRow,
+    TriggerWindowRow, render_hook_detail_page,
+};
 use crate::webhook_auth;
 
 const EXECUTIONS_PER_PAGE: i64 = 20;
@@ -518,13 +523,6 @@ async fn hook_detail(
         .find(|h| h.slug == slug)
         .ok_or(AppError::not_found("hook"))?;
 
-    let pool = state.db.pool();
-    let total = execution::count_by_hook(pool, &slug).await?;
-    let executions = execution::list_by_hook(pool, &slug, EXECUTIONS_PER_PAGE, 0).await?;
-
-    let total_pages = (total + EXECUTIONS_PER_PAGE - 1) / EXECUTIONS_PER_PAGE;
-    let has_more = total_pages > 1;
-
     let (executor_command, executor_type, executor_value_label, is_script_like) = match &hook
         .executor
     {
@@ -557,73 +555,68 @@ async fn hook_detail(
 
     let timeout_display = hook.timeout.unwrap_or(config.defaults.timeout).as_secs();
 
-    let env_vars: Vec<_> = hook.env.keys().collect();
+    let env_vars = hook.env.keys().cloned().collect();
 
-    let execution_rows = build_execution_rows(&executions);
-
-    let payload_fields: Vec<serde_json::Value> = hook
+    let payload_fields = hook
         .payload
         .as_ref()
         .map(|schema| {
             schema
                 .fields
                 .iter()
-                .map(|f| {
-                    serde_json::json!({
-                        "name": f.name,
-                        "field_type": f.field_type.to_string(),
-                        "type": f.field_type.to_string(),
-                        "required": f.required,
-                    })
+                .map(|f| PayloadFieldRow {
+                    name: f.name.clone(),
+                    field_type: f.field_type.to_string(),
+                    required: f.required,
                 })
                 .collect()
         })
         .unwrap_or_default();
 
     let (auth_mode, auth_header, auth_algorithm) = match &hook.auth {
-        Some(HookAuthConfig::Bearer { .. }) => ("bearer", "", ""),
+        Some(HookAuthConfig::Bearer { .. }) => (AuthModeView::Bearer, None, None),
         Some(HookAuthConfig::Hmac {
             header, algorithm, ..
         }) => {
             let algo = match algorithm {
                 HmacAlgorithm::Sha256 => "sha256",
             };
-            ("hmac", header.as_str(), algo)
+            (
+                AuthModeView::Hmac,
+                Some(header.clone()),
+                Some(algo.to_owned()),
+            )
         }
-        _ => ("none", "", ""),
+        _ => (AuthModeView::None, None, None),
     };
 
-    let trigger_filter_rows: Vec<serde_json::Value> = hook
+    let trigger_filter_rows = hook
         .trigger_rules
         .as_ref()
         .and_then(|r| r.payload_filters.as_ref())
         .map(|filters| {
             filters
                 .iter()
-                .map(|f| {
-                    serde_json::json!({
-                        "field": f.field,
-                        "operator": config_writer::filter_operator_str(f.operator),
-                        "value": f.value.as_deref().unwrap_or(""),
-                    })
+                .map(|f| TriggerFilterRow {
+                    field: f.field.clone(),
+                    operator: config_writer::filter_operator_str(f.operator).to_owned(),
+                    value: f.value.clone().filter(|value| !value.is_empty()),
                 })
                 .collect()
         })
         .unwrap_or_default();
 
-    let trigger_window_rows: Vec<serde_json::Value> = hook
+    let trigger_window_rows = hook
         .trigger_rules
         .as_ref()
         .and_then(|r| r.time_windows.as_ref())
         .map(|windows| {
             windows
                 .iter()
-                .map(|w| {
-                    serde_json::json!({
-                        "days": w.days.join(", "),
-                        "start_time": w.start_time,
-                        "end_time": w.end_time,
-                    })
+                .map(|w| TriggerWindowRow {
+                    days: w.days.join(", "),
+                    start_time: w.start_time.clone(),
+                    end_time: w.end_time.clone(),
                 })
                 .collect()
         })
@@ -633,62 +626,49 @@ async fn hook_detail(
         .trigger_rules
         .as_ref()
         .and_then(|r| r.cooldown)
-        .map(config_writer::format_duration)
-        .unwrap_or_default();
+        .map(config_writer::format_duration);
 
-    let (trigger_rate_max, trigger_rate_window) = hook
+    let trigger_rate = hook
         .trigger_rules
         .as_ref()
         .and_then(|r| r.rate_limit.as_ref())
-        .map(|rl| {
-            (
-                rl.max_requests.to_string(),
-                config_writer::format_duration(rl.window),
-            )
-        })
-        .unwrap_or_default();
+        .map(|rl| TriggerRateRow {
+            max_requests: rl.max_requests.to_string(),
+            window: config_writer::format_duration(rl.window),
+        });
 
     // HookConfig.rate_limit.max_per_minute — displayed as its own panel when set.
     let hook_rate_limit_max_per_minute: Option<u32> =
         hook.rate_limit.as_ref().map(|rl| rl.max_per_minute);
 
-    let html = state.templates.render(
-        "hook_detail.html",
-        context! {
-            name => hook.name,
-            slug => hook.slug,
-            description => hook.description,
-            enabled => hook.enabled,
-            executor_type => executor_type,
-            executor_value_label => executor_value_label,
-            executor_command => executor_command,
-            script_edit_url => script_edit_url,
-            cwd => hook.cwd,
-            timeout_secs => timeout_display,
-            env_vars => env_vars,
-            auth_mode => auth_mode,
-            auth_header => auth_header,
-            auth_algorithm => auth_algorithm,
-            payload_fields => payload_fields,
-            hook_rate_limit_max_per_minute => hook_rate_limit_max_per_minute,
-            trigger_filter_rows => trigger_filter_rows,
-            trigger_window_rows => trigger_window_rows,
-            trigger_cooldown => trigger_cooldown,
-            trigger_rate_max => trigger_rate_max,
-            trigger_rate_window => trigger_rate_window,
-            executions => execution_rows,
-            total => total,
-            page => 1,
-            total_pages => total_pages,
-            has_more => has_more,
-            success => flash.success,
-            error => flash.error,
-            username => auth.email.as_str(),
-            nav_active => "hooks",
-        },
-    )?;
+    let mut view = HookDetailPage::new(&hook.name, &hook.slug);
+    view.description = hook.description.clone();
+    view.enabled = hook.enabled;
+    view.executor_type = executor_type.to_owned();
+    view.executor_value_label = executor_value_label.to_owned();
+    view.executor_command = executor_command.to_owned();
+    view.script_edit_url = script_edit_url;
+    view.cwd = hook.cwd.clone();
+    view.timeout_secs = timeout_display;
+    view.env_vars = env_vars;
+    view.auth_mode = auth_mode;
+    view.auth_header = auth_header;
+    view.auth_algorithm = auth_algorithm;
+    view.payload_fields = payload_fields;
+    view.trigger_filter_rows = trigger_filter_rows;
+    view.trigger_window_rows = trigger_window_rows;
+    view.trigger_cooldown = trigger_cooldown;
+    view.trigger_rate = trigger_rate;
+    view.hook_rate_limit_max_per_minute = hook_rate_limit_max_per_minute;
 
-    Ok(Html(html))
+    render_hook_detail_page(
+        auth.email.as_str(),
+        &view,
+        FlashMessages {
+            success: flash.success.as_deref(),
+            error: flash.error.as_deref(),
+        },
+    )
 }
 
 async fn execution_list(
