@@ -4,7 +4,7 @@ use std::sync::Arc;
 use arc_swap::ArcSwap;
 use axum::Router;
 use axum::body::Body;
-use axum::extract::{Path, connect_info::IntoMakeServiceWithConnectInfo};
+use axum::extract::connect_info::IntoMakeServiceWithConnectInfo;
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
@@ -62,28 +62,19 @@ impl AppState {
     }
 }
 
-#[derive(rust_embed::RustEmbed)]
-#[folder = "static"]
-struct StaticAssets;
+const SENDWORD_SCRIPT: &[u8] = include_bytes!("../static/js/sendword.js");
 
-pub fn embedded_static_response(path: &str) -> Response {
-    let path = path.trim_start_matches('/');
-    let Some(file) = StaticAssets::get(path) else {
-        return (StatusCode::NOT_FOUND, "static asset not found").into_response();
-    };
-
-    let content_type = mime_guess::from_path(path).first_or_octet_stream();
-    let mut response = Body::from(file.data.into_owned()).into_response();
-    let header_value = HeaderValue::from_str(content_type.as_ref())
-        .unwrap_or(HeaderValue::from_static("application/octet-stream"));
-    response
-        .headers_mut()
-        .insert(header::CONTENT_TYPE, header_value);
+pub fn sendword_script_response() -> Response {
+    let mut response = Body::from(SENDWORD_SCRIPT).into_response();
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/javascript"),
+    );
     response
 }
 
-async fn static_asset(Path(path): Path<String>) -> Response {
-    embedded_static_response(&path)
+async fn sendword_script() -> Response {
+    sendword_script_response()
 }
 
 pub fn static_assets_router<S>() -> Router<S>
@@ -92,7 +83,7 @@ where
 {
     Router::new()
         .nest("/static/wavefunk", wavefunk_ui::axum::asset_router())
-        .route("/static/{*path}", get(static_asset))
+        .route("/static/js/sendword.js", get(sendword_script))
 }
 
 pub fn router(state: Arc<AppState>, auth_router: Router) -> Router {
@@ -166,15 +157,14 @@ async fn shutdown_signal() {
 
 #[cfg(test)]
 mod tests {
-    use super::embedded_static_response;
     use axum::body::Body;
     use axum::http::Request;
     use axum::http::{StatusCode, header};
     use tower::ServiceExt;
 
     #[test]
-    fn embedded_static_response_serves_sendword_script() {
-        let response = embedded_static_response("js/sendword.js");
+    fn sendword_script_response_serves_asset() {
+        let response = super::sendword_script_response();
 
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(
@@ -184,13 +174,6 @@ mod tests {
                 .and_then(|value| value.to_str().ok()),
             Some("text/javascript")
         );
-    }
-
-    #[test]
-    fn embedded_static_response_404s_missing_asset() {
-        let response = embedded_static_response("missing.css");
-
-        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
@@ -252,5 +235,21 @@ mod tests {
                 .and_then(|value| value.to_str().ok()),
             Some("text/javascript")
         );
+    }
+
+    #[tokio::test]
+    async fn static_assets_router_404s_missing_sendword_asset() {
+        let app = super::static_assets_router::<()>();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/static/js/missing.js")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 }

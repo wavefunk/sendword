@@ -56,23 +56,39 @@ fn mask_and_escape(
     masking: &MaskingConfig,
     hook_env: &HashMap<String, String>,
 ) -> String {
+    if masking.env_vars.is_empty() && masking.compiled_patterns.is_empty() {
+        return html_escape(text);
+    }
+
     html_escape(&mask_secrets(text, masking, hook_env))
 }
 
-fn stream_mask_tail_chars(masking: &MaskingConfig, secret_values: &[String]) -> usize {
-    let env_tail = secret_values
+fn mask_resolved_and_escape(
+    text: &str,
+    masking: &MaskingConfig,
+    secret_values: &[String],
+) -> String {
+    if secret_values.is_empty() && masking.compiled_patterns.is_empty() {
+        return html_escape(text);
+    }
+
+    let mut masked = text.to_owned();
+    for value in secret_values {
+        masked = masked.replace(value, "***");
+    }
+    for re in &masking.compiled_patterns {
+        masked = re.replace_all(&masked, "***").into_owned();
+    }
+
+    html_escape(&masked)
+}
+
+fn stream_mask_tail_chars(secret_values: &[String]) -> usize {
+    secret_values
         .iter()
         .map(|value| value.chars().count())
         .max()
-        .unwrap_or(0);
-
-    let pattern_tail = if masking.compiled_patterns.is_empty() {
-        0
-    } else {
-        1024
-    };
-
-    env_tail.max(pattern_tail)
+        .unwrap_or(0)
 }
 
 fn stream_mask_secret_values(
@@ -95,27 +111,32 @@ fn stream_mask_secret_values(
 #[derive(Clone, Debug)]
 struct LogStreamMasker {
     masking: MaskingConfig,
-    hook_env: HashMap<String, String>,
     secret_values: Vec<String>,
     buffer: String,
     tail_chars: usize,
+    defer_until_flush: bool,
 }
 
 impl LogStreamMasker {
     fn new(masking: MaskingConfig, hook_env: HashMap<String, String>) -> Self {
         let secret_values = stream_mask_secret_values(&masking, &hook_env);
-        let tail_chars = stream_mask_tail_chars(&masking, &secret_values);
+        let tail_chars = stream_mask_tail_chars(&secret_values);
+        let defer_until_flush = !masking.compiled_patterns.is_empty();
         Self {
             masking,
-            hook_env,
             secret_values,
             buffer: String::new(),
             tail_chars,
+            defer_until_flush,
         }
     }
 
     fn push(&mut self, text: &str) -> Option<String> {
         self.buffer.push_str(text);
+        if self.defer_until_flush {
+            return None;
+        }
+
         let emit_len =
             safe_emit_prefix_len(&self.buffer, self.tail_chars, self.secret_values.as_slice());
         if emit_len == 0 {
@@ -124,8 +145,12 @@ impl LogStreamMasker {
 
         let tail = self.buffer.split_off(emit_len);
         let chunk = std::mem::replace(&mut self.buffer, tail);
-        Some(mask_and_escape(&chunk, &self.masking, &self.hook_env))
-            .filter(|value| !value.is_empty())
+        Some(mask_resolved_and_escape(
+            &chunk,
+            &self.masking,
+            self.secret_values.as_slice(),
+        ))
+        .filter(|value| !value.is_empty())
     }
 
     fn flush(&mut self) -> Option<String> {
@@ -134,8 +159,12 @@ impl LogStreamMasker {
         }
 
         let chunk = std::mem::take(&mut self.buffer);
-        Some(mask_and_escape(&chunk, &self.masking, &self.hook_env))
-            .filter(|value| !value.is_empty())
+        Some(mask_resolved_and_escape(
+            &chunk,
+            &self.masking,
+            self.secret_values.as_slice(),
+        ))
+        .filter(|value| !value.is_empty())
     }
 }
 
@@ -863,6 +892,25 @@ mod tests {
         assert!(output.contains("prefix *** suffix"));
         assert!(!output.contains("live-secret-value"));
         assert!(!output.contains("live-"));
+    }
+
+    #[test]
+    fn log_stream_masker_defers_regex_patterns_until_flush() {
+        let mut masking = MaskingConfig {
+            patterns: vec![r"token-[a-z]+-secret".to_owned()],
+            ..Default::default()
+        };
+        masking.compile().expect("valid test pattern");
+        let mut masker = LogStreamMasker::new(masking, HashMap::new());
+        let long_middle = "a".repeat(1500);
+
+        assert_eq!(masker.push("prefix token-super"), None);
+        assert_eq!(masker.push(&format!("{long_middle}-secret suffix")), None);
+        let flushed = masker.flush().expect("masked regex output");
+
+        assert_eq!(flushed, "prefix *** suffix");
+        assert!(!flushed.contains("token-super"));
+        assert!(!flushed.contains("-secret"));
     }
 
     #[tokio::test]

@@ -466,10 +466,10 @@ just build    # cargo build --release
 ```
 
 The web UI is rendered by typed Askama views in `src/views/` that compose the
-published `wavefunk-ui` component and app-shell crate. `Cargo.toml` should keep
-the crates.io dependency (`wavefunk-ui = "0.1.2"`); for local co-development,
-use the gitignored `.cargo/config.toml` path override to point Cargo at
-`../ui` while preserving the published dependency metadata.
+published `wavefunk-ui` component and app-shell crate. `Cargo.toml` is the
+source of truth for the crates.io `wavefunk-ui` version; for local
+co-development, use the gitignored `.cargo/config.toml` path override to point
+Cargo at `../ui` while preserving the published dependency metadata.
 
 `wavefunk-ui` serves shared CSS, fonts, HTMX, SSE, and Wave Funk JavaScript
 under `/static/wavefunk`. Sendword only vendors app-specific behavior under

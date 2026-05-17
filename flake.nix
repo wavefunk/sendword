@@ -60,8 +60,6 @@
               cargo-expand
               bacon
               dolt
-              tailwindcss
-              esbuild
               nodejs
               cargo-dist
             ];

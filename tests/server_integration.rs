@@ -4395,3 +4395,106 @@ async fn sse_terminal_logs_mask_hook_env_secrets() {
         "SSE should mask stdout and stderr secrets:\n{body}"
     );
 }
+
+#[tokio::test]
+async fn sse_running_regex_masking_handles_split_matches() {
+    use sendword::config::LogsConfig;
+    use sendword::masking::MaskingConfig;
+    use sendword::models::execution::{self, ExecutionStatus, NewExecution};
+    use tokio::io::AsyncWriteExt;
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let logs_dir = tmp.path().to_str().unwrap();
+    let mut masking = MaskingConfig {
+        patterns: vec![r"token-[a-z]+-secret".to_owned()],
+        ..Default::default()
+    };
+    masking.compile().expect("valid test pattern");
+
+    let config = AppConfig {
+        logs: LogsConfig {
+            dir: logs_dir.to_owned(),
+        },
+        masking,
+        hooks: vec![make_test_hook(
+            "SSE Regex Hook",
+            "sse-regex-hook",
+            "echo secret",
+        )],
+        ..AppConfig::default()
+    };
+    let state = test_state(config).await;
+    let token = create_test_session(&state).await;
+
+    let exec_id = sendword::id::new_id();
+    let log_path = format!("{logs_dir}/{exec_id}");
+    let stdout_path = format!("{log_path}/stdout.log");
+    tokio::fs::create_dir_all(&log_path).await.unwrap();
+    tokio::fs::write(&stdout_path, "prefix token-super")
+        .await
+        .unwrap();
+    tokio::fs::write(format!("{log_path}/stderr.log"), "")
+        .await
+        .unwrap();
+
+    let exec = execution::create(
+        state.db.pool(),
+        &NewExecution {
+            id: Some(&exec_id),
+            hook_slug: "sse-regex-hook",
+            log_path: &log_path,
+            trigger_source: "127.0.0.1",
+            request_payload: "{}",
+            retry_of: None,
+            status: None,
+        },
+    )
+    .await
+    .expect("create execution");
+    execution::mark_running(state.db.pool(), &exec.id)
+        .await
+        .expect("mark running");
+
+    let pool = state.db.pool().clone();
+    let exec_id_for_task = exec.id.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(350)).await;
+        let mut file = tokio::fs::OpenOptions::new()
+            .append(true)
+            .open(&stdout_path)
+            .await
+            .expect("open stdout for append");
+        file.write_all(b"aaa-secret suffix")
+            .await
+            .expect("append split regex tail");
+        file.flush().await.expect("flush stdout tail");
+        execution::mark_completed(&pool, &exec_id_for_task, ExecutionStatus::Success, Some(0))
+            .await
+            .expect("mark completed");
+    });
+
+    let url = spawn_server(state).await;
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("{url}/executions/{}/logs/stream", exec.id))
+        .header("Cookie", format!("allowthem_session={token}"))
+        .send()
+        .await
+        .expect("request SSE endpoint");
+
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.expect("read SSE body");
+
+    assert!(
+        body.contains("prefix *** suffix"),
+        "SSE should mask split regex match:\n{body}"
+    );
+    assert!(
+        !body.contains("token-super"),
+        "SSE leaked regex prefix:\n{body}"
+    );
+    assert!(
+        !body.contains("-secret"),
+        "SSE leaked regex suffix:\n{body}"
+    );
+}
