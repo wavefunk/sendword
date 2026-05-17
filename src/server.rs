@@ -91,10 +91,19 @@ async fn static_asset(Path(path): Path<String>) -> Response {
     embedded_static_response(&path)
 }
 
+pub fn static_assets_router<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    Router::new()
+        .nest("/static/wavefunk", wavefunk_ui::axum::asset_router())
+        .route("/static/{*path}", get(static_asset))
+}
+
 pub fn router(state: Arc<AppState>, auth_router: Router) -> Router {
     Router::new()
         .merge(crate::routes::router())
-        .route("/static/{*path}", get(static_asset))
+        .merge(static_assets_router())
         .fallback(fallback_404)
         .with_state(state)
         .merge(auth_router)
@@ -164,7 +173,10 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::embedded_static_response;
+    use axum::body::Body;
     use axum::http::{StatusCode, header};
+    use axum::http::Request;
+    use tower::ServiceExt;
 
     #[test]
     fn embedded_static_response_serves_css_asset() {
@@ -185,5 +197,66 @@ mod tests {
         let response = embedded_static_response("missing.css");
 
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn static_assets_router_serves_wavefunk_ui_and_sendword_assets() {
+        let app = super::static_assets_router::<()>();
+
+        for (path, content_type) in [
+            (
+                "/static/wavefunk/css/wavefunk.css",
+                "text/css; charset=utf-8",
+            ),
+            (
+                "/static/wavefunk/js/wavefunk.js",
+                "text/javascript; charset=utf-8",
+            ),
+            (
+                "/static/wavefunk/js/htmx.min.js",
+                "text/javascript; charset=utf-8",
+            ),
+            (
+                "/static/wavefunk/js/htmx-sse.js",
+                "text/javascript; charset=utf-8",
+            ),
+            (
+                "/static/wavefunk/css/fonts/MartianGrotesk-VF.woff2",
+                "font/woff2",
+            ),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{path}");
+            assert_eq!(
+                response
+                    .headers()
+                    .get(header::CONTENT_TYPE)
+                    .and_then(|value| value.to_str().ok()),
+                Some(content_type),
+                "{path}"
+            );
+        }
+
+        let sendword_response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/static/js/sendword.js")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(sendword_response.status(), StatusCode::OK);
+        assert_eq!(
+            sendword_response
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok()),
+            Some("text/javascript")
+        );
     }
 }
