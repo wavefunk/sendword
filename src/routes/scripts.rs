@@ -11,7 +11,10 @@ use serde::Deserialize;
 use crate::error::AppError;
 use crate::extractors::AuthUser;
 use crate::server::AppState;
-use crate::templates::context;
+use crate::views::FlashMessages;
+use crate::views::scripts::{
+    ScriptEditorPage, ScriptListRow, ScriptsPage, render_script_editor_page, render_scripts_page,
+};
 
 /// Maximum script file size: 1 MB.
 const MAX_SCRIPT_SIZE: usize = 1024 * 1024;
@@ -162,17 +165,8 @@ async fn list_scripts(
     let mut read_dir = match tokio::fs::read_dir(&scripts_dir).await {
         Ok(rd) => rd,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            let html = state.templates.render(
-                "scripts.html",
-                context! {
-                    scripts => Vec::<()>::new(),
-                    success => flash.success,
-                    error => flash.error,
-                    username => auth.email.as_str(),
-                    nav_active => "scripts",
-                },
-            )?;
-            return Ok(Html(html));
+            let page = ScriptsPage::new(Vec::new());
+            return render_scripts_page(auth.email.as_str(), &page, flash_messages(&flash));
         }
         Err(e) => return Err(e.into()),
     };
@@ -200,50 +194,23 @@ async fn list_scripts(
 
     entries.sort_by(|a, b| a.name.cmp(&b.name));
 
-    let scripts: Vec<_> = entries
-        .iter()
-        .map(|e| {
-            context! {
-                name => e.name,
-                size => e.size,
-                modified => e.modified,
-            }
-        })
+    let rows = entries
+        .into_iter()
+        .map(|entry| ScriptListRow::new(entry.name, entry.size, entry.modified))
         .collect();
+    let page = ScriptsPage::new(rows);
 
-    let html = state.templates.render(
-        "scripts.html",
-        context! {
-            scripts => scripts,
-            success => flash.success,
-            error => flash.error,
-            username => auth.email.as_str(),
-            nav_active => "scripts",
-        },
-    )?;
-    Ok(Html(html))
+    render_scripts_page(auth.email.as_str(), &page, flash_messages(&flash))
 }
 
 // --- GET /scripts/new ---
 
 async fn new_script(
     AuthUser(auth): AuthUser,
-    State(state): State<Arc<AppState>>,
     Query(flash): Query<FlashParams>,
 ) -> Result<Html<String>, AppError> {
-    let html = state.templates.render(
-        "script_editor.html",
-        context! {
-            is_new => true,
-            filename => "",
-            content => "",
-            success => flash.success,
-            error => flash.error,
-            username => auth.email.as_str(),
-            nav_active => "scripts",
-        },
-    )?;
-    Ok(Html(html))
+    let page = ScriptEditorPage::new_script();
+    render_script_editor_page(auth.email.as_str(), &page, flash_messages(&flash))
 }
 
 // --- POST /scripts/new ---
@@ -315,20 +282,16 @@ async fn edit_script(
     }
 
     let content = tokio::fs::read_to_string(&path).await?;
+    let page = ScriptEditorPage::edit(filename, content);
 
-    let html = state.templates.render(
-        "script_editor.html",
-        context! {
-            is_new => false,
-            filename => filename,
-            content => content,
-            success => flash.success,
-            error => flash.error,
-            username => auth.email.as_str(),
-            nav_active => "scripts",
-        },
-    )?;
-    Ok(Html(html))
+    render_script_editor_page(auth.email.as_str(), &page, flash_messages(&flash))
+}
+
+fn flash_messages(flash: &FlashParams) -> FlashMessages<'_> {
+    FlashMessages {
+        success: flash.success.as_deref(),
+        error: flash.error.as_deref(),
+    }
 }
 
 // --- POST /scripts/:filename ---
