@@ -74,9 +74,9 @@ checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
 name = "allowthem-core"
-version = "0.0.6"
+version = "0.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5663d24fa5983418a1e58eb8406da086dc4273f3048c2e7bb19dc36e0f3be691"
+checksum = "7386989a8a9bd7dbf536adf4fa7c2226224118de6c8b497b39e2a46d9cc30318"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -106,9 +106,9 @@ dependencies = [
 
 [[package]]
 name = "allowthem-server"
-version = "0.0.6"
+version = "0.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "030116749e97fd4818302d1c685c6c5ddb0b663cf524b7bad878d84671a2819e"
+checksum = "2c328f86d206a6d0ffb0197d734788f2a793b215e9efd59491db9f159ec96153"
 dependencies = [
  "allowthem-core",
  "axum",
@@ -118,8 +118,8 @@ dependencies = [
  "dashmap",
  "governor",
  "hmac",
+ "html-escape",
  "jsonschema",
- "minijinja",
  "qrcode",
  "serde",
  "serde_json",
@@ -131,6 +131,7 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
+ "wavefunk-ui",
 ]
 
 [[package]]
@@ -2040,12 +2041,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
 
 [[package]]
-name = "memo-map"
-version = "0.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "38d1115007560874e373613744c6fba374c17688327a71c1476d1a5954cc857b"
-
-[[package]]
 name = "micromap"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2065,16 +2060,6 @@ checksum = "f7c44f8e672c00fe5308fa235f821cb4198414e1c77935c1ab6948d3fd78550e"
 dependencies = [
  "mime",
  "unicase",
-]
-
-[[package]]
-name = "minijinja"
-version = "2.19.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "805bfd7352166bae857ee569628b52bcd85a1cecf7810861ebceb1686b72b75d"
-dependencies = [
- "memo-map",
- "serde",
 ]
 
 [[package]]
