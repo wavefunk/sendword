@@ -3341,17 +3341,15 @@ async fn invalid_filter_line_returns_error() {
         .await
         .unwrap();
 
-    // Should redirect back with error query param
     assert_eq!(
         resp.status(),
-        303,
-        "invalid filter should cause redirect with error"
+        200,
+        "invalid filter should re-render the form with an inline error"
     );
-    let location = resp.headers().get("location").unwrap().to_str().unwrap();
-    assert!(
-        location.contains("error="),
-        "redirect should contain error param"
-    );
+    let html = resp.text().await.unwrap();
+    assert!(html.contains("expected &#39;field:operator&#39;"));
+    assert!(html.contains(r#"value="Bad Hook""#));
+    assert!(html.contains("nooperator"));
 }
 
 #[tokio::test]

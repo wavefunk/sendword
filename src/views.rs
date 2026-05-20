@@ -283,12 +283,15 @@ pub fn render_shell(shell: &PageShell<'_>) -> Result<Html<String>, AppError> {
         .with_name(shell.username)
         .with_avatar(Avatar::new(&avatar_initial).accent());
 
+    // htmx-boosted navigation swaps the body without refreshing head scripts, so
+    // load the SSE extension eagerly for pages that may navigate into live logs.
     let mut app_shell = AppShell::new(shell.title, APP_NAME, &content_html)
         .with_head(TrustedHtml::new(APP_HEAD_HTML))
         .with_nav(&nav_html)
         .with_breadcrumbs(shell.breadcrumbs_html)
         .with_profile(profile)
-        .with_status(APP_NAME, APP_STATUS_VERSION);
+        .with_status(APP_NAME, APP_STATUS_VERSION)
+        .with_htmx_sse();
 
     if let Some(actions_html) = shell.actions_html {
         app_shell = app_shell.with_actions(actions_html.as_str());
@@ -296,10 +299,6 @@ pub fn render_shell(shell: &PageShell<'_>) -> Result<Html<String>, AppError> {
 
     if let Some(scripts_html) = shell.scripts_html {
         app_shell = app_shell.with_scripts(scripts_html);
-    }
-
-    if shell.include_htmx_sse {
-        app_shell = app_shell.with_htmx_sse();
     }
 
     render_page(&app_shell)
@@ -449,6 +448,20 @@ mod tests {
         assert!(html.contains(r#"/static/wavefunk/js/htmx-sse.js"#));
         assert!(html.contains(r#"<script id="execution-hooks">"#));
         assert!(html.contains(r#"<section>Logs</section>"#));
+    }
+
+    #[test]
+    fn render_shell_eagerly_includes_htmx_sse_for_boosted_navigation() {
+        let Html(html) = super::render_shell(&super::PageShell::new(
+            "sendword - approvals",
+            "admin@example.com",
+            super::NavActive::Approvals,
+            TrustedHtml::new(r#"<span aria-current="page">APPROVALS</span>"#),
+            TrustedHtml::new("<h1>Approvals</h1>"),
+        ))
+        .unwrap();
+
+        assert!(html.contains(r#"/static/wavefunk/js/htmx-sse.js"#));
     }
 
     #[test]

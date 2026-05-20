@@ -1231,6 +1231,92 @@ fn parse_hook_form(form: &HookForm) -> Result<HookFormData, String> {
     })
 }
 
+fn form_value(value: &Option<String>) -> String {
+    value.as_deref().unwrap_or_default().to_owned()
+}
+
+fn submitted_hook_form_page(form: &HookForm, mut page: HookFormPage) -> HookFormPage {
+    if page.is_new {
+        page.slug.clone_from(&form.slug);
+        page.form_slug.clone_from(&form.slug);
+    }
+
+    page.form_name.clone_from(&form.name);
+    page.form_description.clone_from(&form.description);
+    page.form_enabled = form.enabled.is_some();
+    page.form_executor_type = if form.executor_type.is_empty() {
+        "shell".to_owned()
+    } else {
+        form.executor_type.clone()
+    };
+    page.form_command.clone_from(&form.command);
+    page.form_cwd.clone_from(&form.cwd);
+    page.form_timeout.clone_from(&form.timeout);
+    page.form_env_text.clone_from(&form.env_text);
+    page.form_retry_count = form
+        .retry_count
+        .as_deref()
+        .and_then(|value| value.trim().parse().ok())
+        .unwrap_or(0);
+    page.form_retry_backoff = form
+        .retry_backoff
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .unwrap_or("exponential")
+        .to_owned();
+    page.form_retry_initial_delay = form_value(&form.retry_initial_delay);
+    page.form_retry_max_delay = form_value(&form.retry_max_delay);
+    page.form_auth_mode = form
+        .auth_mode
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .unwrap_or("none")
+        .to_owned();
+    page.form_auth_token = form_value(&form.auth_token);
+    page.form_auth_header = form
+        .auth_header
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .unwrap_or("X-Hub-Signature-256")
+        .to_owned();
+    page.form_auth_algorithm = form
+        .auth_algorithm
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .unwrap_or("sha256")
+        .to_owned();
+    page.form_auth_secret = form_value(&form.auth_secret);
+    page.form_payload_text.clone_from(&form.payload_text);
+    page.form_trigger_filters_text
+        .clone_from(&form.trigger_filters_text);
+    page.form_trigger_windows_text
+        .clone_from(&form.trigger_windows_text);
+    page.form_trigger_cooldown
+        .clone_from(&form.trigger_cooldown);
+    page.form_trigger_rate_max = form_value(&form.trigger_rate_max);
+    page.form_trigger_rate_window
+        .clone_from(&form.trigger_rate_window);
+    page
+}
+
+fn render_submitted_hook_form_error(
+    username: &str,
+    page: &HookFormPage,
+    message: &str,
+) -> Response {
+    match render_hook_form_page(
+        username,
+        page,
+        FlashMessages {
+            success: None,
+            error: Some(message),
+        },
+    ) {
+        Ok(html) => (StatusCode::OK, html).into_response(),
+        Err(err) => err.into_response(),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Flash query params
 // ---------------------------------------------------------------------------
@@ -1265,15 +1351,15 @@ async fn new_hook_form(
 // ---------------------------------------------------------------------------
 
 async fn create_hook(
-    _auth: AuthUser,
+    AuthUser(auth): AuthUser,
     State(state): State<Arc<AppState>>,
     Form(form): Form<HookForm>,
 ) -> Response {
     let data = match parse_hook_form(&form) {
         Ok(d) => d,
         Err(msg) => {
-            let encoded = urlencoding::encode(&msg);
-            return Redirect::to(&format!("/hooks/new?error={encoded}")).into_response();
+            let page = submitted_hook_form_page(&form, HookFormPage::new_hook());
+            return render_submitted_hook_form_error(auth.email.as_str(), &page, &msg);
         }
     };
 
@@ -1281,8 +1367,8 @@ async fn create_hook(
 
     if let Err(e) = state.config_writer.add_hook(&data) {
         let msg = write_error_message(&e);
-        let encoded = urlencoding::encode(&msg);
-        return Redirect::to(&format!("/hooks/new?error={encoded}")).into_response();
+        let page = submitted_hook_form_page(&form, HookFormPage::new_hook());
+        return render_submitted_hook_form_error(auth.email.as_str(), &page, &msg);
     }
 
     // Hot-reload config
@@ -1489,7 +1575,7 @@ async fn edit_hook_form(
 // ---------------------------------------------------------------------------
 
 async fn update_hook(
-    _auth: AuthUser,
+    AuthUser(auth): AuthUser,
     State(state): State<Arc<AppState>>,
     Path(slug): Path<String>,
     Form(form): Form<HookForm>,
@@ -1502,15 +1588,15 @@ async fn update_hook(
     let data = match parse_hook_form(&form) {
         Ok(d) => d,
         Err(msg) => {
-            let encoded = urlencoding::encode(&msg);
-            return Redirect::to(&format!("/hooks/{slug}/edit?error={encoded}")).into_response();
+            let page = submitted_hook_form_page(&form, HookFormPage::edit(&slug, &form.name));
+            return render_submitted_hook_form_error(auth.email.as_str(), &page, &msg);
         }
     };
 
     if let Err(e) = state.config_writer.update_hook(&slug, &data) {
         let msg = write_error_message(&e);
-        let encoded = urlencoding::encode(&msg);
-        return Redirect::to(&format!("/hooks/{slug}/edit?error={encoded}")).into_response();
+        let page = submitted_hook_form_page(&form, HookFormPage::edit(&slug, &form.name));
+        return render_submitted_hook_form_error(auth.email.as_str(), &page, &msg);
     }
 
     // Hot-reload config
@@ -1834,7 +1920,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_hook_duplicate_slug_shows_error() {
+    async fn create_hook_duplicate_slug_preserves_submitted_values() {
         let toml = r#"[server]
 port = 8080
 
@@ -1863,10 +1949,15 @@ command = "echo existing"
             .await
             .unwrap();
 
-        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
-        let location = resp.headers().get("location").unwrap().to_str().unwrap();
-        assert!(location.starts_with("/hooks/new?error="));
-        assert!(location.contains("already+exists") || location.contains("already%20exists"));
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let html = String::from_utf8(body.to_vec()).unwrap();
+        assert!(html.contains("already exists"));
+        assert!(html.contains(r#"value="Another""#));
+        assert!(html.contains(r#"value="deploy""#));
+        assert!(html.contains(r#"value="echo deploy""#));
     }
 
     // --- Edit hook form ---
@@ -2182,7 +2273,7 @@ url = "https://example.com/webhook"
     }
 
     #[tokio::test]
-    async fn update_nonexistent_hook_shows_error() {
+    async fn update_nonexistent_hook_preserves_submitted_values() {
         let (state, _dir) = test_state_with_config("[server]\nport = 8080\n").await;
         let cookie = create_test_session(&state).await;
 
@@ -2201,10 +2292,15 @@ url = "https://example.com/webhook"
             .await
             .unwrap();
 
-        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
-        let location = resp.headers().get("location").unwrap().to_str().unwrap();
-        assert!(location.contains("error="));
-        assert!(location.contains("not+found") || location.contains("not%20found"));
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let html = String::from_utf8(body.to_vec()).unwrap();
+        assert!(html.contains("not found"));
+        assert!(html.contains(r#"value="Test""#));
+        assert!(html.contains(r#"value="nonexistent" readonly required"#));
+        assert!(html.contains(r#"value="echo test""#));
     }
 
     // --- Delete hook ---
@@ -2300,7 +2396,7 @@ command = "echo delete"
     // --- Duration parsing ---
 
     #[tokio::test]
-    async fn create_hook_with_invalid_timeout_shows_error() {
+    async fn create_hook_with_invalid_timeout_preserves_submitted_values() {
         let (state, _dir) = test_state_with_config("[server]\nport = 8080\n").await;
         let cookie = create_test_session(&state).await;
 
@@ -2312,16 +2408,29 @@ command = "echo delete"
                     .header("Cookie", &cookie)
                     .header("Content-Type", "application/x-www-form-urlencoded")
                     .body(Body::from(
-                        "name=Bad&slug=bad&command=echo+bad&timeout=notaduration",
+                        "name=Invalid+Timeout+Hook&slug=invalid-timeout-hook\
+                        &description=Keep+these+values&command=echo+invalid\
+                        &timeout=never&payload_text=action%3Astring%3Arequired\
+                        &trigger_filters_text=action%3Aequals%3Adeploy",
                     ))
                     .unwrap(),
             )
             .await
             .unwrap();
 
-        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
-        let location = resp.headers().get("location").unwrap().to_str().unwrap();
-        assert!(location.contains("error="));
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let html = String::from_utf8(body.to_vec()).unwrap();
+        assert!(html.contains("invalid duration"));
+        assert!(html.contains(r#"value="Invalid Timeout Hook""#));
+        assert!(html.contains(r#"value="invalid-timeout-hook""#));
+        assert!(html.contains("Keep these values"));
+        assert!(html.contains(r#"value="echo invalid""#));
+        assert!(html.contains(r#"value="never""#));
+        assert!(html.contains("action:string:required"));
+        assert!(html.contains("action:equals:deploy"));
     }
 
     // --- Trigger hook with payload validation ---
@@ -2843,7 +2952,7 @@ required = true
     }
 
     #[tokio::test]
-    async fn create_hook_with_invalid_payload_text_shows_error() {
+    async fn create_hook_with_invalid_payload_text_preserves_submitted_values() {
         let (state, _dir) = test_state_with_config("[server]\nport = 8080\n").await;
         let cookie = create_test_session(&state).await;
 
@@ -2862,10 +2971,16 @@ required = true
             .await
             .unwrap();
 
-        // Should redirect back with error (existing pattern: flash message)
-        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
-        let location = resp.headers().get("location").unwrap().to_str().unwrap();
-        assert!(location.contains("error="));
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let html = String::from_utf8(body.to_vec()).unwrap();
+        assert!(html.contains("unknown type"));
+        assert!(html.contains(r#"value="Bad""#));
+        assert!(html.contains(r#"value="bad""#));
+        assert!(html.contains(r#"value="echo bad""#));
+        assert!(html.contains("action:integer:required"));
     }
 
     #[tokio::test]
@@ -3045,6 +3160,50 @@ max_per_minute = 2
             r3.status(),
             StatusCode::TOO_MANY_REQUESTS,
             "third request must be rate limited"
+        );
+    }
+
+    #[tokio::test]
+    async fn trigger_rules_rate_limit_rejects_second_request_in_window() {
+        let toml = r#"[server]
+port = 8080
+
+[[hooks]]
+name = "Limited"
+slug = "limited"
+enabled = true
+
+[hooks.executor]
+type = "shell"
+command = "echo ok"
+
+[hooks.trigger_rules.rate_limit]
+max_requests = 1
+window = "1m"
+"#;
+        let (state, _dir) = test_state_with_config(toml).await;
+
+        let trigger = |state: Arc<AppState>| async move {
+            app(state)
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/hook/limited")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+        };
+
+        let r1 = trigger(Arc::clone(&state)).await;
+        let r2 = trigger(Arc::clone(&state)).await;
+
+        assert_eq!(r1.status(), StatusCode::OK, "first request should pass");
+        assert_eq!(
+            r2.status(),
+            StatusCode::TOO_MANY_REQUESTS,
+            "second request must be rate limited by trigger_rules.rate_limit"
         );
     }
 }
