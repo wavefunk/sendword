@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -5,7 +6,7 @@ use arc_swap::ArcSwap;
 use axum::Router;
 use axum::body::Body;
 use axum::extract::connect_info::IntoMakeServiceWithConnectInfo;
-use axum::http::{HeaderValue, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
 use tokio::net::TcpListener;
@@ -77,23 +78,86 @@ async fn sendword_script() -> Response {
     sendword_script_response()
 }
 
+pub fn sendword_static_assets_router<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    Router::new().route("/static/js/sendword.js", get(sendword_script))
+}
+
 pub fn static_assets_router<S>() -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
 {
     Router::new()
         .nest("/static/wavefunk", wavefunk_ui::axum::asset_router())
-        .route("/static/js/sendword.js", get(sendword_script))
+        .merge(sendword_static_assets_router())
 }
 
 pub fn router(state: Arc<AppState>, auth_router: Router) -> Router {
     Router::new()
         .merge(crate::routes::router())
-        .merge(static_assets_router())
-        .fallback(fallback_404)
+        .merge(sendword_static_assets_router())
+        .fallback(static_asset_or_404)
         .with_state(state)
         .merge(auth_router)
         .layer(TraceLayer::new_for_http())
+}
+
+async fn static_asset_or_404(uri: axum::http::Uri, request_headers: HeaderMap) -> Response {
+    if uri.path().starts_with("/static/wavefunk/") {
+        return wavefunk_asset_response(uri.path(), request_headers);
+    }
+
+    fallback_404().await.into_response()
+}
+
+fn wavefunk_asset_response(path: &str, request_headers: HeaderMap) -> Response {
+    match wavefunk_ui::assets::get(path) {
+        Some(asset) => {
+            let etag = wavefunk_ui::assets::etag(&asset.path)
+                .expect("embedded wavefunk-ui asset should have an entity tag");
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                header::CONTENT_TYPE,
+                HeaderValue::from_static(asset.content_type),
+            );
+            headers.insert(
+                header::CACHE_CONTROL,
+                HeaderValue::from_static(wavefunk_ui::assets::CACHE_CONTROL),
+            );
+            headers.insert(
+                header::ETAG,
+                HeaderValue::from_str(&etag)
+                    .expect("wavefunk-ui asset entity tags should be valid headers"),
+            );
+
+            if if_none_match_matches(request_headers.get(header::IF_NONE_MATCH), &etag) {
+                return (StatusCode::NOT_MODIFIED, headers).into_response();
+            }
+
+            (StatusCode::OK, headers, body_from_asset_bytes(asset.bytes)).into_response()
+        }
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+fn body_from_asset_bytes(bytes: Cow<'static, [u8]>) -> Body {
+    match bytes {
+        Cow::Borrowed(bytes) => Body::from(bytes),
+        Cow::Owned(bytes) => Body::from(bytes),
+    }
+}
+
+fn if_none_match_matches(header: Option<&HeaderValue>, etag: &str) -> bool {
+    header
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| {
+            value.split(',').any(|candidate| {
+                let candidate = candidate.trim();
+                candidate == "*" || candidate == etag || candidate.strip_prefix("W/") == Some(etag)
+            })
+        })
 }
 
 async fn fallback_404() -> impl IntoResponse {

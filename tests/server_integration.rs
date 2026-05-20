@@ -100,7 +100,7 @@ fn assert_wavefunk_app_shell(body: &str) {
 
 fn assert_authenticated_app_chrome(body: &str) {
     assert_wavefunk_app_shell(body);
-    assert!(body.contains(r#"<nav class="wf-nav-list" id="app-nav">"#));
+    assert!(body.contains(r#"<nav class="wf-nav-list" id="app-nav""#));
     assert!(body.contains(r#"class="wf-sidebar-profile"#));
     assert!(body.contains(r#"href="/settings""#));
     assert!(body.contains(r#"hx-post="/logout""#));

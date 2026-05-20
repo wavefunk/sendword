@@ -33,6 +33,27 @@ impl ExecutionListRow {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExecutionListFilters {
+    pub active_status: String,
+    pub active_from: String,
+    pub active_to: String,
+}
+
+impl ExecutionListFilters {
+    pub fn new(
+        active_status: impl Into<String>,
+        active_from: impl Into<String>,
+        active_to: impl Into<String>,
+    ) -> Self {
+        Self {
+            active_status: active_status.into(),
+            active_from: active_from.into(),
+            active_to: active_to.into(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExecutionListView {
     pub slug: String,
     pub rows: Vec<ExecutionListRow>,
@@ -49,18 +70,16 @@ impl ExecutionListView {
         page: i64,
         per_page: i64,
         total: i64,
-        active_status: impl Into<String>,
-        active_from: impl Into<String>,
-        active_to: impl Into<String>,
+        filters: ExecutionListFilters,
     ) -> Self {
         let item_count = rows.len() as i64;
         Self {
             slug: slug.into(),
             rows,
             pagination: PaginationState::new(page, per_page, total, item_count),
-            active_status: active_status.into(),
-            active_from: active_from.into(),
-            active_to: active_to.into(),
+            active_status: filters.active_status,
+            active_from: filters.active_from,
+            active_to: filters.active_to,
         }
     }
 
@@ -421,9 +440,7 @@ mod tests {
             2,
             20,
             45,
-            "success",
-            "2026-05-01",
-            "2026-05-17",
+            ExecutionListFilters::new("success", "2026-05-01", "2026-05-17"),
         );
 
         let Html(html) = render_execution_list(&view).unwrap();
@@ -439,7 +456,14 @@ mod tests {
 
     #[test]
     fn execution_list_renders_empty_state_with_active_status() {
-        let view = ExecutionListView::new("deploy-hook", Vec::new(), 1, 20, 0, "failed", "", "");
+        let view = ExecutionListView::new(
+            "deploy-hook",
+            Vec::new(),
+            1,
+            20,
+            0,
+            ExecutionListFilters::new("failed", "", ""),
+        );
         let Html(html) = render_execution_list(&view).unwrap();
 
         assert!(html.contains(r#"No executions matching "failed"."#));
@@ -462,9 +486,7 @@ mod tests {
             2,
             20,
             45,
-            "success&bad=1",
-            "2026-05-01?x=1",
-            "2026-05-17#tail",
+            ExecutionListFilters::new("success&bad=1", "2026-05-01?x=1", "2026-05-17#tail"),
         );
         let Html(html) = render_execution_list(&view).unwrap();
 

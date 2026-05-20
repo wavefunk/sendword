@@ -28,8 +28,8 @@ use crate::server::AppState;
 use crate::trigger_rules::{self, cooldown, payload_filter, rate_limit, time_window};
 use crate::views::FlashMessages;
 use crate::views::hook_activity::{
-    AttemptListRow, AttemptListView, ExecutionListRow, ExecutionListView, render_attempt_list,
-    render_execution_list,
+    AttemptListRow, AttemptListView, ExecutionListFilters, ExecutionListRow, ExecutionListView,
+    render_attempt_list, render_execution_list,
 };
 use crate::views::hook_detail::{
     AuthModeView, HookDetailPage, PayloadFieldRow, TriggerFilterRow, TriggerRateRow,
@@ -723,9 +723,7 @@ async fn execution_list(
         page,
         EXECUTIONS_PER_PAGE,
         total,
-        active_status,
-        active_from,
-        active_to,
+        ExecutionListFilters::new(active_status, active_from, active_to),
     );
 
     render_execution_list(&view)
